@@ -1,0 +1,22 @@
+# secrets and local state
+.env
+*.db
+*.db-wal
+*.db-shm
+
+# evidence and generated documents (never committed)
+evidence/
+out/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+niyamnetra_venv/
+.pytest_cache/
+.mypy_cache/
+
+# OCR / model caches
+.paddleocr/
+*.onnx

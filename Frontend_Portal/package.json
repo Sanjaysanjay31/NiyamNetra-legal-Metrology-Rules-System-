@@ -1,0 +1,35 @@
+{
+  "name": "niyamnetra-portal",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "NiyamNetra admin + inspector web portal - SIH 2026 SIH26034",
+  "scripts": {
+    "dev": "vite",
+    "dev:render": "vite --mode render",
+    "build": "vite build",
+    "build:render": "vite build --mode render",
+    "preview": "vite preview",
+    "test:contrast": "node scripts/contrast-test.mjs",
+    "test:routes": "node scripts/route-audit.mjs",
+    "verify": "npm run test:contrast && npm run test:routes && npm run build"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "date-fns": "^3.6.0",
+    "idb": "^8.0.0",
+    "lucide-react": "^0.383.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.23.0",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "vite": "^5.2.0",
+    "vite-plugin-pwa": "^0.20.0"
+  }
+}

@@ -1,0 +1,285 @@
+"""routers/inspections.py — visits, scope, geofence, and the scans under them.
+
+Not written out verbatim in Backend.md §8; synthesised to the endpoint
+inventory (§8.2) using only the schemas, models, queries, and rbac
+dependencies that section 8 does define.
+"""
+from datetime import date, datetime, timezone
+from math import asin, cos, radians, sin, sqrt
+
+from cachetools import TTLCache
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.orm import Session
+
+from audit import append_audit
+from config import settings
+from database import get_db
+from models import Inspection, Scan, Store, User
+from rbac import get_current_user, owned_inspection, require_admin, require_inspector
+from schemas import CreateInspectionRequest, CreateScanRequest, SubmitInspectionRequest
+from pydantic import BaseModel, Field
+
+router = APIRouter(tags=["inspections"])
+
+# /stores changes rarely and is read on every app launch; a short TTL keeps it
+# fresh without a query per launch. Plain dicts are cached, never ORM rows, so
+# nothing detached from a closed session leaks into a later request.
+_STORE_CACHE: TTLCache = TTLCache(maxsize=1, ttl=300)
+
+# Transaction types that put a package inside Chapter II's retail-sale ambit.
+# The authoritative, per-package scope test is CHK03 in the engine; this is the
+# coarse inspection-level flag, recorded from what the officer selected.
+_RETAIL_TYPES = {"retail_sale", "packed_in_presence"}
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6_371_000.0
+    p1, p2 = radians(lat1), radians(lat2)
+    dphi, dlmb = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dphi / 2) ** 2 + cos(p1) * cos(p2) * sin(dlmb / 2) ** 2
+    return 2 * r * asin(sqrt(a))
+
+
+def _store_dict(s: Store) -> dict:
+    return {
+        "id": s.id, "name": s.name, "store_type": s.store_type,
+        "address": s.address, "city": s.city, "district": s.district,
+        "state": s.state, "pincode": s.pincode,
+        "latitude": s.latitude, "longitude": s.longitude,
+        "geofence_radius_m": s.geofence_radius_m,
+    }
+
+
+def _inspection_dict(insp: Inspection) -> dict:
+    return {
+        "id": insp.id, "store_id": insp.store_id, "user_id": insp.user_id,
+        "inspection_date": insp.inspection_date.isoformat(),
+        "status": insp.status, "transaction_type": insp.transaction_type,
+        "in_scope": insp.in_scope, "out_of_scope_reason": insp.out_of_scope_reason,
+        "geofence_status": insp.geofence_status,
+        "geofence_distance_m": insp.geofence_distance_m,
+        "geofence_reason": insp.geofence_reason,
+        "mock_location": insp.mock_location,
+        "clock_skew_seconds": insp.clock_skew_seconds,
+        "signature_status": insp.signature_status,
+        "notes": insp.notes,
+        "submitted_at": insp.submitted_at.isoformat() if insp.submitted_at else None,
+        "scan_count": len(insp.scans),
+    }
+class CreateStoreRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    store_type: str | None = Field(default=None, max_length=40)
+    address: str | None = None
+    city: str | None = None
+    district: str | None = None
+    state: str | None = None
+    pincode: str | None = Field(default=None, max_length=10)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    geofence_radius_m: int = Field(default=150, ge=10, le=2000)
+
+
+@router.get("/stores")
+def list_stores(user: User = Depends(require_inspector), db: Session = Depends(get_db)):
+    """Active stores, cached five minutes (settings-independent, deliberate)."""
+    cached = _STORE_CACHE.get("all")
+    if cached is not None:
+        return cached
+    rows = db.query(Store).filter(Store.is_active.is_(True)).order_by(Store.name).all()
+    data = [_store_dict(s) for s in rows]
+    _STORE_CACHE["all"] = data
+    return data
+
+
+@router.post("/stores", status_code=status.HTTP_201_CREATED)
+def create_store(body: CreateStoreRequest, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Admin creates a new store. Invalidates the 5-min cache so inspectors see it."""
+    existing = db.query(Store).filter(Store.name == body.name).first()
+    if existing:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Store name already exists")
+    s = Store(
+        name=body.name, store_type=body.store_type, address=body.address,
+        city=body.city, district=body.district, state=body.state, pincode=body.pincode,
+        latitude=body.latitude, longitude=body.longitude, geofence_radius_m=body.geofence_radius_m,
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    _STORE_CACHE.clear()
+    append_audit(db, user_id=user.id, action="store_created", new_value=f"{s.id}:{s.name}")
+    return _store_dict(s)
+
+
+@router.post("/inspections", status_code=status.HTTP_201_CREATED)
+def create_inspection(body: CreateInspectionRequest, request: Request,
+                      user: User = Depends(require_inspector),
+                      db: Session = Depends(get_db)):
+    # 11 §2.1 — refuse at gate if evidence disk low, not mid-capture
+    if _evidence_free_gb() < settings.EVIDENCE_MIN_FREE_GB:
+        raise HTTPException(status.HTTP_507_INSUFFICIENT_STORAGE,
+                            detail=f"Evidence store low: {_evidence_free_gb():.1f}GB free < {settings.EVIDENCE_MIN_FREE_GB}GB floor. Sync or free space.")
+    store = db.get(Store, body.store_id)
+    if store is None or not store.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Store not found")
+
+    in_scope = body.transaction_type in _RETAIL_TYPES
+    oos_reason = None if in_scope else (
+        f"Transaction type '{body.transaction_type}' is not a retail sale; "
+        "Chapter II of the Packaged Commodities Rules does not apply at the "
+        "inspection level. Per-package applicability is still recorded by CHK03."
+    )
+
+    # Geofence: distance from the store's registered point against its radius.
+    # Unknown when either side lacks coordinates — never silently 'inside'.
+    g_status, g_dist, g_reason = "unknown", None, None
+    if (body.latitude is not None and body.longitude is not None
+            and store.latitude is not None and store.longitude is not None):
+        g_dist = _haversine_m(body.latitude, body.longitude,
+                              store.latitude, store.longitude)
+        radius = store.geofence_radius_m or 150
+        if g_dist <= radius:
+            g_status = "inside"
+        else:
+            g_status = "outside"
+            g_reason = (f"Recorded {g_dist:.0f} m from the store point; outside "
+                        f"the {radius} m geofence.")
+    else:
+        g_reason = "No device location fix, or the store has no coordinates."
+
+    now = datetime.now(timezone.utc)
+    skew = None
+    if body.local_created_at is not None:
+        lc = body.local_created_at
+        if lc.tzinfo is None:
+            lc = lc.replace(tzinfo=timezone.utc)
+        skew = int((now - lc).total_seconds())
+
+    insp = Inspection(
+        user_id=user.id, store_id=store.id, inspection_date=date.today(),
+        status="draft", transaction_type=body.transaction_type,
+        in_scope=in_scope, out_of_scope_reason=oos_reason,
+        latitude=body.latitude, longitude=body.longitude,
+        gps_accuracy_m=body.gps_accuracy_m, geofence_status=g_status,
+        geofence_distance_m=g_dist, geofence_reason=g_reason,
+        mock_location=body.mock_location, local_created_at=body.local_created_at,
+        synced_at=now, clock_skew_seconds=skew, notes=body.notes,
+    )
+    db.add(insp)
+    db.commit()
+    db.refresh(insp)
+    append_audit(db, inspection_id=insp.id, user_id=user.id,
+                 action="inspection_created", new_value=f"store={store.id}")
+    return _inspection_dict(insp)
+
+
+def _evidence_free_gb() -> float:
+    import shutil
+    return shutil.disk_usage(settings.EVIDENCE_DIR).free / (1024 ** 3)
+
+
+@router.get("/inspections")
+def list_inspections(
+    user: User = Depends(require_inspector),
+    db: Session = Depends(get_db),
+    store_id: int | None = None,
+    status: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    q: str | None = None,
+):
+    """Filters per 04_PRD §5.9 — store, status, date range, free-text q."""
+    query = db.query(Inspection)
+    if user.role != "admin":
+        query = query.filter(Inspection.user_id == user.id)
+    if store_id is not None:
+        query = query.filter(Inspection.store_id == store_id)
+    if status is not None:
+        query = query.filter(Inspection.status == status)
+    if date_from is not None:
+        query = query.filter(Inspection.inspection_date >= date_from)
+    if date_to is not None:
+        query = query.filter(Inspection.inspection_date <= date_to)
+    if q:
+        # search commodity_generic/brand_name via scans join is done client-side for now; store name search
+        query = query.join(Store, Store.id == Inspection.store_id).filter(Store.name.ilike(f"%{q}%"))
+    rows = query.order_by(Inspection.inspection_date.desc(), Inspection.id.desc()).all()
+    return [_inspection_dict(i) for i in rows]
+
+
+@router.get("/inspections/{inspection_id}")
+def get_inspection(insp: Inspection = Depends(owned_inspection),
+                   db: Session = Depends(get_db)):
+    d = _inspection_dict(insp)
+    d["scans"] = [
+        {"id": s.id, "commodity_generic": s.commodity_generic,
+         "brand_name": s.brand_name, "overall_result": s.overall_result,
+         "checks_assessed": s.checks_assessed, "checks_total": s.checks_total,
+         "duplicate_of": s.duplicate_of}
+        for s in insp.scans
+    ]
+    return d
+
+
+@router.post("/inspections/{inspection_id}/submit")
+def submit_inspection(body: SubmitInspectionRequest,
+                      insp: Inspection = Depends(owned_inspection),
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    if insp.status == "submitted":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Already submitted")
+    insp.status = "submitted"
+    insp.signature_status = body.signature_status
+    if body.notes:
+        insp.notes = body.notes
+    insp.submitted_at = datetime.now(timezone.utc)
+    db.commit()
+    append_audit(db, inspection_id=insp.id, user_id=user.id,
+                 action="inspection_submitted", old_value="draft",
+                 new_value="submitted", reason=body.notes)
+    return _inspection_dict(insp)
+
+
+@router.post("/inspections/{inspection_id}/scans",
+             status_code=status.HTTP_201_CREATED)
+def create_scan(body: CreateScanRequest,
+                insp: Inspection = Depends(owned_inspection),
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    """One scan per package. Images are attached to it afterwards (§8.4).
+
+    The rule-provenance columns are NOT NULL, so they are stamped now with the
+    catalogue in force; the assess endpoint overwrites them with the exact set
+    it actually ran against.
+    """
+    if insp.status == "submitted":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            detail="Inspection already submitted; scans are frozen")
+    from rules_engine import catalog_hash
+
+    g = body.geometry
+    scan = Scan(
+        inspection_id=insp.id,
+        commodity_generic=body.commodity_generic,
+        brand_name=body.brand_name,
+        commodity_category=body.commodity_category,
+        batch_number=body.batch_number,
+        panel_shape=g.panel_shape,
+        panel_height_mm=g.panel_height_mm,
+        panel_width_mm=g.panel_width_mm,
+        panel_diameter_mm=g.panel_diameter_mm,
+        total_surface_area_cm2=g.total_surface_area_cm2,
+        is_blown_moulded=g.is_blown_moulded,
+        scale_source=g.scale_source,
+        rules_as_at=date.fromisoformat(settings.RULES_AS_AT),
+        catalog_hash=catalog_hash(),
+        engine_version=settings.ENGINE_VERSION,
+    )
+    db.add(scan)
+    db.commit()
+    db.refresh(scan)
+    append_audit(db, inspection_id=insp.id, scan_id=scan.id, user_id=user.id,
+                 action="scan_created",
+                 new_value=body.commodity_generic or "unidentified")
+    return {"scan_id": scan.id, "inspection_id": insp.id,
+            "overall_result": scan.overall_result,
+            "checks_total": scan.checks_total}

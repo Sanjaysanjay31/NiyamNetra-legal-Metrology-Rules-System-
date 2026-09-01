@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Root .gitignore for the NiyamNetra monorepo.
+#
+# WHY THIS FILE EXISTS: there was no repo here yet, and the first `git add .`
+# is the dangerous one. Backend/.gitignore and Frontend_Portal/.gitignore
+# already exclude .env, but Frontend_App/.gitignore does NOT — so without this
+# file the very first push would carry Frontend_App/.env into a public repo.
+# These rules apply repo-wide and are the backstop.
+# ---------------------------------------------------------------------------
+
+# secrets — every .env anywhere, plus the local variants. NEVER commit these.
+.env
+.env.*
+# but keep the shareable placeholders (no secrets in these).
+# NOTE: gitignore has no inline comments, so these negations sit on their own
+# lines — a trailing "# ..." would become part of the pattern and silently break it.
+!.env.example
+!.env.render
+!*/.env.example
+!*/.env.render
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+niyamnetra_venv/
+.pytest_cache/
+.mypy_cache/
+
+# databases and local state
+*.db
+*.db-wal
+*.db-shm
+
+# evidence and generated documents — user photos and reports never ship
+Backend/evidence/
+Backend/out/
+
+# OCR / model caches (large, machine-specific)
+.paddleocr/
+*.onnx
+
+# node / expo / vite
+node_modules/
+.expo/
+dist/
+dist-ssr/
+web-build/
+*.local
+coverage/
+
+# native signing material — leaking these lets anyone publish as you
+*.jks
+*.p8
+*.p12
+*.key
+*.keystore
+*.mobileprovision
+
+# logs and OS cruft
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db

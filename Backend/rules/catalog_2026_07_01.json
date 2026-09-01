@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "rules_as_at": "2026-07-01",
+    "engine_target": "2.0.0",
+    "gazette": "Legal Metrology (Packaged Commodities) Rules 2011 as amended; GSR 128(E) in force",
+    "description": "NiyamNetra rule catalogue read by rules_engine.load_catalog(). Two tables are deliberately left empty because they have NOT been transcribed from the gazette, and the engine does not guess at schedule contents: (1) 'second_schedule' — the Second Schedule prescribed pack-size table, ledger L-05, consumed by the prescribed-size check; (2) 'net_quantity_heights' — the net-quantity-specific minimum-height table, ledger L-04, consumed by CHK06b. While empty, the dependent checks return not_assessed with a reason that names the missing table, so the gap is visible in every report rather than silently guessed. To activate a check, populate its table only from a verified gazette reading and bump the catalogue file name/date.",
+    "second_schedule_shape": "{ \"<commodity_category lowercased>\": { \"sizes\": [<net_quantity_value numbers>] } }",
+    "net_quantity_heights_shape": "{ \"bands\": [ { \"unit\": \"g|kg|ml|l\", \"upper\": <inclusive max net_quantity_value>, \"min_height_mm\": <number> } ] }"
+  },
+  "second_schedule": {},
+  "net_quantity_heights": {}
+}

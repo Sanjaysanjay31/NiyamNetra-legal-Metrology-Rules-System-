@@ -1,0 +1,334 @@
+/* ===========================================================================
+   NiyamNetra portal - the only global stylesheet.
+   ---------------------------------------------------------------------------
+   Screens do not get their own CSS files. Everything a screen needs lives in
+   that screen's single .jsx file, expressed as Tailwind utilities over the
+   tokens below. What sits here is the small set of rules that cannot live in a
+   component: the base layer, the focus ring, the reduced-motion contract, and
+   a handful of composite classes that would otherwise be re-typed on hundreds
+   of elements and drift apart.
+   =========================================================================== */
+
+@import './theme/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: var(--nn-divider);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* Never smooth-scroll a form that jumped to an error. */
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--nn-bg);
+    color: var(--nn-text);
+    font-family: Inter, 'Noto Sans Devanagari', system-ui, -apple-system,
+      'Segoe UI', sans-serif;
+    font-size: 16px;
+    line-height: 24px;
+    font-feature-settings: 'cv05' 1, 'ss03' 1; /* single-storey l, rounded quotes */
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* The theme flip should feel like a light changing, not a page reload -
+       but only the canvas animates. Animating every element is a jank factory. */
+    transition: background-color 240ms cubic-bezier(0.2, 0, 0.2, 1),
+      color 240ms cubic-bezier(0.2, 0, 0.2, 1);
+  }
+
+  /* Numerals in tables, counts and measured values must align vertically and
+     must not change width as they tick. */
+  th,
+  td,
+  input[type='number'] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  p {
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  /* 08 SS6: the focus ring is 3px at 2px offset and is never removed. It is
+     defined once, here, so no component can drop it. :focus-visible rather
+     than :focus, so a mouse click on a card does not draw a ring. */
+  :focus-visible {
+    outline: 3px solid var(--nn-accent-ring);
+    outline-offset: 2px;
+    border-radius: var(--nn-r-sm);
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /* Dark canvases need the ring to read against them too. */
+  [data-theme='dark'] :focus-visible {
+    outline-color: var(--nn-accent-ring);
+  }
+
+  ::selection {
+    background: var(--nn-accent);
+    color: var(--nn-accent-on);
+  }
+
+  /* Scrollbars, so a dark theme does not ship a bright grey gutter. */
+  * {
+    scrollbar-color: var(--nn-control) transparent;
+    scrollbar-width: thin;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--nn-control);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+
+  /* 08 SS7. prefers-reduced-motion is honoured globally rather than per
+     component, because one missed component is the whole promise broken.
+     0.01ms, not 0: transitionend and animationend listeners must still fire. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* --- the mono voice ---------------------------------------------------- */
+  /* JetBrains Mono is not decoration here. It marks every string the system
+     read or computed rather than composed: CHK ids, denominators, hashes,
+     measured quantities, rule citations. The eye learns "monospace = evidence".
+     08 SS2.2 assigns mono to identifiers and extracted values; this promotes
+     that to the interface's structural voice. */
+  .nn-eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--nn-text-3);
+  }
+
+  .nn-mono {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'zero' 1; /* slashed zero: 0 vs O in a batch code */
+  }
+
+  /* A hairline above an eyebrow, used to open a section. Decorative. */
+  .nn-rule-line {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      var(--nn-accent) 0,
+      var(--nn-accent) 24px,
+      var(--nn-divider) 24px,
+      var(--nn-divider) 100%
+    );
+  }
+
+  /* --- surfaces ---------------------------------------------------------- */
+  .nn-card {
+    background: var(--nn-surface);
+    border: 1px solid var(--nn-divider);
+    border-radius: var(--nn-r-card);
+    box-shadow: var(--nn-shadow-card);
+  }
+
+  /* Interactive cards lift. Static cards must not, or "liftable" stops
+     meaning "clickable". */
+  .nn-card-interactive {
+    transition: box-shadow 180ms cubic-bezier(0.2, 0, 0.2, 1),
+      transform 180ms cubic-bezier(0.2, 0, 0.2, 1),
+      border-color 180ms cubic-bezier(0.2, 0, 0.2, 1);
+  }
+  .nn-card-interactive:hover {
+    box-shadow: var(--nn-shadow-hover);
+    transform: translateY(-2px);
+    border-color: var(--nn-control);
+  }
+  .nn-card-interactive:active {
+    transform: translateY(0);
+  }
+
+  /* A sunken well for OCR text, raw JSON, hashes - anything quoted verbatim
+     from a source rather than written by the interface. */
+  .nn-well {
+    background: var(--nn-surface-sunken);
+    border: 1px solid var(--nn-divider);
+    border-radius: var(--nn-r-sm);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 22px;
+    color: var(--nn-text-2);
+  }
+
+  /* --- controls ---------------------------------------------------------- */
+  /* Height, not padding, sets the target: padding drifts as content changes
+     and 44px silently becomes 38px. */
+  .nn-field {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    background: var(--nn-surface);
+    color: var(--nn-text);
+    border: 1px solid var(--nn-control);
+    border-radius: var(--nn-r-sm);
+    font-size: 16px; /* < 16px makes iOS Safari zoom on focus */
+    line-height: 24px;
+    transition: border-color 120ms cubic-bezier(0.2, 0, 0.2, 1),
+      box-shadow 120ms cubic-bezier(0.2, 0, 0.2, 1);
+  }
+  .nn-field::placeholder {
+    color: var(--nn-text-3);
+  }
+  .nn-field:hover:not(:disabled) {
+    border-color: var(--nn-text-3);
+  }
+  .nn-field:focus {
+    border-color: var(--nn-accent);
+    box-shadow: 0 0 0 4px var(--nn-ring-halo);
+    outline: none;
+  }
+  .nn-field:focus-visible {
+    outline: 3px solid var(--nn-accent-ring);
+    outline-offset: 2px;
+  }
+  .nn-field:disabled {
+    background: var(--nn-surface-sunken);
+    color: var(--nn-text-3);
+    cursor: not-allowed;
+  }
+  /* An invalid field keeps its geometry and changes only its border colour.
+     08 SS7 forbids shake: an involuntary movement next to a legal declaration
+     reads as the system objecting, which is not what a format error means. */
+  .nn-field[aria-invalid='true'] {
+    border-color: var(--nn-violation-graphic);
+  }
+  .nn-field[aria-invalid='true']:focus {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--nn-violation-graphic) 18%, transparent);
+  }
+
+  /* --- badges ------------------------------------------------------------ */
+  /* The shape is shared; the family supplies fill, outline and text. Never
+     used without an icon and a word alongside - 08 SS2.4. */
+  .nn-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: var(--nn-r-pill);
+    border: 1px solid transparent;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* --- skeleton ---------------------------------------------------------- */
+  .nn-skeleton {
+    background-color: var(--nn-surface-sunken);
+    background-image: linear-gradient(
+      90deg,
+      transparent 0,
+      color-mix(in srgb, var(--nn-text) 6%, transparent) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    background-repeat: no-repeat;
+    border-radius: var(--nn-r-sm);
+    animation: sheen 1.4s linear infinite;
+  }
+
+  /* --- skip link --------------------------------------------------------- */
+  .nn-skip {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 70;
+    transform: translateY(-160%);
+    padding: 10px 16px;
+    background: var(--nn-surface);
+    color: var(--nn-accent-text);
+    border: 1px solid var(--nn-accent);
+    border-radius: var(--nn-r-sm);
+    font-weight: 600;
+    transition: transform 120ms cubic-bezier(0.2, 0, 0.2, 1);
+  }
+  .nn-skip:focus {
+    transform: none;
+  }
+}
+
+@layer utilities {
+  /* Visible to a screen reader, invisible on screen. Used for the accessible
+     name of an icon-only control and for live-region announcements. */
+  .sr-only-nn {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* Long tokens - batch codes, hashes, importer names - must wrap inside a
+     table cell rather than widening it. */
+  .nn-break {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .nn-stagger > * {
+    animation: fade-rise 240ms cubic-bezier(0.2, 0, 0.2, 1) both;
+  }
+  .nn-stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .nn-stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .nn-stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .nn-stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .nn-stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .nn-stagger > *:nth-child(6) { animation-delay: 200ms; }
+}
+
+@keyframes sheen {
+  from { background-position: -160% 0; }
+  to { background-position: 260% 0; }
+}
+
+@keyframes fade-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}

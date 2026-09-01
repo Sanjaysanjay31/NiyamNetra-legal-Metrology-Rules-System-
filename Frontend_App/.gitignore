@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Native
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# Metro
+metro-health-checks*
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# macOS
+.DS_Store
+
+# Env files (optional - uncomment if you want to gitignore .env)
+# .env
+# .env.local

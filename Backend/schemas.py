@@ -1,0 +1,263 @@
+"""schemas.py"""
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+Verdict = Literal["pass", "fail", "not_assessed"]
+ScanResult = Literal["compliant", "violation", "not_assessed", "out_of_scope"]
+Severity = Literal["critical", "major", "minor", "advisory"]
+
+
+class ORMModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ------------------------------------------------------------------ auth
+class LoginRequest(BaseModel):
+    employee_id: str = Field(min_length=3, max_length=32)
+    password: str = Field(min_length=8, max_length=72)
+
+
+class UserOut(ORMModel):
+    id: int
+    employee_id: str
+    full_name: str
+    role: str
+    jurisdiction: str | None = None
+    is_active: bool
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int                     # seconds; the client refreshes before this
+    user: UserOut
+    install_id: str
+    # The refresh token is NOT in this body. It is set as an httpOnly
+    # SameSite=Strict cookie so that no JavaScript in the portal can read it.
+
+
+# ------------------------------------------------------------ inspections
+class CreateInspectionRequest(BaseModel):
+    store_id: int
+    transaction_type: Literal[
+        "retail_sale", "wholesale", "institutional", "industrial",
+        "packed_in_presence", "export", "other",
+    ]
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    gps_accuracy_m: float | None = Field(default=None, ge=0)
+    mock_location: bool | None = None
+    local_created_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class SubmitInspectionRequest(BaseModel):
+    signature_status: Literal["signed", "refused", "unavailable"]
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def _refusal_needs_a_note(self) -> SubmitInspectionRequest:
+        if self.signature_status in {"refused", "unavailable"} and not self.notes:
+            raise ValueError(
+                "A refused or unavailable signature must be explained in notes."
+            )
+        return self
+
+
+class PanelGeometry(BaseModel):
+    """Mandatory before the millimetre checks can run. C14."""
+    panel_shape: Literal["rectangular", "cylindrical", "other"]
+    panel_height_mm: float | None = Field(default=None, gt=0, le=2000)
+    panel_width_mm: float | None = Field(default=None, gt=0, le=2000)
+    panel_diameter_mm: float | None = Field(default=None, gt=0, le=2000)
+    total_surface_area_cm2: float | None = Field(default=None, gt=0)
+    is_blown_moulded: bool = False
+    scale_source: Literal["declared", "id1_card", "coin_5inr", "none"] = "declared"
+
+    @model_validator(mode="after")
+    def _shape_needs_its_dimensions(self) -> PanelGeometry:
+        if self.panel_shape == "rectangular" and not (
+            self.panel_height_mm and self.panel_width_mm
+        ):
+            raise ValueError("A rectangular panel needs height and width in mm.")
+        if self.panel_shape == "cylindrical" and not (
+            self.panel_height_mm and self.panel_diameter_mm
+        ):
+            raise ValueError("A cylindrical panel needs height and diameter in mm.")
+        if self.panel_shape == "other" and not self.total_surface_area_cm2:
+            raise ValueError(
+                "An irregular package needs total surface area; Rule 7(4) takes 40% of it."
+            )
+        return self
+
+
+# ------------------------------------------------------------------ scans
+class CreateScanRequest(BaseModel):
+    """One scan per package. Images are attached to it afterwards.
+
+    v1.x created a Scan per uploaded image, so a four-panel package produced
+    four independent verdicts on the same package and the report listed the
+    same item four times with different results.
+    """
+    commodity_generic: str | None = Field(default=None, max_length=120)
+    brand_name: str | None = Field(default=None, max_length=120)
+    commodity_category: str | None = Field(default=None, max_length=60)
+    batch_number: str | None = Field(default=None, max_length=60)
+    geometry: PanelGeometry
+
+
+class FindingOut(ORMModel):
+    check_id: str
+    title: str
+    engine_verdict: Verdict
+    human_verdict: Verdict | None = None
+    effective_verdict: Verdict
+    severity: Severity
+    reason: str | None = None
+    observed: str | None = None
+    required: str | None = None
+    citation: str | None = None
+    ledger_ref: str | None = None
+    confidence: float | None = None
+
+
+class ScanImageOut(ORMModel):
+    id: int
+    panel: str
+    sha256: str
+    width_px: int
+    height_px: int
+    rectified: bool
+    residual_tilt_deg: float | None = None
+    blur_variance: float | None = None
+
+
+class VerdictCounts(BaseModel):
+    """Four counts and the denominator they are counted against. C4/C5."""
+    total: int
+    passed: int
+    failed: int
+    not_assessed: int
+
+    @model_validator(mode="after")
+    def _must_add_up(self) -> VerdictCounts:
+        if self.passed + self.failed + self.not_assessed != self.total:
+            raise ValueError("Verdict counts must sum to total.")
+        return self
+
+
+class ScanOut(ORMModel):
+    id: int
+    inspection_id: int
+    commodity_generic: str | None = None
+    brand_name: str | None = None
+    overall_result: ScanResult
+    violation_limb: str | None = None
+    recommended_action: str | None = None
+    checks_total: int
+    checks_assessed: int
+    mm_per_pixel: float | None = None
+    scale_source: str | None = None
+    rules_as_at: date
+    catalog_hash: str
+    engine_version: str
+    duplicate_of: int | None = None
+    created_at: datetime
+    # Set by the router after model_validate (the ORM row has no `counts`
+    # attribute); optional here so validation of the ORM object does not fail.
+    counts: VerdictCounts | None = None
+    findings: list[FindingOut]
+    images: list[ScanImageOut]
+
+
+# ---------------------------------------------------------------- reports
+class ResultCounts(BaseModel):
+    """The four scan results. Required in every report and dashboard payload."""
+    total: int = 0
+    compliant: int = 0
+    violation: int = 0
+    not_assessed: int = 0
+    out_of_scope: int = 0
+
+
+class StoreBreakdown(BaseModel):
+    store_id: int
+    store_name: str
+    counts: ResultCounts
+
+
+class TodaysReportResponse(BaseModel):
+    report_date: date
+    inspector: UserOut
+    inspections: int
+    counts: ResultCounts
+    stores: list[StoreBreakdown]
+    generated_at: datetime
+
+
+class TrendPoint(BaseModel):
+    day: date
+    counts: ResultCounts
+
+
+class CheckTally(BaseModel):
+    check_id: str
+    title: str
+    count: int
+
+
+class AdminDashboardResponse(BaseModel):
+    period_start: date
+    period_end: date
+    inspections: int
+    active_inspectors: int
+    counts: ResultCounts
+    review_queue: int
+    top_failed_checks: list[CheckTally]
+    trend: list[TrendPoint]
+
+
+# ------------------------------------------------------------------ admin
+class CreateUserRequest(BaseModel):
+    employee_id: str = Field(min_length=3, max_length=32)
+    full_name: str = Field(min_length=2, max_length=120)
+    password: str = Field(min_length=12, max_length=72)
+    role: Literal["inspector", "admin"] = "inspector"
+    jurisdiction: str | None = None
+    email: str | None = None
+    phone: str | None = None
+
+
+class UpdateUserRequest(BaseModel):
+    full_name: str | None = Field(default=None, max_length=120)
+    role: Literal["inspector", "admin"] | None = None
+    jurisdiction: str | None = None
+    is_active: bool | None = None
+    email: str | None = None
+    phone: str | None = None
+
+
+class ResetInstallRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=500)
+
+
+class OverrideFindingRequest(BaseModel):
+    human_verdict: Verdict
+    override_reason: str = Field(min_length=10, max_length=1000)
+
+
+class AuditEntryOut(ORMModel):
+    seq: int
+    inspection_id: int | None = None
+    scan_id: int | None = None
+    user_id: int | None = None
+    action: str
+    old_value: str | None = None
+    new_value: str | None = None
+    reason: str | None = None
+    timestamp: datetime
+    hash_self: str

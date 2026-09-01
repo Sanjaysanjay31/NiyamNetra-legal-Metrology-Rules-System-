@@ -1,0 +1,116 @@
+// NiyamNetra Design System - 08_UI_DESIGN.md §2
+// Government trust, product polish: Deep navy + teal + saffron accent
+
+export const colors = {
+  // Brand
+  niyamBlue: '#0F2A44',      // Headers, primary buttons, sidebar - 14.63:1 on white
+  netraTeal: '#0E7490',      // Links, active states, secondary - 5.36:1 on white
+  saffron: '#F59E0B',        // Accent bars, brackets - decoration only, 2.15:1 on white
+
+  // Semantic - corrected for badge text (≥4.5:1 at 11-12px)
+  pass: { fill: '#ECFDF5', border: '#A7F3D0', text: '#047857', icon: '#059669' },
+  violation: { fill: '#FEF2F2', border: '#FECACA', text: '#B91C1C', icon: '#DC2626' },
+  review: { fill: '#FFFBEB', border: '#FDE68A', text: '#B45309', icon: '#D97706' },
+  notAssessed: { fill: '#F1F5F9', border: '#CBD5E1', text: '#475569', icon: '#64748B' },
+  info: { fill: '#F0F9FF', border: '#BAE6FD', text: '#0369A1', icon: '#0284C7' },
+
+  // Neutral
+  background: '#F8FAFC',
+  surface: '#FFFFFF',
+  card: '#FFFFFF',
+  border: '#CBD5E1',
+  borderLight: '#E2E8F0',
+  text: '#0F172A',
+  textSecondary: '#475569',
+  textMuted: '#64748B',
+  textFaint: '#94A3B8',
+  divider: '#E2E8F0',
+  disabled: '#CBD5E1',
+  white: '#FFFFFF',
+
+  // Status
+  online: '#047857',
+  offline: '#92400E',
+  offlineBg: '#FFFBEB',
+  syncing: '#0369A1',
+  syncingBg: '#F0F9FF',
+  warning: '#B45309',
+  warningBg: '#FFFBEB',
+  error: '#B91C1C',
+  errorBg: '#FEF2F2',
+};
+
+export const spacing = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  xxl: 24,
+  xxxl: 32,
+};
+
+export const radius = {
+  sm: 6,
+  md: 8,
+  lg: 12,
+  xl: 16,
+  full: 999,
+};
+
+export const typography = {
+  h1: { fontSize: 28, fontWeight: '700', color: colors.niyamBlue },
+  h2: { fontSize: 22, fontWeight: '700', color: colors.niyamBlue },
+  h3: { fontSize: 18, fontWeight: '600', color: colors.niyamBlue },
+  h4: { fontSize: 16, fontWeight: '600', color: colors.text },
+  body: { fontSize: 14, color: colors.text },
+  bodySecondary: { fontSize: 13, color: colors.textSecondary },
+  caption: { fontSize: 11, color: colors.textMuted },
+  label: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
+  button: { fontSize: 15, fontWeight: '600' },
+  statNumber: { fontSize: 32, fontWeight: '700', color: colors.niyamBlue },
+  tabLabel: { fontSize: 11, fontWeight: '500' },
+};
+
+export const shadows = {
+  sm: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  md: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  lg: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+};
+
+// Scan results - 4 states
+export const scanResultConfig = {
+  success: { label: 'Success', ...colors.pass, icon: '✓' },
+  violation: { label: 'Violation', ...colors.violation, icon: '✗' },
+  not_assessed: { label: 'Not assessed', ...colors.notAssessed, icon: '—' },
+  out_of_scope: { label: 'Out of scope', ...colors.info, icon: '○' },
+};
+
+// Verdict helpers - §2.4 three verdicts, never two
+export const verdictConfig = {
+  pass: { label: 'Pass', ...colors.pass, icon: '✓' },
+  fail: { label: 'Violation', ...colors.violation, icon: '✗' },
+  not_assessed: { label: 'Not assessed', ...colors.notAssessed, icon: '—' },
+  success: { label: 'Success', ...colors.pass, icon: '✓' },
+  violation: { label: 'Violation', ...colors.violation, icon: '✗' },
+  out_of_scope: { label: 'Out of scope', ...colors.info, icon: '○' },
+  review: { label: 'Review', ...colors.review, icon: '!' },
+};

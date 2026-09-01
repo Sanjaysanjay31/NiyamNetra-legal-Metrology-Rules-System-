@@ -1,0 +1,40 @@
+# --- web ---
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+pydantic==2.6.4
+pydantic-settings==2.2.1
+python-multipart==0.0.9
+
+# --- database ---
+SQLAlchemy==2.0.29
+alembic==1.13.1
+psycopg[binary]==3.1.18        # REQUIRED — Supabase/PostgreSQL driver (psycopg 3)
+
+# --- auth ---
+PyJWT==2.8.0
+passlib==1.7.4
+bcrypt==4.0.1                  # pin: passlib 1.7.4 reads bcrypt.__about__, removed in 4.1
+
+# --- vision / OCR ---
+numpy==1.26.4                  # imported directly by image_processor/ocr_engine; <2 for paddle/opencv
+opencv-python-headless==4.9.0.80
+paddlepaddle==2.6.2
+paddleocr==2.8.0
+pytesseract==0.3.10            # needs the tesseract-ocr binary, see below
+Pillow==10.3.0
+imagehash==4.3.1
+pyzbar==0.1.9                  # needs libzbar0
+# ultralytics==8.1.34          # YOLOv8 panel detection — NOT imported by any module yet
+                               # (only referenced in a comment). Left out to avoid a ~2GB
+                               # torch download. Uncomment when panel detection is wired in.
+
+# --- documents ---
+reportlab==4.1.0
+python-docx==1.1.0
+openpyxl==3.1.2                # .xlsx report export (CSV export needs no library)
+qrcode[pil]==7.4.2
+
+# --- utility ---
+python-dotenv==1.0.1
+cachetools==5.3.3              # TTLCache; not functools.lru_cache
+httpx==0.27.0                  # also the test client
