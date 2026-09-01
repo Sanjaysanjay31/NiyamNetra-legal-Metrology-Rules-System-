@@ -20,7 +20,9 @@ import { Platform, NativeModules } from 'react-native';
 export const API_PORT = 8000;
 
 // EDIT HERE if auto-detect cannot apply (e.g. a production APK with no env var).
-const FALLBACK_HOST = '10.16.54.38';
+// This must be your laptop's CURRENT LAN IP (the WiFi IP your phone is on).
+// Find it with: ipconfig  → look for "IPv4 Address" under your WiFi adapter.
+const FALLBACK_HOST = '10.101.163.148';
 
 // ---------------------------------------------------------------------------
 // The three backends you test against. THESE TWO LINES ARE THE ONLY URLs TO

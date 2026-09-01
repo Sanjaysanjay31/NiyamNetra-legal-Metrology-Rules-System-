@@ -7,7 +7,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "http://10.16.54.38:8000"
+        "EXPO_PUBLIC_API_BASE_URL": "http://10.101.163.148:8000"
       }
     },
     "preview": {
