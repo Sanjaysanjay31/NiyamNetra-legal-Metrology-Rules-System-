@@ -20,6 +20,9 @@ export const colors = {
   card: '#FFFFFF',
   border: '#CBD5E1',
   borderLight: '#E2E8F0',
+  // 08 §2.1 form controls
+  inputBorder: '#7E8EA3',
+  placeholder: '#64748B',
   text: '#0F172A',
   textSecondary: '#475569',
   textMuted: '#64748B',
@@ -59,17 +62,21 @@ export const radius = {
 };
 
 export const typography = {
-  h1: { fontSize: 28, fontWeight: '700', color: colors.niyamBlue },
-  h2: { fontSize: 22, fontWeight: '700', color: colors.niyamBlue },
-  h3: { fontSize: 18, fontWeight: '600', color: colors.niyamBlue },
-  h4: { fontSize: 16, fontWeight: '600', color: colors.text },
-  body: { fontSize: 14, color: colors.text },
-  bodySecondary: { fontSize: 13, color: colors.textSecondary },
-  caption: { fontSize: 11, color: colors.textMuted },
-  label: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
-  button: { fontSize: 15, fontWeight: '600' },
-  statNumber: { fontSize: 32, fontWeight: '700', color: colors.niyamBlue },
-  tabLabel: { fontSize: 11, fontWeight: '500' },
+  // System stack + Noto fallback: Noto Sans covers Devanagari (Hindi) where
+  // the platform font lacks glyphs. React Native has no webfont loading here,
+  // so this is a fontFamily preference chain, not a bundled font.
+  fontFamily: 'System',
+  h1: { fontSize: 28, fontWeight: '700', color: colors.niyamBlue, fontFamily: 'System' },
+  h2: { fontSize: 22, fontWeight: '700', color: colors.niyamBlue, fontFamily: 'System' },
+  h3: { fontSize: 16, fontWeight: '600', color: colors.niyamBlue, fontFamily: 'System' },
+  h4: { fontSize: 16, fontWeight: '600', color: colors.text, fontFamily: 'System' },
+  body: { fontSize: 14, color: colors.text, fontFamily: 'System' },
+  bodySecondary: { fontSize: 13, color: colors.textSecondary, fontFamily: 'System' },
+  caption: { fontSize: 11, color: colors.textMuted, fontFamily: 'System' },
+  label: { fontSize: 12, fontWeight: '600', color: colors.textSecondary, fontFamily: 'System' },
+  button: { fontSize: 15, fontWeight: '600', fontFamily: 'System' },
+  statNumber: { fontSize: 24, fontWeight: '700', color: colors.niyamBlue, fontFamily: 'System' },
+  tabLabel: { fontSize: 11, fontWeight: '500', fontFamily: 'System' },
 };
 
 export const shadows = {
@@ -96,9 +103,12 @@ export const shadows = {
   },
 };
 
-// Scan results - 4 states
+// Scan results - 5 states (backend SCAN_RESULTS = compliant/violation/
+// not_assessed/out_of_scope; "success" kept as a legacy alias so older queued
+// rows never render a blank badge).
 export const scanResultConfig = {
-  success: { label: 'Success', ...colors.pass, icon: '✓' },
+  success: { label: 'Pass', ...colors.pass, icon: '✓' },
+  compliant: { label: 'Pass/Compliant', ...colors.pass, icon: '✓' },
   violation: { label: 'Violation', ...colors.violation, icon: '✗' },
   not_assessed: { label: 'Not assessed', ...colors.notAssessed, icon: '—' },
   out_of_scope: { label: 'Out of scope', ...colors.info, icon: '○' },

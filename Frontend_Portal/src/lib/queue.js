@@ -13,11 +13,16 @@
  *    a third and localStorage caps out around 5 MB in total. Three packages would
  *    exceed the quota and the failure mode is a thrown exception mid-inspection.
  *
- *  - Each queued item carries a `client_uuid` generated on the device. The
- *    backend treats it as an idempotency key, so a submission that succeeded but
- *    whose response was lost on a dying connection is not recorded twice when the
- *    device retries. Without it, the natural retry loop creates duplicate
- *    inspections against the same shop, which is worse than losing the record.
+ *  - Each queued item carries a `client_uuid` generated on the device. It is
+ *    sent as the `Idempotency-Key` request HEADER (CORS-allowed in
+ *    Backend/main.py), never as a body field: neither CreateInspectionRequest
+ *    nor CreateScanRequest defines `client_uuid`, so a body field would be
+ *    rejected or ignored. The header lets a submission that succeeded but whose
+ *    response was lost on a dying connection be retried without creating a
+ *    duplicate inspection against the same shop. Server-side dedup is not
+ *    observed in the current backend beyond accepting the header, so the uuid
+ *    is also the outbox's local identity (unique index) for exactly-once
+ *    flush bookkeeping on this device.
  *
  *  - Flush is strictly sequential and stops at the first failure. Inspections
  *    have an order (create, then upload images, then assess, then submit) and
@@ -131,6 +136,48 @@ export async function enqueueInspection(payload) {
   return { ...item, id }
 }
 
+/**
+ * Queue one scan (package) against an inspection that already exists on the
+ * server. Used by Capture when the save or an image upload fails offline.
+ *
+ * Two shapes:
+ *  - new scan: enqueueScan(inspectionId, scanBody, images, { scope,
+ *    listingUrl }) — flush creates the scan, patches scope, attaches the
+ *    listing, then uploads the images.
+ *  - extra image for an existing scan: enqueueScan(inspectionId, null,
+ *    images, { scanId }) — flush uploads straight to that scan id.
+ *
+ * @param inspectionId  server id of the existing draft inspection
+ * @param scan          CreateScanRequest body (commodity_*, geometry), or null
+ *                      when the scan already exists and only images are queued
+ * @param images        [{ blobId, panel, name }] handles from putBlob
+ * @param scope         optional scope-flag patch for PATCH /scans/{id}
+ * @param listingUrl    optional e-commerce listing URL for POST .../listing
+ * @param scanId        existing scan id when `scan` is null
+ */
+export async function enqueueScan(inspectionId, scan, images = [], { scope, listingUrl, scanId } = {}) {
+  const d = await db()
+  const item = {
+    kind: 'scan',
+    client_uuid: uuid(),
+    payload: {
+      inspectionId,
+      scan,
+      images,
+      scope: scope ?? null,
+      listingUrl: listingUrl ?? null,
+      scanId: scanId ?? null,
+    },
+    status: 'pending',
+    attempts: 0,
+    last_error: null,
+    created_at: new Date().toISOString(),
+  }
+  const id = await d.add(STORE, item)
+  await announce()
+  return { ...item, id }
+}
+
 export async function listQueue() {
   const d = await db()
   const rows = await d.getAll(STORE)
@@ -167,6 +214,7 @@ function collectBlobIds(item) {
   for (const s of item?.payload?.scans ?? []) {
     for (const img of s.images ?? []) if (img.blobId != null) ids.push(img.blobId)
   }
+  for (const img of item?.payload?.images ?? []) if (img.blobId != null) ids.push(img.blobId)
   return ids
 }
 
@@ -207,7 +255,8 @@ export async function flushQueue({ onProgress } = {}) {
       await patch(item.id, { status: 'sending' })
       onProgress?.({ item, phase: 'start' })
       try {
-        await sendInspection(item, onProgress)
+        if (item.kind === 'scan') await sendScan(item, onProgress)
+        else await sendInspection(item, onProgress)
         await removeItem(item.id)
         sent += 1
       } catch (err) {
@@ -243,27 +292,46 @@ export async function flushQueue({ onProgress } = {}) {
  * to a scan that does not exist, and a scan must be assessed before the
  * inspection is submitted, because submission freezes the record.
  */
+function idemHeaders(clientUuid) {
+  return { headers: { 'Idempotency-Key': clientUuid } }
+}
+
+async function uploadImages(scanId, images, item, onProgress) {
+  for (const img of images ?? []) {
+    const blob = await getBlob(img.blobId)
+    if (!blob) continue
+    const file = new File([blob], img.name ?? `${img.panel}.jpg`, {
+      type: blob.type || 'image/jpeg',
+    })
+    await endpoints.scans.uploadImage(
+      scanId,
+      file,
+      img.panel,
+      (fraction) => onProgress?.({ item, phase: 'upload', panel: img.panel, fraction }),
+      idemHeaders(`${item.client_uuid}:${img.panel}`)
+    )
+  }
+}
+
 async function sendInspection(item, onProgress) {
   const { inspection, scans = [] } = item.payload
 
-  const created = await endpoints.inspections.create({
-    ...inspection,
-    client_uuid: item.client_uuid,
-  })
+  const created = await endpoints.inspections.create(
+    { ...inspection },
+    idemHeaders(item.client_uuid)
+  )
   const inspectionId = created.id
 
   for (const entry of scans) {
-    const scan = await endpoints.inspections.createScan(inspectionId, entry.scan)
-    for (const img of entry.images ?? []) {
-      const blob = await getBlob(img.blobId)
-      if (!blob) continue
-      const file = new File([blob], img.name ?? `${img.panel}.jpg`, {
-        type: blob.type || 'image/jpeg',
-      })
-      await endpoints.scans.uploadImage(scan.id, file, img.panel, (fraction) =>
-        onProgress?.({ item, phase: 'upload', panel: img.panel, fraction })
-      )
-    }
+    const scanUuid = uuid()
+    const scan = await endpoints.inspections.createScan(
+      inspectionId,
+      entry.scan,
+      idemHeaders(scanUuid)
+    )
+    if (entry.scope) await endpoints.scans.updateScan(scan.id, entry.scope)
+    if (entry.listingUrl) await endpoints.scans.attachListing(scan.id, entry.listingUrl)
+    await uploadImages(scan.id, entry.images, item, onProgress)
     await endpoints.scans.assess(scan.id)
     onProgress?.({ item, phase: 'scan-done', scanId: scan.id })
   }
@@ -272,6 +340,24 @@ async function sendInspection(item, onProgress) {
     await endpoints.inspections.submit(inspectionId, item.payload.submit)
   }
   return inspectionId
+}
+
+async function sendScan(item, onProgress) {
+  const { inspectionId, scan, images = [], scope, listingUrl, scanId: existingScanId } = item.payload
+  let scanId = existingScanId
+  if (scanId == null) {
+    const created = await endpoints.inspections.createScan(
+      inspectionId,
+      scan,
+      idemHeaders(item.client_uuid)
+    )
+    scanId = created?.scan_id ?? created?.id
+  }
+  if (scope) await endpoints.scans.updateScan(scanId, scope)
+  if (listingUrl) await endpoints.scans.attachListing(scanId, listingUrl)
+  await uploadImages(scanId, images, item, onProgress)
+  onProgress?.({ item, phase: 'scan-done', scanId })
+  return scanId
 }
 
 /**

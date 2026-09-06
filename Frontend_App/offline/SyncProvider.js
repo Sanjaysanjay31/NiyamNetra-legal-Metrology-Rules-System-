@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { AppState, Platform } from 'react-native';
 import * as Network from 'expo-network';
 import { api } from '../api/client';
-import { loadQueue, markSynced, purgeSynced, queueSize } from './queue';
+import { loadQueue, markSynced, markFailed, purgeSynced, purgeSyncedOnBoot, queueSize } from './queue';
 
 const SyncContext = createContext({ pending: 0, isSyncing: false, syncNow: async () => {}, lastSync: null });
 export const useSync = () => useContext(SyncContext);
@@ -24,6 +24,51 @@ async function isOnline() {
   }
 }
 
+// 4xx (except 408/429) means the server understood and refused: retrying the
+// identical body will refuse identically forever. Dead-letter it.
+function isDeadLetter(status, code) {
+  if (status === 408 || status === 429) return false;
+  if (code === 'ECONNABORTED') return false;
+  if (status == null) return false; // network/timeout — retryable
+  return status === 400 || status === 403 || status === 404 || status === 409
+    || status === 413 || status === 422 || (status >= 400 && status < 500);
+}
+
+function statusOf(e) {
+  return e?.status ?? e?.response?.status ?? null;
+}
+
+function guessMime(uri) {
+  const u = String(uri || '').toLowerCase();
+  if (u.endsWith('.png')) return 'image/png';
+  if (u.endsWith('.webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+
+// Upload one evidence file to POST /scans/{serverScanId}/images as multipart
+// (panel, file). Backend: routers/scans.py upload_image — panel must be one of
+// front/back/side/mrp/batch/other; anything else 422s, so unknown labels map
+// to "other" rather than failing the whole inspection.
+async function uploadEvidenceFile(serverScanId, file, index) {
+  const rawPanel = String(file?.panel || (index === 0 ? 'front' : 'other')).trim().toLowerCase();
+  const allowed = new Set(['front', 'back', 'side', 'mrp', 'batch', 'other']);
+  const panel = allowed.has(rawPanel) ? rawPanel : 'other';
+  const uri = file?.uri;
+  const form = new FormData();
+  form.append('panel', panel);
+  form.append('file', {
+    uri,
+    name: `panel-${panel}-${index}.jpg`,
+    type: guessMime(uri),
+  });
+  // Let axios set the multipart boundary: passing Content-Type explicitly
+  // without a boundary breaks React Native uploads on some builds.
+  return api.post(`/scans/${serverScanId}/images`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+}
+
 export function SyncProvider({ children }) {
   const [pending, setPending] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -36,46 +81,142 @@ export function SyncProvider({ children }) {
     try { setPending(await queueSize()); } catch { /* queue unavailable (web) */ }
   }, []);
 
+  // Local inspection id → server inspection id, learned from POST /inspections
+  // responses. Scan items only hold the LOCAL parent id, so without this map
+  // there is no correct URL to post them to. In-memory only: after a restart,
+  // inspections sync first in the same pass and re-populate it before their
+  // child scans are attempted.
+  const remoteIdByLocal = useRef({});
+
   const syncNow = useCallback(async () => {
     if (busy.current) return;
     let toSync = [];
     try {
       const q = await loadQueue();
-      toSync = q.filter((x) => !x.is_synced);
+      // Skip dead-lettered rows: they were refused (400/403/404/422) and
+      // retrying them would loop forever on the identical body.
+      toSync = q.filter((x) => !x.is_synced && !x.syncFailed);
     } catch {
       return; // no queue on this platform
     }
     if (toSync.length === 0) { await refreshCount(); return; }
 
+    // Violations first: an item opts in via body.result/item.result ===
+    // 'violation' (provisional officer flag) or body.violationSuspected. This
+    // is a nicety only — without the flag the pass is strict FIFO with parent
+    // inspections before their child scans so the id map is populated in time.
+    const prio = (x) => (
+      x.result === 'violation' || x.body?.result === 'violation' || x.violationSuspected || x.body?.violationSuspected ? 0 : 1
+    );
+    toSync.sort((a, b) =>
+      prio(a) - prio(b) ||
+      (a.type === b.type ? 0 : a.type === 'inspection' ? -1 : 1) ||
+      String(a.createdAt || '').localeCompare(String(b.createdAt || '')),
+    );
+
     busy.current = true;
     setIsSyncing(true);
+    let anySuccess = false;
     try {
-      // Oldest first, one at a time, exponential backoff. 11 §2.4
       for (const item of toSync) {
         let delay = 1000;
-        for (let attempt = 0; attempt < 3; attempt++) {
+        let done = false;
+        for (let attempt = 0; attempt < 3 && !done; attempt++) {
           try {
             if (item.type === 'inspection') {
               // POST /inspections — no trailing slash. With a slash Starlette
               // answers 307 and the redirected request needs its own CORS
               // preflight for Idempotency-Key on the web build.
-              await api.post(
+              const resp = await api.post(
                 '/inspections',
                 { ...item.body, local_created_at: item.createdAt },
                 { headers: { 'Idempotency-Key': item.id } },
               );
+              const serverId = resp?.data?.id ?? resp?.data?.inspection_id;
+              if (serverId) remoteIdByLocal.current[item.id] = serverId;
+
+              // --- evidence upload (multipart) ---------------------------------
+              // The inspection POST carries JSON metadata only. Every captured
+              // file must reach POST /scans/{scanId}/images or the photos are
+              // lost the moment we purge. So: create ONE scan under the new
+              // inspection, upload each file to it, and only then mark synced.
+              const files = item.files?.length
+                ? item.files
+                : (item.fileUris || []).map((uri, i) => ({ uri, panel: i === 0 ? 'front' : 'other' }));
+              if (serverId && files.length > 0) {
+                const scanResp = await api.post(
+                  `/inspections/${serverId}/scans`,
+                  { ...(item.scanBody || {}) },
+                  { headers: { 'Idempotency-Key': `${item.id}-scan` } },
+                );
+                const serverScanId = scanResp?.data?.scan_id ?? scanResp?.data?.id;
+                if (!serverScanId) throw new Error('Scan created but returned no id');
+                for (let i = 0; i < files.length; i++) {
+                  // eslint-disable-next-line no-await-in-loop
+                  await uploadEvidenceFile(serverScanId, files[i], i);
+                }
+                // Best-effort assessment so server findings exist for the
+                // Violations/Pass screens. A failure here does NOT fail the
+                // sync — the evidence is already stored server-side.
+                try {
+                  await api.post(`/scans/${serverScanId}/assess`, undefined, { timeout: 60000 });
+                } catch (e) {
+                  if (__DEV__) console.warn('[sync] assess failed (evidence kept):', e?.message || e);
+                }
+              }
+              // Only purge files AFTER all uploads succeed: markSynced is the
+              // gate purgeSynced reads, so reaching here means the bytes are
+              // server-side. If any upload above threw, we skip this and the
+              // files stay queued for the next pass.
+              // NOTE: if the upload API is ever unavailable, files are KEPT
+              // (do NOT purge) — purgeSynced only collects is_synced rows.
               await markSynced(item.id);
+              anySuccess = true;
+              done = true;
             } else if (item.type === 'scan') {
-              // Not implemented on purpose. A scan is created at
-              // POST /inspections/{inspection_id}/scans, so it needs the parent
-              // inspection's SERVER id, and the queue only holds a local id.
-              // Until queue.js stores a localId→remoteId mapping there is no
-              // correct request to send, so the item is left queued rather than
-              // posted to a path that does not exist.
+              // A scan is created at POST /inspections/{server_id}/scans, so
+              // it needs the parent's SERVER id. Resolve it from this pass's
+              // inspection responses; if the parent hasn't synced yet, leave
+              // this scan queued — it will go on a later pass, never to a
+              // guessed URL.
+              const parentServerId = remoteIdByLocal.current[item.parentId];
+              if (parentServerId == null) break;
+              const scanResp = await api.post(
+                `/inspections/${parentServerId}/scans`,
+                { ...item.body },
+                { headers: { 'Idempotency-Key': item.id } },
+              );
+              const serverScanId = scanResp?.data?.scan_id ?? scanResp?.data?.id;
+              const files = item.files?.length
+                ? item.files
+                : (item.fileUris || []).map((uri, i) => ({ uri, panel: i === 0 ? 'front' : 'other' }));
+              if (serverScanId && files.length > 0) {
+                for (let i = 0; i < files.length; i++) {
+                  // eslint-disable-next-line no-await-in-loop
+                  await uploadEvidenceFile(serverScanId, files[i], i);
+                }
+                try {
+                  await api.post(`/scans/${serverScanId}/assess`, undefined, { timeout: 60000 });
+                } catch (e) {
+                  if (__DEV__) console.warn('[sync] assess failed (evidence kept):', e?.message || e);
+                }
+              }
+              await markSynced(item.id);
+              anySuccess = true;
+              done = true;
+            } else {
+              done = true; // unknown type — leave queued, do not spin
             }
-            break;
-          } catch {
-            if (attempt === 2) break;
+          } catch (e) {
+            const status = statusOf(e);
+            if (isDeadLetter(status, e?.code)) {
+              // Refused, not failed: record the error and stop retrying this
+              // item. The row stays visible (syncFailed) instead of looping.
+              try { await markFailed(item.id, e?.response?.data?.detail || e); } catch {}
+              done = true;
+              break;
+            }
+            if (attempt === 2) break; // 5xx/network/timeout: max 3 tries
             await new Promise((r) => setTimeout(r, delay));
             delay *= 2;
           }
@@ -83,7 +224,9 @@ export function SyncProvider({ children }) {
       }
       try { await purgeSynced(); } catch { /* best effort */ }
       await refreshCount();
-      setLastSync(new Date().toISOString());
+      // Only advertise a sync time when at least one item actually synced —
+      // otherwise a failed pass looks like a successful one.
+      if (anySuccess) setLastSync(new Date().toISOString());
     } finally {
       busy.current = false;
       setIsSyncing(false);
@@ -91,7 +234,9 @@ export function SyncProvider({ children }) {
   }, [refreshCount]);
 
   useEffect(() => {
-    refreshCount();
+    // Idempotent startup purge: collect is_synced leftovers from a crash
+    // between markSynced and purgeSynced, then count what is truly pending.
+    purgeSyncedOnBoot().finally(() => refreshCount());
     const sub = AppState.addEventListener('change', (s) => {
       if (s !== 'active') return;
       isOnline().then((ok) => { if (ok) syncNow(); }).catch(() => {});

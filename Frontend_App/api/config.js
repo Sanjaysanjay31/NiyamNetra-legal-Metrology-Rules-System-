@@ -19,9 +19,18 @@ import { Platform, NativeModules } from 'react-native';
 
 export const API_PORT = 8000;
 
+// Evidence floor shared with the backend (Backend config.py
+// EVIDENCE_MIN_FREE_GB = 5.0). Capture is blocked below this; a harder
+// 0.5GB floor blocks even when the constant cannot be imported.
+export const EVIDENCE_MIN_FREE_GB = 5;
+export const EVIDENCE_MIN_FREE_BYTES = EVIDENCE_MIN_FREE_GB * 1024 ** 3;
+
 // EDIT HERE if auto-detect cannot apply (e.g. a production APK with no env var).
 // This must be your laptop's CURRENT LAN IP (the WiFi IP your phone is on).
 // Find it with: ipconfig  → look for "IPv4 Address" under your WiFi adapter.
+// SINGLE SOURCE OF TRUTH for the fallback host: eas.json build profiles and
+// .env only override via EXPO_PUBLIC_API_BASE_URL at build time — they never
+// duplicate this IP. (See the comment block at the bottom of eas.json.)
 const FALLBACK_HOST = '10.101.163.148';
 
 // ---------------------------------------------------------------------------

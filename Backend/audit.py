@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from models import AuditLog
@@ -69,20 +70,42 @@ def append_audit(
     user_id: int | None = None, old_value: str | None = None,
     new_value: str | None = None, reason: str | None = None,
     ip_address: str | None = None, user_agent: str | None = None,
+    commit: bool = True,
 ) -> AuditLog:
-    last = db.query(AuditLog).order_by(AuditLog.seq.desc()).first()
-    entry = AuditLog(
-        seq=(last.seq + 1) if last else 1,
-        inspection_id=inspection_id, scan_id=scan_id, user_id=user_id,
-        action=action, old_value=old_value, new_value=new_value, reason=reason,
-        ip_address=ip_address, user_agent=user_agent,
-        timestamp=datetime.now(timezone.utc),
-        hash_prev=last.hash_self if last else None,
-    )
-    entry.hash_self = chain_hash(entry, entry.hash_prev)
-    db.add(entry)
-    db.commit()
-    return entry
+    """Append one hash-chained row.
+
+    Seq allocation races under concurrency (two writers can read the same
+    max seq). Retry up to 3 times on IntegrityError: rollback, re-read max
+    seq, retry. commit=False flushes only so the caller can batch the audit
+    row into its own single commit (used by assess_scan for the
+    assessment_rerun row, avoiding a double-commit where the audit commits
+    before the findings it describes).
+    """
+    last_exc: Exception | None = None
+    for _attempt in range(3):
+        try:
+            last = db.query(AuditLog).order_by(AuditLog.seq.desc()).first()
+            entry = AuditLog(
+                seq=(last.seq + 1) if last else 1,
+                inspection_id=inspection_id, scan_id=scan_id, user_id=user_id,
+                action=action, old_value=old_value, new_value=new_value, reason=reason,
+                ip_address=ip_address, user_agent=user_agent,
+                timestamp=datetime.now(timezone.utc),
+                hash_prev=last.hash_self if last else None,
+            )
+            entry.hash_self = chain_hash(entry, entry.hash_prev)
+            db.add(entry)
+            if commit:
+                db.commit()
+            else:
+                db.flush()
+            return entry
+        except IntegrityError as e:
+            db.rollback()
+            last_exc = e
+            continue
+    db.rollback()
+    raise last_exc  # type: ignore[misc]
 
 
 def verify_chain(db: Session, start_seq: int = 1) -> dict:
@@ -108,11 +131,20 @@ def verify_chain(db: Session, start_seq: int = 1) -> dict:
 def publish_daily_head(db: Session) -> dict:
     """Append today's chain head to an append-only file, and print it on every
     report generated that day. A wholesale rewrite then contradicts a value
-    that has already left the building. 10 §10.2."""
+    that has already left the building. 10 §10.2.
+
+    Disk errors are logged, never raised: a full OUT_DIR must not turn a
+    report request into a 500.
+    """
     from config import settings
     from datetime import date
 
     state = verify_chain(db)
     line = f"{date.today().isoformat()} {state.get('head') or 'EMPTY'}\n"
-    (settings.OUT_DIR / "chain_heads.log").open("a", encoding="utf-8").write(line)
+    try:
+        settings.OUT_DIR.mkdir(parents=True, exist_ok=True)
+        (settings.OUT_DIR / "chain_heads.log").open("a", encoding="utf-8").write(line)
+    except OSError as e:
+        import logging
+        logging.getLogger(__name__).warning("chain head publish failed: %s", e)
     return state

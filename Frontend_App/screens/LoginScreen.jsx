@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
 import { colors, spacing, typography, radius, shadows } from '../theme';
 import Input from '../components/Input';
@@ -8,8 +8,10 @@ import { BACKEND_TARGETS, normalizeBackendUrl } from '../api/config';
 import { switchBackend, getBackendTarget, getApiBaseUrl, getCookieWarning, getSavedCustomUrl } from '../api/client';
 
 // Show the Local/LAN/Render/Custom switcher in development and in internal test
-// builds. Set to false for the final Play Store / public production build.
-const ALLOW_BACKEND_SWITCH = true;
+// builds. Hidden in production — end users must never re-point the app —
+// UNLESS the API is unreachable, in which case a fallback switcher appears in
+// the error state so a wrong backend can never brick the login screen.
+const ALLOW_BACKEND_SWITCH = __DEV__;
 
 // Backend cycle order for single-tap switching.
 const TARGET_ORDER = ['local', 'lan', 'render', 'custom'];
@@ -19,16 +21,20 @@ export default function LoginScreen() {
   const { login } = useAuth();
   const [employee_id, setId] = useState('');
   const [password, setPw] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
   const [target, setTarget] = useState(getBackendTarget());
   const [baseUrl, setBaseUrl] = useState(getApiBaseUrl());
+  const [apiUnreachable, setApiUnreachable] = useState(false);
   // Web only: set when the page host and the API host differ, which silently
   // breaks the SameSite refresh cookie. Nothing else in the UI would explain it.
   const [cookieWarn, setCookieWarn] = useState(null);
   // Typed address for the 'custom' target. Pre-filled with whatever was saved
   // last, so it survives an app restart and does not have to be retyped.
   const [customText, setCustomText] = useState('');
+
+  const showSwitcher = ALLOW_BACKEND_SWITCH || apiUnreachable;
 
   // AuthContext restores the saved target asynchronously, so re-read it once
   // mounted rather than trusting the value at module-load time.
@@ -40,6 +46,13 @@ export default function LoginScreen() {
   }, []);
 
   const pickBackend = async (name) => {
+    // Custom with no saved address has nothing to point at — switching would
+    // silently land on the LAN fallback and look like it worked. Refuse with
+    // an inline error so the officer types the address first.
+    if (name === 'custom' && !getSavedCustomUrl() && !normalizeBackendUrl(customText)) {
+      setErr('Custom backend needs an address first: type the laptop\'s IP below, tap Save, then switch.');
+      return;
+    }
     const url = await switchBackend(name);
     setTarget(name); setBaseUrl(url); setErr(null);
     setCookieWarn(getCookieWarning());
@@ -83,16 +96,33 @@ export default function LoginScreen() {
   };
 
   const submit = async () => {
+    // Empty-field validation with an inline error — never send a request the
+    // server is guaranteed to reject, and never leave the button dead silent.
+    if (!employee_id.trim() || !password) {
+      setErr('Enter your Employee ID and password to sign in.');
+      return;
+    }
     setErr(null);
     setLoading(true);
     try {
-      await login(employee_id, password);
+      await login(employee_id.trim(), password);
+      setApiUnreachable(false);
     } catch (e) {
-      // Distinguish "wrong credentials" from "backend unreachable" — with
-      // switchable backends, a network failure looked like a bad password.
-      setErr(e?.response
-        ? 'Employee ID or password is incorrect'
-        : `Cannot reach the backend at ${getApiBaseUrl()}\n\n${unreachableHint(target)}`);
+      // Distinguish wrong credentials (401) from forbidden (403) from network
+      // failures — with switchable backends, a network failure used to look
+      // like a bad password. Note the API layer rethrows 403 as a flagged
+      // Error (code FORBIDDEN), so check both shapes.
+      const status = e?.status ?? e?.response?.status;
+      if (status === 401) {
+        setErr('Employee ID or password is incorrect');
+      } else if (status === 403 || e?.code === 'FORBIDDEN') {
+        setErr('Not permitted for this account. Contact your administrator.');
+      } else if (status === 429) {
+        setErr('Too many sign-in attempts. Wait a minute and try again.');
+      } else {
+        setApiUnreachable(true);
+        setErr(`Cannot reach the backend at ${getApiBaseUrl()}\n\n${unreachableHint(target)}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -101,99 +131,144 @@ export default function LoginScreen() {
   const targetInfo = BACKEND_TARGETS[target];
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
-      {/* Brand header */}
-      <View style={{ backgroundColor: colors.niyamBlue, paddingTop: spacing.xxxl, paddingBottom: spacing.xxl, alignItems: 'center', ...shadows.lg }}>
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, backgroundColor: colors.saffron }} />
-        {/* Logo */}
-        <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.1)', borderWidth: 2, borderColor: colors.netraTeal, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.lg }}>
-          <View style={{ width: 28, height: 28, borderWidth: 2, borderColor: colors.white, borderRadius: 14, justifyContent: 'center', alignItems: 'center' }}>
-            <View style={{ width: 14, height: 18, borderWidth: 1.5, borderColor: colors.netraTeal, borderRadius: 2 }} />
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={{ flex: 1, backgroundColor: colors.background }}
+    >
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.background }}
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Brand header */}
+        <View style={{ backgroundColor: colors.niyamBlue, paddingTop: spacing.xxxl, paddingBottom: spacing.xxl, alignItems: 'center', ...shadows.lg }}>
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, backgroundColor: colors.saffron }} />
+          {/* Logo */}
+          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.1)', borderWidth: 2, borderColor: colors.netraTeal, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.lg }}>
+            <View style={{ width: 28, height: 28, borderWidth: 2, borderColor: colors.white, borderRadius: 14, justifyContent: 'center', alignItems: 'center' }}>
+              <View style={{ width: 14, height: 18, borderWidth: 1.5, borderColor: colors.netraTeal, borderRadius: 2 }} />
+            </View>
           </View>
+          <Text style={{ color: colors.white, fontSize: 24, fontWeight: '700', letterSpacing: 1 }}>NiyamNetra</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: spacing.xs }}>Legal Metrology Compliance</Text>
         </View>
-        <Text style={{ color: colors.white, fontSize: 24, fontWeight: '700', letterSpacing: 1 }}>NiyamNetra</Text>
-        <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: spacing.xs }}>Legal Metrology Compliance</Text>
-      </View>
 
-      {/* Form */}
-      <View style={{ padding: spacing.xxl }}>
-        <Text style={{ ...typography.h3, marginBottom: spacing.xs }}>Sign in</Text>
-        <Text style={{ ...typography.bodySecondary, marginBottom: spacing.xl }}>Use your Employee ID and password</Text>
-        <Input label="Employee ID" value={employee_id} onChangeText={setId} placeholder="e.g. LM-2026-0042" autoCapitalize="none" />
-        <Input label="Password" value={password} onChangeText={setPw} placeholder="Enter your password" secureTextEntry />
-        {err && (
-          <View style={{ backgroundColor: colors.errorBg, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md, borderColor: colors.violation.border, borderWidth: 1 }}>
-            <Text style={{ color: colors.error, fontSize: 13 }}>{err}</Text>
-          </View>
-        )}
-        <PrimaryButton title="Sign In" onPress={submit} loading={loading} style={{ marginTop: spacing.md }} />
-
-        {ALLOW_BACKEND_SWITCH && (
-          <View style={{ marginTop: spacing.xl, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md }}>
-            <Text style={{ ...typography.label, marginBottom: spacing.xs }}>Backend</Text>
-            {/* Single tap-to-cycle switch — much easier than picking from 3 buttons */}
+        {/* Form */}
+        <View style={{ padding: spacing.xxl }}>
+          <Text style={{ ...typography.h3, marginBottom: spacing.xs }}>Sign in</Text>
+          <Text style={{ ...typography.bodySecondary, marginBottom: spacing.xl }}>Use your Employee ID and password</Text>
+          <Input label="Employee ID" value={employee_id} onChangeText={setId} placeholder="e.g. LM-2026-0042" autoCapitalize="none" />
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <View style={{ flex: 1 }}>
+              <Input
+                label="Password"
+                value={password}
+                onChangeText={setPw}
+                placeholder="Enter your password"
+                secureTextEntry={!showPw}
+              />
+            </View>
             <Pressable
-              onPress={cycleBackend}
+              onPress={() => setShowPw((s) => !s)}
               accessibilityRole="button"
-              accessibilityLabel={`Current backend: ${targetInfo?.label}. Tap to switch.`}
+              accessibilityLabel={showPw ? 'Hide password' : 'Show password'}
               style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingVertical: spacing.sm,
+                marginLeft: spacing.sm,
+                marginTop: spacing.xl,
                 paddingHorizontal: spacing.md,
+                paddingVertical: spacing.sm + 2,
                 borderRadius: radius.md,
                 borderWidth: 1.5,
-                borderColor: colors.niyamBlue,
-                backgroundColor: colors.niyamBlue + '10',
+                borderColor: colors.border,
+                minHeight: 44,
+                justifyContent: 'center',
               }}
             >
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 14, fontWeight: '700', color: colors.niyamBlue }}>{targetInfo?.label}</Text>
-                <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 1 }}>{targetInfo?.hint}</Text>
-              </View>
-              <Text style={{ fontSize: 12, color: colors.netraTeal, fontWeight: '600', marginLeft: spacing.sm }}>Switch →</Text>
-            </Pressable>
-            <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: spacing.xs }} numberOfLines={1}>{baseUrl}</Text>
-            {target === 'custom' && (
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: spacing.sm }}>
-                <View style={{ flex: 1 }}>
-                  <Input
-                    value={customText}
-                    onChangeText={setCustomText}
-                    placeholder="192.168.1.7"
-                    keyboardType="url"
-                    style={{ marginBottom: 0 }}
-                  />
-                </View>
-                <Pressable
-                  onPress={applyCustom}
-                  accessibilityRole="button"
-                  accessibilityLabel="Save backend address"
-                  style={{
-                    marginLeft: spacing.sm,
-                    paddingHorizontal: spacing.md,
-                    paddingVertical: spacing.sm + 4,
-                    borderRadius: radius.md,
-                    backgroundColor: colors.netraTeal,
-                  }}
-                >
-                  <Text style={{ color: colors.white, fontSize: 13, fontWeight: '700' }}>Save</Text>
-                </Pressable>
-              </View>
-            )}
-            {cookieWarn && (
-              <Text style={{ fontSize: 10, color: colors.warning, marginTop: spacing.xs, lineHeight: 14 }}>
-                Session will not persist across reloads: this page and the API are on different hosts.
+              <Text style={{ color: colors.netraTeal, fontSize: 13, fontWeight: '600' }}>
+                {showPw ? 'Hide' : 'Show'}
               </Text>
-            )}
+            </Pressable>
           </View>
-        )}
+          {err && (
+            <View style={{ backgroundColor: colors.errorBg, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md, borderColor: colors.violation.border, borderWidth: 1 }}>
+              <Text style={{ color: colors.error, fontSize: 13 }}>{err}</Text>
+              {apiUnreachable && !ALLOW_BACKEND_SWITCH && (
+                <Text style={{ color: colors.error, fontSize: 12, marginTop: spacing.xs }}>
+                  The backend switcher is shown below so you can point the app at the right server.
+                </Text>
+              )}
+            </View>
+          )}
+          <PrimaryButton title="Sign In" onPress={submit} loading={loading} style={{ marginTop: spacing.md }} />
 
-        <Text style={{ ...typography.caption, textAlign: 'center', marginTop: spacing.xl, lineHeight: 16 }}>
-          Assesses LM (PC) Rules 2011 only. Not a statutory notice.
-        </Text>
-      </View>
-    </View>
+          {showSwitcher && (
+            <View style={{ marginTop: spacing.xl, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md }}>
+              <Text style={{ ...typography.label, marginBottom: spacing.xs }}>Backend</Text>
+              {/* Single tap-to-cycle switch — much easier than picking from 3 buttons */}
+              <Pressable
+                onPress={cycleBackend}
+                accessibilityRole="button"
+                accessibilityLabel={`Current backend: ${targetInfo?.label}. Tap to switch.`}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingVertical: spacing.sm,
+                  paddingHorizontal: spacing.md,
+                  borderRadius: radius.md,
+                  borderWidth: 1.5,
+                  borderColor: colors.niyamBlue,
+                  backgroundColor: colors.niyamBlue + '10',
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: colors.niyamBlue }}>{targetInfo?.label}</Text>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 1 }}>{targetInfo?.hint}</Text>
+                </View>
+                <Text style={{ fontSize: 12, color: colors.netraTeal, fontWeight: '600', marginLeft: spacing.sm }}>Switch →</Text>
+              </Pressable>
+              <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: spacing.xs }} numberOfLines={1}>{baseUrl}</Text>
+              {target === 'custom' && (
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: spacing.sm }}>
+                  <View style={{ flex: 1 }}>
+                    <Input
+                      value={customText}
+                      onChangeText={setCustomText}
+                      placeholder="192.168.1.7"
+                      keyboardType="numbers-and-punctuation"
+                      autoCapitalize="none"
+                      style={{ marginBottom: 0 }}
+                    />
+                  </View>
+                  <Pressable
+                    onPress={applyCustom}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save backend address"
+                    style={{
+                      marginLeft: spacing.sm,
+                      paddingHorizontal: spacing.md,
+                      paddingVertical: spacing.sm + 4,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.netraTeal,
+                    }}
+                  >
+                    <Text style={{ color: colors.white, fontSize: 13, fontWeight: '700' }}>Save</Text>
+                  </Pressable>
+                </View>
+              )}
+              {cookieWarn && (
+                <Text style={{ fontSize: 10, color: colors.warning, marginTop: spacing.xs, lineHeight: 14 }}>
+                  Session will not persist across reloads: this page and the API are on different hosts.
+                </Text>
+              )}
+            </View>
+          )}
+
+          <Text style={{ ...typography.caption, textAlign: 'center', marginTop: spacing.xl, lineHeight: 16 }}>
+            Assesses LM (PC) Rules 2011 only. Not a statutory notice.
+          </Text>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }

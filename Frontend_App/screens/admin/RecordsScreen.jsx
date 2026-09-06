@@ -1,21 +1,33 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, Modal } from 'react-native';
 import { colors, spacing, typography, radius } from '../../theme';
 import Header from '../../components/Header';
 import Card from '../../components/Card';
 import SegmentControl from '../../components/SegmentControl';
 import EmptyState from '../../components/EmptyState';
+import VerdictBadge from '../../components/VerdictBadge';
 import { fetchInspections, fetchStores, fetchUsers } from '../../api/admin';
 
-// §5.9 Admin Records - live store-wise inspection records from /inspections
+// §5.9 Admin Records - live store-wise inspection records from /inspections.
+// Primary filter is the ASSESSMENT result (All/Compliant/Violation/Not
+// assessed) — the workflow status (draft/submitted) is secondary detail, not
+// the headline, because a submitted row can still be not_assessed.
+function assessOf(i) {
+  const r = String(i?.result || i?.overall_result || i?.verdict || '').toLowerCase();
+  if (['compliant', 'success', 'pass'].includes(r)) return 'compliant';
+  if (['violation', 'fail', 'non_compliant', 'non-compliant'].includes(r)) return 'violation';
+  return 'not_assessed';
+}
+
 export default function RecordsScreen({ navigation }) {
   const [filter, setFilter] = useState('all');
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState(null); // null | 'forbidden' | 'network'
+  const [detail, setDetail] = useState(null);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(false);
+    setLoading(true); setError(null);
     try {
       const [inspections, stores, users] = await Promise.all([
         fetchInspections(),
@@ -32,20 +44,29 @@ export default function RecordsScreen({ navigation }) {
           store: s?.name || `Store #${i.store_id}`,
           location: loc,
           date: i.inspection_date,
-          status: i.status, // draft | submitted
+          status: i.status, // draft | submitted (secondary)
+          result: assessOf(i),
           inspector: userMap[i.user_id] || `Officer #${i.user_id}`,
           checks: i.scan_count,
         };
       }));
-    } catch { setError(true); }
+    } catch (e) {
+      const status = e?.status ?? e?.response?.status;
+      setError(status === 403 || e?.code === 'FORBIDDEN' ? 'forbidden' : 'network');
+    }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const submittedCount = records.filter((r) => r.status === 'submitted').length;
-  const draftCount = records.filter((r) => r.status === 'draft').length;
-  const filtered = filter === 'all' ? records : records.filter((r) => r.status === filter);
+  const compliantCount = records.filter((r) => r.result === 'compliant').length;
+  const violationCount = records.filter((r) => r.result === 'violation').length;
+  const naCount = records.filter((r) => r.result === 'not_assessed').length;
+  const filtered = filter === 'all' ? records : records.filter((r) => r.result === filter);
+
+  const badgeFor = (result) => (
+    result === 'compliant' ? 'compliant' : result === 'violation' ? 'violation' : 'not_assessed'
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -56,8 +77,9 @@ export default function RecordsScreen({ navigation }) {
           onSelect={setFilter}
           options={[
             { key: 'all', label: 'All', count: records.length },
-            { key: 'submitted', label: 'Submitted', count: submittedCount },
-            { key: 'draft', label: 'Draft', count: draftCount },
+            { key: 'compliant', label: 'Compliant', count: compliantCount },
+            { key: 'violation', label: 'Violation', count: violationCount },
+            { key: 'not_assessed', label: 'Not assessed', count: naCount },
           ]}
           scrollable
         />
@@ -68,30 +90,34 @@ export default function RecordsScreen({ navigation }) {
               <ActivityIndicator color={colors.netraTeal} />
             </View>
           ) : error ? (
-            <EmptyState icon="⚠️" title="Could not load records" subtitle="Check your connection and try again." />
+            <EmptyState
+              icon="⚠️"
+              title={error === 'forbidden' ? 'Not permitted' : 'Could not load records'}
+              subtitle={error === 'forbidden'
+                ? 'Your account cannot view records. Contact your administrator.'
+                : 'Check your connection and try again.'}
+            />
           ) : filtered.length === 0 ? (
             <EmptyState icon="📋" title="No records found" subtitle="Try adjusting your filters." />
           ) : (
             filtered.map((rec) => {
-              const isSubmitted = rec.status === 'submitted';
               return (
-                <Pressable key={rec.id}>
+                <Pressable
+                  key={rec.id}
+                  onPress={() => setDetail(rec)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${rec.store}, ${rec.result}. View details.`}
+                >
                   <Card padding="md" style={{ marginBottom: spacing.sm }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <View style={{ flex: 1, paddingRight: spacing.sm }}>
                         <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text, marginBottom: 4 }}>{rec.store}</Text>
                         <Text style={{ fontSize: 12, color: colors.textMuted }}>{[rec.location, rec.date].filter(Boolean).join(' • ')}</Text>
-                        <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>{rec.inspector} • {rec.checks} checks</Text>
+                        <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
+                          {rec.inspector} • {rec.checks} checks • {rec.status || 'draft'}
+                        </Text>
                       </View>
-                      <View style={{
-                        backgroundColor: isSubmitted ? colors.pass.fill : colors.notAssessed.fill,
-                        borderRadius: radius.full, paddingHorizontal: 10, paddingVertical: 3,
-                      }}>
-                        <Text style={{
-                          color: isSubmitted ? colors.pass.text : colors.notAssessed.text,
-                          fontSize: 10, fontWeight: '700', textTransform: 'uppercase',
-                        }}>{isSubmitted ? 'Submitted' : 'Draft'}</Text>
-                      </View>
+                      <VerdictBadge result={badgeFor(rec.result)} />
                     </View>
                   </Card>
                 </Pressable>
@@ -100,6 +126,31 @@ export default function RecordsScreen({ navigation }) {
           )}
         </View>
       </ScrollView>
+
+      {/* Detail modal — result + secondary workflow status */}
+      <Modal visible={!!detail} animationType="slide" transparent onRequestClose={() => setDetail(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.lg }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>{detail?.store || 'Record'}</Text>
+              <Pressable onPress={() => setDetail(null)} accessibilityRole="button" accessibilityLabel="Close details" hitSlop={10} style={{ minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ fontSize: 22, color: colors.textMuted }}>✕</Text>
+              </Pressable>
+            </View>
+            {!!detail && (
+              <>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm }}>
+                  <Text style={typography.body}>{[detail.location, detail.date].filter(Boolean).join(' • ')}</Text>
+                  <VerdictBadge result={badgeFor(detail.result)} />
+                </View>
+                <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                  {detail.inspector} • {detail.checks} checks • workflow status: {detail.status || 'draft'}
+                </Text>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

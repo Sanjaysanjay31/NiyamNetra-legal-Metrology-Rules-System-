@@ -31,7 +31,7 @@ Every packaged commodity sold in India must carry the mandatory declarations req
 
 ## Solution — NiyamNetra
 
-- A responsive **Portal** (React + Vite, PWA) for Inspectors and Admins on desktop, an **Expo** app (React Native, packaged as an Android APK) for inspectors (scanning) and admins (on-the-move monitoring), and a single **FastAPI** backend for all of them — no Docker; SQLite for the demo, PostgreSQL for production.
+- A responsive **Portal** (React + Vite, PWA) for Inspectors and Admins on desktop, an **Expo** app (React Native, packaged as an Android APK) for inspectors (scanning) and admins (on-the-move monitoring), and a single **FastAPI** backend for all of them — no Docker; Supabase PostgreSQL (session pooler) REQUIRED via `DATABASE_URL`, no SQLite fallback.
 - **Inspector flow:** log in by `employee_id`, create an inspection (shop, GPS, date, category), capture package photos with a guide box and on-device blur/glare/framing checks, read the label with the offline OCR pipeline, run the compliance checks, review a checklist (`pass` / `fail` / `not_assessed` per check, with an image crop and rule reference), override with a reason where needed, and submit. Works offline and syncs when connectivity returns.
 - **Admin flow:** a dashboard with violation and trend charts, a searchable repository (manufacturer, product, shop, region, date, result), an inspection detail view with an image carousel and audit timeline, inspector management, rule-version management and PDF/Word/CSV export.
 - **The AI recommends; the officer decides.** Every flagged item links to an image crop; every submission and override is written to an append-only, hash-chained audit ledger, and every image carries a SHA-256 hash.
@@ -47,7 +47,7 @@ Two vocabularies are used consistently. A **check** resolves to `pass`, `fail` o
 - **Backend:** FastAPI 0.110 · Uvicorn · SQLAlchemy 2.0 · **Alembic** (migrations) · Pydantic 2.6 · PyJWT · Passlib/bcrypt · python-multipart · qrcode.
 - **AI / OCR:** OpenCV 4.9 · PaddleOCR 2.8 (primary, offline) · Tesseract 5 (fallback) · optional YOLO for label detection.
 - **Rule engine:** Python `re` · JSON rule catalog (`rules/catalog_2026_07_01.json` + `rules/forbidden_words.json`) · optional spaCy.
-- **Database:** SQLite for the demo, PostgreSQL for production — the same SQLAlchemy code, `DATABASE_URL` the only change.
+- **Database:** Supabase PostgreSQL REQUIRED — `DATABASE_URL` (`postgresql+psycopg://`, session pooler, no default). No SQLite fallback.
 - **Reports:** ReportLab 4.1 (PDF) · python-docx 1.1 (Word).
 - **Run:** three terminals — backend on `0.0.0.0:8000`, Portal on `5173`, Expo dev server on `8081`. No Docker.
 
@@ -176,18 +176,18 @@ The authoritative legal reference is `Docs/02_NiyamNetra_Rules.md`; the executab
 The full contract is in `Docs/04_NiyamNetra_PRD.md`. The shape:
 
 ```text
-POST /auth/login          {employee_id, password}          -> {access_token, refresh_token, role}
-POST /auth/refresh        {refresh_token}                  -> {access_token}
-POST /auth/register       {employee_id, name, role, area}  -> admin only
-POST /inspections         {store, category, scope flags}   -> {inspection_id}
-POST /inspections/{id}/scans   (multipart images)          -> {scan_id, result, findings[]}
-POST /inspections/{id}/submit  {remarks, overrides}        -> {status: submitted}
-GET  /inspections?date=&inspector_id=&result=              -> paginated list
-GET  /inspections/{id}                                     -> detail: images, findings, audit
-GET  /reports/{id}.pdf | /reports/{id}.docx                -> file download
-GET  /admin/dashboard/stats?period=today                   -> {counts, violationsByType, trends, recent}
-GET  /health                                               -> {status, checks_registered}   # must be 19
+POST /auth/login          {employee_id, password}          -> {access_token, user, install_id} (refresh in httpOnly cookie)
+POST /inspections         {store_id, transaction_type, gps, notes} -> {inspection_id}
+POST /inspections/{id}/scans                          -> {scan_id} (one scan per package)
+POST /scans/{id}/images   (multipart, one per panel)      -> {image_id, sha256, usable}
+POST /scans/{id}/assess                               -> {result, findings[19], counts}
+PATCH /admin/findings/{id}  {human_verdict, override_reason} -> override (engine verdict untouched)
+GET  /admin/dashboard                                 -> {counts, top_failed_checks, trend, review_queue}
+GET  /reports/today.pdf | /reports/inspections/{id}/pdf   -> file download
+GET  /health                                          -> {status, checks_registered}   # must be 19
 ```
+
+Portal reads `VITE_API_BASE_URL` (not `VITE_API_URL`). Full contract in `Docs/Backend.md` §8.
 
 Scan results use the four-state vocabulary (`compliant` / `violation` / `not_assessed` / `out_of_scope`); a `result` filter accepts those values.
 
@@ -200,7 +200,7 @@ The schema of record is `Docs/Backend.md` §4, mirrored in `Docs/06_DATABASE.md`
 - **Seven tables:** `users`, `stores`, `inspections`, `scans`, `scan_images`, `findings`, `audit_logs`.
 - `scan_images` stores eight 8-bit perceptual-hash bands (`phash_b0`…`phash_b7`) for duplicate detection — complete through Hamming distance 7, which the near-duplicate threshold of 5 requires.
 - `audit_logs` is append-only, chaining `hash_prev` → `hash_self`; the genesis row hashes the literal `"0"`.
-- SQLite for the demo, PostgreSQL for production. `--workers > 1` is PostgreSQL-only: SQLite serialises writers, and the audit `seq` must be allocated inside the inserting transaction.
+- Supabase PostgreSQL only. `--workers > 1` is supported; there is no SQLite single-writer constraint, and the audit `seq` is allocated inside the inserting transaction.
 
 ---
 

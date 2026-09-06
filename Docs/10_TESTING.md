@@ -30,7 +30,7 @@ What the suite can honestly report is **which invariants hold**. That is a stron
 | I2 | Every `not_assessed` carries a non-empty reason | §4.2 |
 | I3 | No check is ever silently omitted | §4.3 |
 | I4 | A halt propagates as `not_assessed` with the halt reason, never as `pass` | §4.4 |
-| I5 | `compliant` requires zero `not_assessed` | §4.5 |
+| I5 | `compliant` requires zero `not_assessed` for its scan type (`assessed == total`: 16/16 package without listing, 18/18 with listing) | §4.5 |
 | I6 | The reported denominator matches the rows produced | §4.6 |
 | I7 | No unverified ledger entry is cited to a pinpoint provision | §5 |
 | I8 | No millimetre verdict is reached without a scale reference | §6.1 |
@@ -376,7 +376,9 @@ def test_exemption_halt_does_not_report_compliance(load_fixture):
     )
 ```
 
-### 4.5 I5 — `compliant` requires zero `not_assessed`
+### 4.5 I5 — `compliant` requires zero `not_assessed` for its scan type
+
+A package scan without a listing honestly reports 16/18 (CHK15/CHK16 `not_assessed`) and resolves `not_assessed`, never `compliant`. `compliant` means `assessed == total` for that scan's denominator (16/16 without listing, 18/18 with one) — equivalently `assessed >= 16` with zero gaps in the checks that could run.
 
 ```python
 def test_compliant_requires_every_check_assessed(load_fixture):
@@ -1533,7 +1535,7 @@ Coverage is read to find untested branches, never quoted as a number. A file of 
 | 9 | §3.6 | Font tests with no scale reference at all | I8: no scale, no verdict |
 | 10 | §3.6 | No boundary cases; no uncertainty band | Both boundaries of all five bands, plus I9 |
 | 11 | §3.4 | Only three exemption cases; no tobacco carve-out | Fixtures 11, 12, 13 |
-| 12 | §3.8, §4.1, §9 | `admin@niyamnetra.gov.in` / `123456` — a real government domain and a six-character password | `@example.test`, 12-character minimum |
+| 12 | §3.8, §4.1, §9 | `admin@niyamnetra.gov.in` / `123456` — a real government domain and a six-character password | `@example.test`, 12-char minimum for new accounts and 8-char minimum at login |
 | 13 | §4.2 | Asserted `rule_version 2017_amended` | `rules_as_at` + `catalog_hash` + `engine_version` |
 | 14 | §4.3 | Asserted `checklist`, `reasons`, `rule_results JSON` columns | `findings` rows |
 | 15 | §4.3 | "rule_results JSON has 18 checks" | 19 rows, asserted by I1 |

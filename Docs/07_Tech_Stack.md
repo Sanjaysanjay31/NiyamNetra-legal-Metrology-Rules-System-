@@ -17,18 +17,18 @@ Three parts, all free and open-source, and the core runs with no internet after 
 | Expo app (mobile) | Expo SDK 54 + expo-camera + expo-secure-store + React Navigation 6 | 8081 |
 | Backend (API) | FastAPI + Uvicorn + SQLAlchemy 2.0 + Pydantic 2 + PyJWT + Passlib | 8000 |
 | Vision / OCR | OpenCV 4.9 + PaddleOCR 2.8 (primary) + Tesseract 5 (fallback) + YOLOv8 (optional) | — |
-| Database | SQLite file in development · PostgreSQL in production, same SQLAlchemy code | — |
+| Database | Supabase PostgreSQL (session pooler), REQUIRED, no SQLite fallback | — |
 | Reports | ReportLab 4.1 (PDF) + python-docx 1.1 (Word) + qrcode | — |
 
 ### 0.1 What is deliberately absent, and why
 
 This list is as load-bearing as the list above. Each of these was in the stack at some point and was removed for a stated reason. Adding one back reopens the problem.
 
-**Docker.** Three terminals start in about thirty seconds. A `docker pull` for a PaddleOCR image plus PostgreSQL is several gigabytes over hackathon WiFi, fails halfway, and hides the logs the judges want to see. There is no Compose file and no image build in CI.
+**Docker for local dev.** Three terminals start in about thirty seconds; a PaddleOCR plus PostgreSQL image pull is gigabytes over hackathon WiFi, fails halfway, and hides the logs the judges want to see. There is no Compose file and no image build in CI — but `Backend/Dockerfile` exists for the Render deploy (Tesseract + libzbar on slim Python; see `render.yaml`).
 
-**Any hosted vision or language model** — Google Vision, Gemini, GPT, Claude, Azure OCR. Three independent reasons, and any one of them is sufficient. The venue network cannot be relied on, so a demo that calls out fails live. Evidence in an enforcement file cannot be shipped to a third-party endpoint that returns a differently-worded answer on the same image next month. And a generative model asked to read a blurry label will produce a plausible reading rather than reporting that it cannot read one — which is exactly the failure the whole three-state verdict model exists to prevent. OCR here is deterministic, local and versioned.
+**Hosted vision/LLM as primary** — Google Vision, Gemini, GPT, Claude, Azure OCR. Three independent reasons, and any one of them is sufficient. The venue network cannot be relied on, so a demo that calls out fails live. Evidence in an enforcement file cannot be shipped to a third-party endpoint that returns a differently-worded answer on the same image next month. And a generative model asked to read a blurry label will produce a plausible reading rather than reporting that it cannot read one — which is exactly the failure the whole three-state verdict model exists to prevent. OCR is local-first (PaddleOCR primary, Tesseract fallback); OCR.space is an optional fallback only when local OCR is absent (slim Render deploy, `OCR_SPACE_API_KEY`).
 
-**Supabase, S3, MinIO, Cloudinary and every other object store.** Evidence lives on the local filesystem next to the database, hashed byte-for-byte. A remote store adds a network dependency to the integrity check, a second place the bytes could differ from the hash, and a data-residency question nobody on the team can answer for a government record.
+**Object stores as primary.** Local filesystem is the primary evidence store, hashed byte-for-byte. Supabase Storage is an optional best-effort mirror configured via `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` / `SUPABASE_BUCKET` (`image_processor.store_upload`); a mirror failure never fails the scan. S3/MinIO/Cloudinary are not used.
 
 **Generative upscaling and super-resolution of any kind.** A super-resolution model asked to sharpen a 2 mm letter invents plausible glyph edges. Measuring the invented edge and reporting a millimetre figure from it is fabricated evidence, whatever the intent.
 
@@ -155,8 +155,9 @@ import axios from "axios";
 // Not localStorage, not sessionStorage, not a non-httpOnly cookie: anything
 // readable by JavaScript is readable by any script that gets injected, and a
 // stolen access token is a valid inspector session for twelve hours.
-// The refresh token is an httpOnly SameSite=Strict cookie the browser sends
-// automatically and JavaScript can never read. See 09_SECURITY.md §3.
+// The refresh token is an httpOnly cookie the browser sends automatically and
+// JavaScript can never read: SameSite=Strict locally, SameSite=None; Secure in
+// prod (cross-site portal -> API). See 09_SECURITY.md §3.
 let accessToken = null;
 export const setAccessToken = (t) => { accessToken = t; };
 
@@ -279,7 +280,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 | SQLAlchemy 2.0 | ORM over SQLite and PostgreSQL | `models.py`, `database.py` |
 | Alembic 1.13 | Migrations; the only way the schema is created | `alembic/` |
 | PyJWT 2.8 | Access and refresh tokens | `jwt_handler.py` |
-| Passlib + bcrypt | Password hashing | `auth_utils.py` |
+| Passlib + bcrypt | Password hashing | `password_handler.py` (`CryptContext` `bcrypt__rounds=12`) |
 | python-multipart | Multipart file upload parsing | required by `UploadFile` |
 | cachetools 5.3 | `TTLCache` for the listing fetch | `11` §2.6 |
 
@@ -452,8 +453,7 @@ And a scan resolves to exactly one of four results: `compliant`, `violation`, `n
 
 | Tool | Purpose | How |
 |---|---|---|
-| SQLite | Development and demo | `DATABASE_URL=sqlite:///./niyamnetra.db` |
-| PostgreSQL 15+ | Production, direct install, no Docker | `createdb niyamnetra`, then `DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/niyamnetra` |
+| Supabase PostgreSQL 15+ | Only supported database (session pooler, REQUIRED) | `DATABASE_URL=postgresql+psycopg://postgres.<REF>:<PW>@aws-0-<REGION>.pooler.supabase.com:5432/postgres?sslmode=require` — no SQLite fallback |
 | Local filesystem | Evidence images and generated reports | `backend/evidence/{inspection_id}/`, `backend/out/` |
 
 ### 7.1 SQLite pragmas are per connection
@@ -499,10 +499,10 @@ Version 2.1's disclaimer text was wrong in two ways: it hard-coded "as on 7 May 
 ### 8.3 The QR code
 
 ```python
-url = f"{settings.PUBLIC_VERIFY_BASE}/verify/{inspection_id}?head={chain_head[:16]}"
+url = f"{settings.PUBLIC_BASE_URL.rstrip('/')}/verify/{inspection_id}?head={chain_head[:16]}"
 ```
 
-An `https` URL from configuration, so a phone camera can open it. Not `niyamnetra://verify/{id}`, which does nothing on a phone without the app installed — and the person most likely to scan the QR is the trader, who does not have the app. `PUBLIC_VERIFY_BASE` has no default: there is no `verify.niyamnetra.gov.in`, nobody on this team can register a `gov.in` domain, and printing one on an enforcement document implies an official endorsement the project does not have.
+An `https` URL from `PUBLIC_BASE_URL` (default `http://localhost:8000`; `https` real host in production), so a phone camera can open it. Not `niyamnetra://verify/{id}`, which does nothing on a phone without the app installed — and the person most likely to scan the QR is the trader, who does not have the app. `PUBLIC_BASE_URL` has a localhost default for local runs; there is no `verify.niyamnetra.gov.in`, nobody on this team can register a `gov.in` domain, and printing one on an enforcement document implies an official endorsement the project does not have.
 
 ---
 
@@ -511,7 +511,7 @@ An `https` URL from configuration, so a phone camera can open it. Not `niyamnetr
 | Tool | Purpose |
 |---|---|
 | PyJWT 2.8 | 12-hour access token, 30-day refresh token, `token_type` checked on decode |
-| Passlib + bcrypt 4.0.1 | Password hashing, 12-character minimum enforced in the schema |
+| Passlib + bcrypt 4.0.1 | Password hashing, 12-char minimum for new accounts and 8-char minimum at login |
 | FastAPI dependencies | `current_user`, `require_role`, `owned_inspection`, `owned_scan` |
 
 Ownership is resolved from the row the URL path names, never from a request parameter. Version 2.1's sketch — `if current_user.id != inspector_id: raise 403` — is the vacuous check: `inspector_id` arrives from the request, so the caller supplies their own id and passes while the path still addresses somebody else's record. And the answer is **404, not 403**, so the endpoint is not an existence oracle for records the caller may not see. Full treatment in `09_SECURITY.md`; the regression test is `10_TESTING.md` §8.3.
@@ -539,10 +539,12 @@ Three local terminals are the primary demo and the most reliable one. Free hosti
 
 | Tool | Hosts | Note |
 |---|---|---|
-| Vercel Hobby | The portal | Connect the repo, root `niyamnetra-portal`, build `npm run build`, output `dist` |
-| Render free tier | The API | Build `pip install -r requirements.txt`, start `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+| Static host (Vercel / Render static) | The portal | Root `Frontend_Portal`, build `npm run build:render`, output `dist` |
+| Render free tier (Python runtime) | The API only | `rootDir: Backend`, build `pip install -r requirements-render.txt` (slim), start `uvicorn main:app --host 0.0.0.0 --port $PORT` (see `render.yaml`) |
 
-Nothing else. **Supabase and Cloudinary were removed from this list**, and they are not alternatives to consider: evidence images and the audit chain are the two things in this system that must not live on infrastructure the team cannot inspect, and putting a government inspection record on a free tier whose data residency and retention nobody has read is a worse problem than not having a public link.
+Do NOT install full `requirements.txt` on Render: it pulls PaddleOCR (~1.5 GB) and the free instance OOMs or times out — the slim `requirements-render.txt` drops PaddleOCR/PaddlePaddle, pytesseract and pyzbar for exactly this reason.
+
+Local filesystem remains the primary evidence store; Supabase Storage is only an optional best-effort mirror (`SUPABASE_*` in `render.yaml`), and the audit chain stays in the database with published head hashes. Cloudinary is not used. Putting the primary record on a free tier whose data residency and retention nobody has read is a worse problem than not having a public link.
 
 Render's free tier sleeps after inactivity, so a cold API takes tens of seconds to answer the first request. If you demo from a hosted link, wake it deliberately a few minutes beforehand.
 
@@ -550,7 +552,7 @@ Render's free tier sleeps after inactivity, so a cold API takes tens of seconds 
 
 ## 12. BUILD ORDER
 
-**Step 1 — the skeleton, no vision.** FastAPI + Alembic + SQLite + the portal shell + a blank Expo app, all talking. `alembic upgrade head` must succeed and `/health` must report `checks_registered: 19` — even with every check a stub — because the registry assertion is the thing that later prevents a silently short report. Log in from the portal at `localhost:5173` and from Expo Go over the LAN IP, and confirm both reach the same API and receive a token. Create an inspection end to end before adding anything clever.
+**Step 1 — the skeleton, no vision.** FastAPI + Alembic + Supabase PostgreSQL (pooler) + the portal shell + a blank Expo app, all talking. `alembic upgrade head` must succeed and `/health` must report `checks_registered: 19` — even with every check a stub — because the registry assertion is the thing that later prevents a silently short report. Log in from the portal at `localhost:5173` and from Expo Go over the LAN IP, and confirm both reach the same API and receive a token. Create an inspection end to end before adding anything clever.
 
 **Step 2 — the image and OCR pipeline.** `store_upload` first, with its hash and its verify endpoint, because the evidence guarantee is easier to build than to retrofit. Then rectification, scale and OCR as one function returning structured fields with confidence and bounding boxes. Test on five real packets including a transparent bottle and a curved pouch, and on one deliberately awful photograph — the awful one is the important test, because it must be *stored and flagged*, not rejected.
 
@@ -630,7 +632,7 @@ Work down this list in order; each line assumes the ones above it passed.
 | 11 | §1 | No system packages listed at all — tesseract, zbar and libGL all fail at import | §1.1, three platforms |
 | 12 | §1, §13 | "Python 3.10+" with no upper bound; 3.12 has no paddle wheel | 3.10 or 3.11, stated |
 | 13 | §4, §10 | `admin@niyamnetra.gov.in` / `123456` in two places | `@example.test`, generated passwords |
-| 14 | §8 | `https://verify.niyamnetra.gov.in/{hash}` — a domain the team cannot register | `PUBLIC_VERIFY_BASE` from config, no default |
+| 14 | §8 | `https://verify.niyamnetra.gov.in/{hash}` — a domain the team cannot register | `PUBLIC_BASE_URL` from config (localhost default, `https` real host in prod) |
 | 15 | §7 | MinIO listed as optional S3-style storage | Removed; §0.1 |
 | 16 | §11 | Supabase and Cloudinary as hosting options | Removed; §11 |
 | 17 | §5 | "if blur<100 reject" | Measured and recorded as `not_assessed`; §5.4 |

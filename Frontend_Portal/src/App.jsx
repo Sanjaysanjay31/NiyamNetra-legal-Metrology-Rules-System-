@@ -14,11 +14,61 @@
  */
 
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { useRegisterSW } from 'virtual:pwa-register/react'
 import { AdminRoute, ProtectedRoute, PublicOnlyRoute, useAuth } from './auth/AuthContext'
 import { endpoints } from './api/client'
 import { useResource } from './lib/hooks'
 import { reviewQueue as reviewQueueFixture } from './mock/fixtures'
 import Layout from './shell/Layout'
+
+/**
+ * PWA update prompt for registerType: 'prompt'. The new worker waits until the
+ * officer accepts; the banner is the only UI that can trigger the reload.
+ */
+function ServiceWorkerPrompt() {
+  const {
+    offlineReady: [offlineReady, setOfflineReady],
+    needRefresh: [needRefresh, setNeedRefresh],
+    updateServiceWorker,
+  } = useRegisterSW()
+  if (!offlineReady && !needRefresh) return null
+  return (
+    <div
+      role="status"
+      className="fixed inset-x-0 bottom-0 z-overlay px-4 pb-4"
+      aria-live="polite"
+    >
+      <div className="mx-auto flex max-w-[560px] flex-wrap items-center justify-between gap-3 rounded-card border border-divider bg-surface p-4 shadow-modal">
+        <p className="text-small text-ink">
+          {needRefresh
+            ? 'A new version of the portal is available.'
+            : 'The portal is ready to work offline.'}
+        </p>
+        <div className="flex items-center gap-2">
+          {needRefresh && (
+            <button
+              type="button"
+              onClick={() => updateServiceWorker(true)}
+              className="min-h-touch rounded-sm bg-accent px-4 text-small font-semibold text-accent-on"
+            >
+              Reload to update
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setOfflineReady(false)
+              setNeedRefresh(false)
+            }}
+            className="min-h-touch rounded-sm px-3 text-small font-medium text-ink-2 hover:text-ink"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 import Login from './screens/Login'
 import AdminAnalytics from './screens/AdminAnalytics'
@@ -56,7 +106,9 @@ function RootRedirect() {
  */
 function Shell() {
   const { isAdmin } = useAuth()
-  const { data } = useResource(() => endpoints.admin.reviewQueue({ limit: 100 }), {
+  /* GET /admin/review-queue takes no parameters; the badge counts what the
+     server returns ({count: n}). */
+  const { data } = useResource(() => endpoints.admin.reviewQueue(), {
     enabled: isAdmin,
     fallback: reviewQueueFixture,
     label: 'review-queue-count',
@@ -72,6 +124,8 @@ function Shell() {
 
 export default function App() {
   return (
+    <>
+    <ServiceWorkerPrompt />
     <Routes>
       <Route
         path="/login"
@@ -118,5 +172,6 @@ export default function App() {
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
+    </>
   )
 }

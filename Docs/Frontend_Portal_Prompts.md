@@ -45,7 +45,7 @@ Tailwind is pinned to **3.4**, so the install is `tailwindcss postcss autoprefix
 **`.env`:**
 
 ```ini
-VITE_API_URL=http://localhost:8000
+VITE_API_BASE_URL=http://localhost:8000
 ```
 
 The backend listens on `8000` with `--host 0.0.0.0`; this portal runs on `5173`.
@@ -67,7 +67,7 @@ The role *may* be read from the decoded access token to decide which navigation 
 
 ### `src/api/client.js`
 
-Axios instance on `VITE_API_URL` with `withCredentials: true`. A request interceptor attaches the in-memory bearer token. A response interceptor catches `401`, calls `/auth/refresh` **once**, replays the original request, and on a second failure clears the context and routes to login. Guard against the refresh storm: a single in-flight refresh promise shared by all queued requests.
+Axios instance on `VITE_API_BASE_URL` with `withCredentials: true`. Login is `POST /auth/login {employee_id, password}`. A request interceptor attaches the in-memory bearer token. A response interceptor catches `401`, calls `/auth/refresh` **once**, replays the original request, and on a second failure clears the context and routes to login. Guard against the refresh storm: a single in-flight refresh promise shared by all queued requests.
 
 ### Routes
 
@@ -198,7 +198,7 @@ Calendar dots per §4.6: green where all assessed checks passed, the violation c
 
 **Files:** `pages/TodaysReport.jsx`, `components/StatCard.jsx`, `components/StoreBreakdown.jsx`, `components/InspectionCalendar.jsx`.
 
-**API:** `GET /reports/today?date=YYYY-MM-DD` →
+**API:** `GET /reports/today?day=YYYY-MM-DD` → (PDF: `GET /reports/today.pdf?day=…`; per-inspection: `GET /reports/inspections/{id}/pdf`)
 
 ```json
 {
@@ -226,7 +226,7 @@ Repeat-violator handling per §4.7: where a prior record exists within 50 m unde
 
 Tables: hover only, no striping. Version 1.0 set the hover colour and the odd-row stripe to the same value, so hovering half the rows did nothing.
 
-**API:** `GET /admin/dashboard/stats?period=week` →
+**API:** `GET /admin/dashboard?start=&end=` →
 
 ```json
 {

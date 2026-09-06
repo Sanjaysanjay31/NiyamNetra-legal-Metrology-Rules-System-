@@ -24,7 +24,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { ArrowRight, Eye, EyeOff, Hash, Lock, WifiOff } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
@@ -330,11 +330,8 @@ export default function Login() {
 
           <p className="mt-3 text-caption text-ink-3">
             Trouble signing in? Contact your administrator — password resets and device
-            releases are done by them, not on this screen.{' '}
-            <Link to="/settings" className="text-accent-text underline decoration-dotted">
-              Account settings
-            </Link>{' '}
-            are available once you are signed in.
+            releases are done by them, not on this screen. Account settings are
+            available once you are signed in.
           </p>
         </div>
       </section>

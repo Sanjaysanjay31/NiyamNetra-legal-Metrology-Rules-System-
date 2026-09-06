@@ -33,7 +33,7 @@ That last clause is what drives every decision below. A demo only has to work; a
 
 **One backend for both clients.** The portal and the Expo app call the same FastAPI on the same database with the same token format. Two backends means two rules engines, and two rules engines means two answers to the same question about the same package — which is the one thing an enforcement system cannot have.
 
-**No Docker.** Three terminals start in about thirty seconds; a PaddleOCR plus PostgreSQL image pull is gigabytes over hackathon WiFi and hides the logs. See `07_Tech_Stack.md` §0.1.
+**Local-first, Dockerfile present for Render.** Three terminals start in about thirty seconds and are the primary demo; a PaddleOCR plus PostgreSQL image pull is gigabytes over hackathon WiFi and hides the logs. `Backend/Dockerfile` exists for the Render deploy (Tesseract + libzbar on a slim Python image) — see `07_Tech_Stack.md` §0.1.
 
 **Offline-first, but never offline-silent.** Both clients queue work locally and sync later. A record created or edited offline is flagged, and the flag survives the sync — because a finding entered from memory an hour after leaving the shop is weaker evidence than one captured at the counter, and the reviewing officer is entitled to know which they are looking at.
 
@@ -85,7 +85,7 @@ backend/
 ├── database.py          # engine, SessionLocal, get_db, SQLite pragma listener
 ├── models.py            # SEVEN tables (§2.4)
 ├── schemas.py           # Pydantic request/response models
-├── auth_utils.py        # password hashing
+├── password_handler.py  # password hashing (CryptContext bcrypt__rounds=12)
 ├── jwt_handler.py       # mint/decode, token_type enforced
 ├── rbac.py              # current_user, require_role, owned_inspection, owned_scan
 ├── image_processor.py   # store_upload, rectify, compute_scale, phash_bands
@@ -143,7 +143,7 @@ PDF via ReportLab, the same content as an editable `.docx` via python-docx. Four
 
 No rupee figure is printed. The Section 36 amounts under Act 8 of 2026 are ledger entry **L-12** and unverified, and a wrong penalty in a document handed to a trader is worse than no penalty. The disclaimer reads the catalogue date from `rules_as_at` rather than hard-coding a date string that becomes false the day the catalogue is updated.
 
-The QR is an `https` URL from `PUBLIC_VERIFY_BASE` carrying the audit-chain head. Not a custom scheme: the person most likely to scan it is the trader, who does not have the app, and `niyamnetra://verify/{id}` does nothing in a phone camera. There is no `verify.niyamnetra.gov.in` — nobody on this team can register a `gov.in` domain, and printing one implies an official endorsement the project does not have.
+The QR is an `https` URL from `PUBLIC_BASE_URL` (default `http://localhost:8000`; `https` real host in production) carrying the audit-chain head. Not a custom scheme: the person most likely to scan it is the trader, who does not have the app, and `niyamnetra://verify/{id}` does nothing in a phone camera. There is no `verify.niyamnetra.gov.in` — nobody on this team can register a `gov.in` domain, and printing one implies an official endorsement the project does not have.
 
 ---
 
@@ -153,11 +153,11 @@ The QR is an `https` URL from `PUBLIC_VERIFY_BASE` carrying the audit-chain head
 
 1. Inspector opens Expo Go, scans the QR from `npx expo start`, logs in with an **Employee ID** and password. The server verifies the bcrypt hash and returns a 12-hour access token plus a 30-day refresh token bound to this `install_id`. The access token stays in memory; the refresh token goes to the keystore.
 
-2. `POST /inspections {store_id | new_store, transaction_type, gps, ...}` opens an inspection. Scope is captured **before** any photograph — transaction type, commodity category, whether the package exceeds 25 kg or 25 L, whether it is a medical device. Asking afterwards means an out-of-scope package has already been photographed and assessed.
+2. `POST /inspections {store_id, transaction_type, gps, ...}` opens an inspection (`store_id` only; new stores via separate `POST /stores`, admin-only per `routers/inspections.py:94-110`). Scope is captured **before** any photograph — transaction type, commodity category, whether the package exceeds 25 kg or 25 L, whether it is a medical device. Asking afterwards means an out-of-scope package has already been photographed and assessed.
 
 3. `POST /scans` creates the scan row: commodity, declared net quantity, panel shape and dimensions, import and perishability status, and the scale reference the inspector is using.
 
-4. `POST /scans/{id}/images` once per panel — front, back, MRP panel, batch panel. Each upload is stored **byte-for-byte**, then read back off disk and hashed. One scan, many images.
+4. `POST /scans/{id}/images` once per panel — `front`, `back`, `side`, `mrp`, `batch`, `other` (`ALLOWED_PANELS` in `routers/scans.py`; barcode is `Scan.barcode`, not a panel). Each upload is stored **byte-for-byte**, then read back off disk and hashed. One scan, many images.
 
    Version 1.x created a new `Scan` per uploaded image, so a package photographed on four panels became four packages with four independent verdicts, three of them missing most of the declarations and therefore three spurious violations from one compliant package.
 
@@ -201,17 +201,17 @@ On conflict the local copy becomes a **review item**. It is not discarded. Versi
 
 Base URL is `http://localhost:8000` from the portal and `http://<LAN-IP>:8000` from the phone — never `localhost` from the phone, which means the phone itself.
 
-**Auth.** `POST /auth/login {employee_id, password, install_id}` → access token in the body, refresh token as an httpOnly `SameSite=Strict` cookie scoped to `/auth`. `POST /auth/refresh` rotates, checking `token_epoch` and `install_id`. `POST /auth/logout` clears the cookie. `GET /auth/me`. Login is by **employee ID**, not email: an inspector has an employee number on their identity card, and it is the identifier that appears on the paperwork.
+**Auth.** `POST /auth/login {employee_id, password}` → access token in the body, refresh token as an httpOnly cookie scoped to `/auth` (`SameSite=Strict` locally, `SameSite=None; Secure` in prod when the portal and API are cross-site — `config.refresh_cookie_cross_site`). `POST /auth/refresh` rotates, checking `token_epoch` and `install_id`. `POST /auth/logout` clears the cookie. `GET /auth/me`. Login is by **employee ID**, not email: an inspector has an employee number on their identity card, and it is the identifier that appears on the paperwork.
 
-**Inspections.** `POST /inspections {store_id | new_store, transaction_type, gps_lat, gps_lng, notes}`. `GET /inspections` — filtered by date, result and store, **scoped to the caller by the server**. `GET /inspections/{id}`. `POST /inspections/{id}/submit`.
+**Inspections.** `POST /inspections {store_id, transaction_type, gps_lat, gps_lng, notes}` (`store_id` only; `POST /stores` admin-only creates a store). `GET /inspections` — filtered by date, result and store, **scoped to the caller by the server**. `GET /inspections/{id}`. `POST /inspections/{id}/submit`.
 
 There is no `?inspectorId=` parameter. Version 1.1 had one, and it was the whole authorisation hole: a filter the caller supplies is not a control, because the caller can supply somebody else's id. Scope is derived from the token, and a request for a record the caller may not see returns **404, not 403**, so the endpoint is not an existence oracle.
 
-**Scans.** `POST /scans` · `POST /scans/{id}/images` · `POST /scans/{id}/assess` · `GET /scans/{id}` · `GET /scans/{id}/verify` (rehashes every stored file) · `PATCH /findings/{id}` (override, reason mandatory).
+**Scans.** `POST /inspections/{id}/scans` · `POST /scans/{id}/images` · `PATCH /scans/{id}` (declared scope flags: `commodity_generic`, `brand_name`, `commodity_category`, `batch_number`, `net_quantity_value/unit`, `is_imported`, `is_perishable`, `is_medical_device`, `is_tobacco`, `has_sticker`, `sticker_reduces_price`, `sticker_covers_original`) · `POST /scans/{id}/listing {url}` (SSRF-guarded fetch for CHK15/CHK16) · `POST /scans/{id}/assess` · `GET /scans/{id}` · `GET /scans/{id}/verify` (rehashes every stored file) · `PATCH /admin/findings/{id}` (override, reason mandatory).
 
-**Reports.** `GET /reports/inspection/{id}/pdf` · `.../docx` · `GET /reports/today`.
+**Reports.** `GET /reports/inspections/{id}/pdf` · `.../docx` · `GET /reports/today` (+ `GET /reports/today.pdf`).
 
-**Admin.** `GET /admin/dashboard` (note: not `/admin/dashboard/stats`) · `GET /admin/review-queue` · `GET /admin/audit` · `GET /admin/audit/verify` · `POST /admin/users` · `GET /admin/users` · `GET /admin/rules` (read-only).
+**Admin.** `GET /admin/dashboard` (note: not `/admin/dashboard/stats`) · `GET /admin/review-queue` · `GET /admin/audit` (paginated, chain verification folded in as `chain_intact`/`chain_head`) · `POST /admin/users` · `GET /admin/users` · `GET /admin/rules` (read-only).
 
 `/admin/rules` is read-only and there is no `PUT`. Version 1.1 offered "update rule version", which would let a signed-in admin change the legal basis of inspections already recorded. The rule catalogue is versioned in code with a `catalog_hash`, and each scan stores the hash it was assessed under, so what the law said at assessment time is fixed and auditable rather than editable.
 
@@ -258,7 +258,7 @@ npx expo start                     # QR at exp://<LAN-IP>:8081
 
 Environment variables and their constraints are in `14_env_example.md`. `JWT_SECRET` has no default and `config.py` rejects at import anything shorter than 32 characters or drawn from a known-weak set — version 1.1 printed `JWT_SECRET=niyamnetra_secret_2026_sih` in the document body, which means it is now in the repository, in every clone, and in the submission PDF.
 
-**Optional public hosting.** Vercel for the portal, Render for the API. Nothing else — Supabase and Cloudinary were removed, because evidence images and the audit chain must not live on infrastructure the team cannot inspect. See `07_Tech_Stack.md` §11.
+**Optional public hosting.** Render hosts the backend only (`rootDir: Backend`, build `pip install -r requirements-render.txt` slim, start `uvicorn main:app --host 0.0.0.0 --port $PORT` — see `render.yaml`). The Portal is a separate static host built with `npm run build:render`. Do NOT install full `requirements.txt` on Render: it pulls PaddleOCR (~1.5 GB) and the free instance OOMs or times out. Local filesystem is the primary evidence store; Supabase Storage is an optional best-effort mirror configured via `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` / `SUPABASE_BUCKET` (`image_processor.store_upload`), and OCR.space is an optional fallback when local OCR (PaddleOCR/Tesseract) is absent (`OCR_SPACE_API_KEY`). See `07_Tech_Stack.md` §11.
 
 ---
 
@@ -266,7 +266,7 @@ Environment variables and their constraints are in `14_env_example.md`. `JWT_SEC
 
 | Control | Implementation |
 |---|---|
-| Passwords | bcrypt via Passlib, `bcrypt==4.0.1` pinned, 12-character minimum in the schema |
+| Passwords | bcrypt via Passlib, `bcrypt==4.0.1` pinned, 12-char minimum for new accounts (`CreateUserRequest` / change-password) and 8-char minimum at login (`LoginRequest`) |
 | Tokens | 12-hour access in client memory · 30-day refresh in an httpOnly cookie or keystore · `token_type` checked on every decode |
 | Device binding | Server-issued random 32-byte `install_id` in the platform keystore — **never IMEI**, unavailable to apps since Android 10 |
 | Revocation | `token_epoch` on the user; incrementing it invalidates every live refresh token |
@@ -346,7 +346,7 @@ A catalogue date and hash on every scan, so what the law said when the assessmen
 | 5 | §2.1 | "localStorage for token" | Module-scoped variable; httpOnly refresh cookie |
 | 6 | §2.2 | `expo-image-picker` installed then "disabled for Inspector" | Not installed |
 | 7 | §2.2 | "Same JWT — login once, use both" | `install_id` binding; per-device login |
-| 8 | §2.3 | `auth.py` at root **and** `routers/auth.py`; nested services against flat imports | Flat layout, one `auth_utils.py` |
+| 8 | §2.3 | `auth.py` at root **and** `routers/auth.py`; nested services against flat imports | Flat layout, one `password_handler.py` |
 | 9 | §2.3 | `main.py` "create tables" | `alembic upgrade head`, with the reason |
 | 10 | §2.3, §5 | CORS `allow_origins=["exp://*","http://192.168.*.*:19000"]` | `allow_origin_regex` |
 | 11 | §2.5 | "blur Laplacian <100 reject" | Measured, stored, `not_assessed` |
@@ -355,7 +355,7 @@ A catalogue date and hash on every scan, so what the law said when the assessmen
 | 14 | §2.6, §3.1 | JSON rule files with per-field `violation_tier` | Python check functions; tier derived |
 | 15 | §2.6 | 18 checks; halted checks skipped | 19 rows; halts carry a reason |
 | 16 | §2.7 | Disclaimer hard-coded "as on 7 May 2026"; claimed "not FSSAI/MDR 2017" | Reads `rules_as_at`; corrected scope |
-| 17 | §2.7 | `https://verify.niyamnetra.gov.in/{hash}` | `PUBLIC_VERIFY_BASE`, no default |
+| 17 | §2.7 | `https://verify.niyamnetra.gov.in/{hash}` | `PUBLIC_BASE_URL`, localhost default, `https` real host in prod |
 | 18 | §3.1 | One `Scan` per uploaded image | One scan, many `scan_images` |
 | 19 | §3.1, §5 | `inspector@niyamnetra.gov.in` / `123456`; login by email | `@example.test`; login by `employee_id` |
 | 20 | §3.3, §4 | `/admin/dashboard/stats`; four counts; violations parsed from JSON in Python | `/admin/dashboard`; five counts; SQL over `findings` |

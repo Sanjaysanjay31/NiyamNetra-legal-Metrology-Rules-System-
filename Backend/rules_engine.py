@@ -1,3 +1,4 @@
+# SPLIT NOTE 2026-09-06 (FIX 4.3) — migrate category logic to rules_engine_*.py
 """rules_engine.py"""
 from __future__ import annotations
 
@@ -69,6 +70,9 @@ class CheckContext:
     ocr_available: bool = False
     ocr_failure_reason: str | None = None
     ocr_mean_confidence: float | None = None
+    # Full concatenated OCR text (all panels), for scan.ocr_text persistence.
+    # Not read by any check; staged by build_context, consumed by assess.
+    ocr_full_text: str | None = None
     fields: dict = field(default_factory=dict)      # name -> ExtractedField
     measured_heights_mm: dict = field(default_factory=dict)
     measured_widths_mm: dict = field(default_factory=dict)
@@ -237,8 +241,13 @@ def chk03_chapter_ii_applicability(ctx: CheckContext) -> FindingResult:
         return t
 
     ceiling, unit = None, None
-    if ctx.net_quantity_unit in {"kg", "g", "gm", "mg"} and ctx.net_quantity_value:
-        kg = _to_kg(ctx.net_quantity_value, ctx.net_quantity_unit)
+    # Unit recognition goes through _to_kg/_to_litres (covers g/gm/grams/gram,
+    # l/ltr/litre/litres/liters/liter/ml) so spelling variants still hit the
+    # Rule 3 ceilings instead of silently skipping them.
+    _kg = _to_kg(ctx.net_quantity_value, ctx.net_quantity_unit or "") if ctx.net_quantity_value else None
+    _l = _to_litres(ctx.net_quantity_value, ctx.net_quantity_unit or "") if ctx.net_quantity_value else None
+    if _kg is not None:
+        kg = _kg
         ceiling = (
             AGRI_CEILING_KG
             if (ctx.commodity_category or "").lower() in AGRI_CATEGORIES
@@ -252,8 +261,8 @@ def chk03_chapter_ii_applicability(ctx: CheckContext) -> FindingResult:
                 f"limit in Rule 3 for this commodity class."
             )
             return t
-    elif ctx.net_quantity_unit in {"l", "ltr", "litre", "ml"} and ctx.net_quantity_value:
-        litres = _to_litres(ctx.net_quantity_value, ctx.net_quantity_unit)
+    elif _l is not None:
+        litres = _l
         if litres is not None and litres > RETAIL_VOLUME_CEILING_L:
             t.observed = f"Net quantity {litres:g} L exceeds the 25 L ceiling."
             ctx.halted, ctx.halt_reason = "CHK03", (
@@ -266,12 +275,15 @@ def chk03_chapter_ii_applicability(ctx: CheckContext) -> FindingResult:
 
 
 def _to_kg(value: float, unit: str) -> float | None:
-    return {"kg": value, "g": value / 1000, "gm": value / 1000,
-            "mg": value / 1_000_000}.get(unit)
+    u = (unit or "").strip().lower()
+    return {"kg": value, "g": value / 1000, "gm": value / 1000, "gram": value / 1000,
+            "grams": value / 1000, "mg": value / 1_000_000}.get(u)
 
 
 def _to_litres(value: float, unit: str) -> float | None:
-    return {"l": value, "ltr": value, "litre": value, "ml": value / 1000}.get(unit)
+    u = (unit or "").strip().lower()
+    return {"l": value, "ltr": value, "litre": value, "litres": value,
+            "liter": value, "liters": value, "ml": value / 1000}.get(u)
 
 
 @check("CHK02")

@@ -42,30 +42,38 @@ def upgrade() -> None:
         )
         op.execute(
             "CREATE TRIGGER findings_engine_verdict_immutable BEFORE UPDATE ON findings "
+            # SQLite has no IS DISTINCT FROM; IS NOT is its null-safe
+            # equivalent, matching the PostgreSQL branch below.
             "WHEN OLD.engine_verdict IS NOT NEW.engine_verdict "
             "BEGIN SELECT RAISE(ABORT, 'engine_verdict is written once'); END;"
         )
-        # 06 §4.4 — scan_images is append-only (evidence immutability)
+        # 06 §4.4 — scan_images: UPDATE-blocked (evidence immutability), but
+        # DELETE-allowed. The assess endpoint purges images for compliant /
+        # out_of_scope scans (storage minimisation); a DB-level deny-delete
+        # trigger would make that purge fail. audit_logs stays fully
+        # append-only (no UPDATE, no DELETE); findings.engine_verdict stays
+        # immutable. Retention policy is documented in routers/scans.py.
         op.execute(
             "CREATE TRIGGER img_no_update BEFORE UPDATE ON scan_images "
             "BEGIN SELECT RAISE(ABORT, 'scan_images is append-only'); END;"
         )
-        op.execute(
-            "CREATE TRIGGER img_no_delete BEFORE DELETE ON scan_images "
-            "BEGIN SELECT RAISE(ABORT, 'scan_images is append-only'); END;"
-        )
     elif dialect == "postgresql":
+        # deny_write uses TG_TABLE_NAME so the same function serves every
+        # append-only table with an accurate message (no hard-coded name).
         op.execute(
             "CREATE OR REPLACE FUNCTION deny_write() RETURNS trigger AS $$ "
-            "BEGIN RAISE EXCEPTION 'audit_logs is append-only'; END; $$ "
+            "BEGIN RAISE EXCEPTION '% is append-only, table=%', TG_OP, TG_TABLE_NAME; END; $$ "
             "LANGUAGE plpgsql;"
         )
         op.execute(
             "CREATE TRIGGER audit_no_update BEFORE UPDATE OR DELETE ON audit_logs "
             "FOR EACH ROW EXECUTE FUNCTION deny_write();"
         )
+        # scan_images: block UPDATE only (evidence immutability); DELETE is
+        # allowed so the assess-time purge of compliant/out_of_scope images
+        # can run. audit_logs stays fully append-only above.
         op.execute(
-            "CREATE TRIGGER img_no_update BEFORE UPDATE OR DELETE ON scan_images "
+            "CREATE TRIGGER img_no_update BEFORE UPDATE ON scan_images "
             "FOR EACH ROW EXECUTE FUNCTION deny_write();"
         )
         op.execute(
@@ -89,7 +97,6 @@ def downgrade() -> None:
         op.execute("DROP TRIGGER IF EXISTS audit_no_delete;")
         op.execute("DROP TRIGGER IF EXISTS findings_engine_verdict_immutable;")
         op.execute("DROP TRIGGER IF EXISTS img_no_update;")
-        op.execute("DROP TRIGGER IF EXISTS img_no_delete;")
     elif dialect == "postgresql":
         op.execute("DROP TRIGGER IF EXISTS audit_no_update ON audit_logs;")
         op.execute("DROP TRIGGER IF EXISTS img_no_update ON scan_images;")

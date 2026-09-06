@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { colors, spacing, typography, radius } from '../../theme';
 import Header from '../../components/Header';
 import Card from '../../components/Card';
@@ -28,6 +28,21 @@ export default function MoreScreen({ navigation }) {
   const empId = me?.employee_id || '—';
   const area = me?.jurisdiction || 'State Legal Metrology Department';
   const initial = name.trim().charAt(0).toUpperCase() || 'A';
+
+  const menuAction = (key) => {
+    if (key === 'export') {
+      navigation?.navigate?.('Reports');
+      return;
+    }
+    Alert.alert(
+      'Coming soon',
+      key === 'settings'
+        ? 'System settings are managed on the server in this release.'
+        : key === 'audit'
+          ? 'The audit log is server-side in this release.'
+          : 'NiyamNetra v1.0 • Assesses LM (PC) Rules 2011 only. Not a statutory notice.',
+    );
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -64,10 +79,16 @@ export default function MoreScreen({ navigation }) {
             { key: 'audit', label: 'Audit Log', icon: '📝' },
             { key: 'about', label: 'About NiyamNetra', icon: 'ⓘ' },
           ].map((item, idx, arr) => (
-            <Pressable key={item.key} style={{ flexDirection: 'row', alignItems: 'center', padding: spacing.md, borderBottomWidth: idx < arr.length - 1 ? 1 : 0, borderBottomColor: colors.divider }}>
+            <Pressable
+              key={item.key}
+              onPress={() => menuAction(item.key)}
+              accessibilityRole="button"
+              accessibilityLabel={item.label}
+              style={{ flexDirection: 'row', alignItems: 'center', padding: spacing.md, borderBottomWidth: idx < arr.length - 1 ? 1 : 0, borderBottomColor: colors.divider }}
+            >
               <Text style={{ fontSize: 18, marginRight: spacing.md, width: 24, textAlign: 'center' }}>{item.icon}</Text>
               <Text style={{ flex: 1, fontSize: 14, color: colors.text }}>{item.label}</Text>
-              <Text style={{ color: colors.textFaint, fontSize: 16 }}>{'›'}</Text>
+              <Text style={{ color: '#64748B', fontSize: 16 }}>{'›'}</Text>
             </Pressable>
           ))}
         </Card>

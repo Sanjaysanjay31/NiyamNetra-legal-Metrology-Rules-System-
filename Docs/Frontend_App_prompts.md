@@ -60,7 +60,7 @@ Set the value to your machine's **LAN IP**, never `localhost` — `localhost` on
 ### Token and install handling
 
 - On first launch, read `install_id` from `expo-secure-store`. If absent, the device is not yet registered: the value is issued by the **server** at registration and returned to the app, then written to secure store. Never generate it on the client, and never use the IMEI or a device fingerprint (`09_SECURITY.md` §3.3).
-- **Login** — `POST /auth/login {employee_id, password, install_id}` returns a 12-hour access token in the body and a 30-day refresh token, both bound to this `install_id`. Hold the **access token in memory only** (a module-scoped variable inside an `AuthContext`); write the **refresh token to `expo-secure-store`**.
+- **Login** — `POST /auth/login {employee_id, password}` (request only; `install_id` is server-issued via `bind_install` and returned in the response, then persisted to secure store) returns a 12-hour access token in the body and a 30-day refresh token, both bound to this `install_id`. Hold the **access token in memory only** (a module-scoped variable inside an `AuthContext`); write the **refresh token to `expo-secure-store`**.
 - On cold start, call `POST /auth/refresh` once with the stored refresh token; success rehydrates the session, failure routes to login. `/auth/refresh` rotates the token and checks `token_epoch` and `install_id` server-side.
 - The access token is discarded on background or lock and re-derived from the refresh token on resume. `POST /auth/logout` clears server state; also wipe the in-memory token and the stored refresh token.
 - Read the **role** from the decoded access token to choose which navigator to render. That is presentation, not access control.
@@ -92,7 +92,7 @@ Build `LoginScreen` per `08_UI_DESIGN.md` §5 and the shared form controls in §
 
 - Fields: **Employee ID** and password — never email. The employee number is what appears on the officer's identity card and on the paperwork (`05_SYSTEM_ARCHITECTURE.md` §7).
 - There is **no register screen and no role picker** in the app. Accounts are provisioned by an admin; the role comes from the login response.
-- Submit calls `POST /auth/login {employee_id, password, install_id}`. On the very first launch of an unregistered install, follow `Backend.md` §3 for how the server issues and returns the `install_id`; persist it to `expo-secure-store` before storing tokens.
+- Submit calls `POST /auth/login {employee_id, password}`. On the very first launch of an unregistered install, follow `Backend.md` §3 for how the server issues and returns the `install_id` via `bind_install`; persist it to `expo-secure-store` before storing tokens.
 - Show a single generic error on failure ("Employee ID or password is incorrect"); never reveal which field was wrong. There is deliberately no client lockout — a lockout keyed on a named officer's ID is a denial-of-service against that officer; the server rate-limits per `employee_id` and per IP instead (`09_SECURITY.md`).
 
 **App lock.** After a short idle period, and on every resume from background, gate the app behind `expo-local-authentication` (PIN or biometric). This is the control that matters when a phone is set down on a shop counter mid-inspection. On lock, drop the in-memory access token; on unlock, silently refresh. Enable `expo-screen-capture` prevention on every screen that shows evidence images or extracted values.

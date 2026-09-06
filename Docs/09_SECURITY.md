@@ -16,7 +16,7 @@ First, **nothing silently passes**. Every check returns `pass`, `fail` or `not_a
 
 Second, **the client is never trusted for anything that matters**. Timestamps, verdicts, identity and sequence numbers are server-authoritative. The client is a capture device and a rendering surface.
 
-Third, **the app is strictly offline and stays that way**. No hosted vision model, no hosted language model, no cloud object store, no external service in the evidence path. This is partly a procurement and connectivity reality for field work, and partly an evidence argument: every transformation applied to an image must be one we can name, reproduce and defend, which rules out anything that generates pixels rather than adjusting them.
+Third, **the core path is local-first, with optional best-effort remotes.** Local filesystem is the primary evidence store and PaddleOCR/Tesseract are the primary OCR engines. Supabase Storage is an optional best-effort mirror (`SUPABASE_*`, never blocking) and OCR.space is an optional fallback when local OCR is absent (`OCR_SPACE_API_KEY`, slim Render deploy). No hosted LLM and nothing generative is ever in the evidence path: every transformation applied to an image must be one we can name, reproduce and defend, which rules out anything that generates pixels rather than adjusting them.
 
 ---
 
@@ -136,7 +136,7 @@ Image.MAX_IMAGE_PIXELS = 80_000_000  # decode refuses beyond this, raising rathe
 
 ### 3.1 Password security
 
-Passwords are hashed with Passlib and bcrypt at cost factor 12 and never stored in reversible form; registration calls `pwd_context.hash(...)` and login calls `pwd_context.verify(...)`. The cost factor is the control: it makes an offline attack against a stolen `users` table expensive per guess rather than free. Policy is a minimum of eight characters containing at least one letter and one digit, enforced in the Pydantic schema so that it is applied uniformly by every caller rather than per route.
+Passwords are hashed with Passlib and bcrypt at cost factor 12 and never stored in reversible form; registration calls `pwd_context.hash(...)` and login calls `pwd_context.verify(...)`. The cost factor is the control: it makes an offline attack against a stolen `users` table expensive per guess rather than free. Policy is a 12-character minimum for new accounts (`CreateUserRequest`, change-password `new_password`) and an 8-character minimum at login (`LoginRequest`), enforced in the Pydantic schemas.
 
 ### 3.2 JWT tokens
 
@@ -145,7 +145,7 @@ Passwords are hashed with Passlib and bcrypt at cost factor 12 and never stored 
 | Access token lifetime | 12 hours | Covers a full field shift with no network; a shorter life would strand an inspector mid-inspection |
 | Refresh token lifetime | 30 days | Bounded re-authentication interval for a field device |
 | Access token storage | Client memory only | Unreadable by injected script; never `localStorage` or `sessionStorage` |
-| Refresh token storage | httpOnly, `Secure`, `SameSite=Strict` cookie | Script cannot read it, and it is not attached to cross-site requests |
+| Refresh token storage | httpOnly cookie (`SameSite=Strict` locally, `SameSite=None; Secure` in prod when the portal and API are cross-site) | Script cannot read it; cross-site mode still requires an allow-listed CORS origin to read the response |
 | Algorithm | HS256 with a secret from the environment | Single trust domain; no key distribution requirement |
 | Binding | `install_id`, revocable per device | A stolen token is useless from another install |
 
@@ -418,13 +418,13 @@ Every report footer states the scope and rule version applied — Legal Metrolog
 
 Seven tables, and no others: `users`, `stores`, `inspections`, `scans`, `scan_images`, `findings`, `audit_logs`.
 
-Development uses SQLite with the database file at mode `600`, dumped to a dated backup on a schedule, with an occasional `VACUUM`. Production uses PostgreSQL installed directly from postgresql.org — **no Docker anywhere in this project** — with a dedicated database role, a connection string held in the environment rather than in code, and `pg_dump` to local and off-site media with a periodic restore drill. A backup that has never been restored is a hypothesis, not a backup.
+Development uses SQLite with the database file at mode `600`, dumped to a dated backup on a schedule, with an occasional `VACUUM`. Production uses PostgreSQL (direct install locally; Render deploy via `render.yaml`, optionally on the `Backend/Dockerfile` runtime for Tesseract/libzbar) with a dedicated database role, a connection string held in the environment rather than in code, and `pg_dump` to local and off-site media with a periodic restore drill. A backup that has never been restored is a hypothesis, not a backup.
 
-Every reference to Supabase, S3, Glacier and Object Lock has been removed from this design. They are hosted services, and the system is strictly offline; retention and immutability are provided by the append-only triggers, the audit chain and the published head hashes described above.
+Local filesystem is the primary evidence store; Supabase Storage is an optional best-effort mirror (`SUPABASE_*`), and S3/Glacier/Object Lock are not used. Retention and immutability are provided by the append-only triggers, the audit chain and the published head hashes described above.
 
 Secrets live in `.env`, which is git-ignored alongside `niyamnetra.db`, `uploads/` and `reports/`; `.env.example` carries placeholders only. `JWT_SECRET` must be at least 32 random characters and the startup assertion in §3.2 enforces that it is not the shipped default.
 
-The permitted offline stack is exactly OpenCV 4.9, PaddleOCR 2.8, Tesseract 5, YOLOv8, pyzbar, imagehash and SQLite or PostgreSQL. No hosted vision or language model participates in any part of the pipeline.
+The primary stack is OpenCV 4.9, PaddleOCR 2.8, Tesseract 5, YOLOv8, pyzbar, imagehash and SQLite or PostgreSQL. OCR.space is an optional fallback when local OCR is absent (slim Render deploy); no hosted LLM participates in any part of the pipeline.
 
 ---
 

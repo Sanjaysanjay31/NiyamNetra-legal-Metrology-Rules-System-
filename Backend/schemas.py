@@ -1,10 +1,49 @@
 """schemas.py"""
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PHONE_RE = re.compile(r"^[0-9]{10}$")
+
+
+def _validate_email(v: str | None) -> str | None:
+    if v is None:
+        return None
+    v = v.strip()
+    if not v:
+        return None
+    if not _EMAIL_RE.match(v):
+        raise ValueError("Invalid email address")
+    return v
+
+
+def _validate_phone(v: str | None) -> str | None:
+    if v is None:
+        return None
+    p = v.replace(" ", "").replace("-", "")
+    if p.startswith("+91"):
+        p = p[3:]
+    elif p.startswith("+"):
+        # Only +91 country code is accepted; anything else is invalid.
+        raise ValueError("Phone must be a 10-digit Indian mobile number")
+    elif len(p) == 12 and p.startswith("91"):
+        p = p[2:]
+    elif len(p) == 11 and p.startswith("0"):
+        p = p[1:]
+    if not _PHONE_RE.match(p):
+        raise ValueError("Phone must be a 10-digit number")
+    return p
+
+
+def _validate_password_strength(v: str) -> str:
+    if not any(c.isalpha() for c in v) or not any(c.isdigit() for c in v):
+        raise ValueError("Password must contain at least one letter and one digit")
+    return v
 
 Verdict = Literal["pass", "fail", "not_assessed"]
 ScanResult = Literal["compliant", "violation", "not_assessed", "out_of_scope"]
@@ -69,7 +108,12 @@ class SubmitInspectionRequest(BaseModel):
 
 
 class PanelGeometry(BaseModel):
-    """Mandatory before the millimetre checks can run. C14."""
+    """Mandatory before the millimetre checks can run. C14.
+
+    reference_pixel_size is the pixel length of the scale reference object
+    (ID-1 card long edge / 5-INR coin diameter) when scale_source is not
+    "declared". Threaded to image_processor.compute_scale by build_context.
+    """
     panel_shape: Literal["rectangular", "cylindrical", "other"]
     panel_height_mm: float | None = Field(default=None, gt=0, le=2000)
     panel_width_mm: float | None = Field(default=None, gt=0, le=2000)
@@ -77,6 +121,7 @@ class PanelGeometry(BaseModel):
     total_surface_area_cm2: float | None = Field(default=None, gt=0)
     is_blown_moulded: bool = False
     scale_source: Literal["declared", "id1_card", "coin_5inr", "none"] = "declared"
+    reference_pixel_size: float | None = Field(default=None, gt=0, le=100000)
 
     @model_validator(mode="after")
     def _shape_needs_its_dimensions(self) -> PanelGeometry:
@@ -231,6 +276,21 @@ class CreateUserRequest(BaseModel):
     email: str | None = None
     phone: str | None = None
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def _email_ok(cls, v):
+        return _validate_email(v)
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _phone_ok(cls, v):
+        return _validate_phone(v)
+
+    @field_validator("password", mode="after")
+    @classmethod
+    def _pw_strong(cls, v):
+        return _validate_password_strength(v)
+
 
 class UpdateUserRequest(BaseModel):
     full_name: str | None = Field(default=None, max_length=120)
@@ -239,6 +299,16 @@ class UpdateUserRequest(BaseModel):
     is_active: bool | None = None
     email: str | None = None
     phone: str | None = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _email_ok(cls, v):
+        return _validate_email(v)
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _phone_ok(cls, v):
+        return _validate_phone(v)
 
 
 class ResetInstallRequest(BaseModel):

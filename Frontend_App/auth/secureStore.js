@@ -14,7 +14,8 @@ export async function getItem(key) {
   try {
     if (isWeb) return globalThis.localStorage?.getItem(key) ?? null;
     return await SecureStore.getItemAsync(key);
-  } catch {
+  } catch (e) {
+    if (__DEV__) console.warn('[secureStore] getItem failed:', key, e?.message || e);
     return null;
   }
 }
@@ -27,8 +28,8 @@ export async function setItem(key, value) {
       return;
     }
     await SecureStore.setItemAsync(key, value);
-  } catch {
-    /* ignore — storage is best-effort */
+  } catch (e) {
+    if (__DEV__) console.warn('[secureStore] setItem failed:', key, e?.message || e);
   }
 }
 
@@ -39,7 +40,7 @@ export async function deleteItem(key) {
       return;
     }
     await SecureStore.deleteItemAsync(key);
-  } catch {
-    /* ignore */
+  } catch (e) {
+    if (__DEV__) console.warn('[secureStore] deleteItem failed:', key, e?.message || e);
   }
 }

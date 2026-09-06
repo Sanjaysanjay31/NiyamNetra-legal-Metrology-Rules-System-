@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, Modal, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, Modal, Pressable, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { colors, spacing, typography, radius } from '../../theme';
 import Header from '../../components/Header';
 import Card from '../../components/Card';
@@ -33,6 +33,7 @@ export default function InspectorsScreen() {
   const [resetReason, setResetReason] = useState('');
   const [resetTarget, setResetTarget] = useState(null);
   const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true); setError(false);
@@ -66,7 +67,18 @@ export default function InspectorsScreen() {
     setSaving(true); setFormError('');
     try {
       if (mode === 'create') {
-        await createUser({ employee_id: form.employee_id.trim(), full_name: name, password: form.password, role: form.role, jurisdiction: form.jurisdiction.trim(), email: form.email.trim(), phone: form.phone.trim() });
+        // Empty optional strings are sent as null/omitted (same as edit), so
+        // the server never stores "" as a jurisdiction/email/phone.
+        const body = {
+          employee_id: form.employee_id.trim(),
+          full_name: name,
+          password: form.password,
+          role: form.role,
+        };
+        if (form.jurisdiction.trim()) body.jurisdiction = form.jurisdiction.trim();
+        if (form.email.trim()) body.email = form.email.trim();
+        if (form.phone.trim()) body.phone = form.phone.trim();
+        await createUser(body);
       } else {
         // UserOut does not echo email/phone, so we cannot tell an unchanged
         // value from a cleared one — only send those if the admin typed
@@ -92,12 +104,22 @@ export default function InspectorsScreen() {
     finally { setSaving(false); }
   };
 
-  const openReset = (u) => { setResetTarget(u); setResetReason(''); setFormOpen(false); setResetOpen(true); };
+  const openReset = (u) => { setResetTarget(u); setResetReason(''); setResetError(''); setFormOpen(false); setResetOpen(true); };
   const doReset = async () => {
     if (resetReason.trim().length < 10) { return; }
-    setResetBusy(true);
-    try { await resetInstall(resetTarget.id, resetReason.trim()); setResetOpen(false); await load(); }
-    catch { /* keep modal open on failure */ }
+    setResetBusy(true); setResetError('');
+    try {
+      await resetInstall(resetTarget.id, resetReason.trim());
+      // Close only on success — on failure the modal stays open with the
+      // error so the admin can retry without retyping the reason.
+      setResetOpen(false);
+      await load();
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : 'Could not reset device binding. Try again.';
+      setResetError(msg);
+      Alert.alert('Reset failed', msg);
+    }
     finally { setResetBusy(false); }
   };
 
@@ -140,6 +162,11 @@ export default function InspectorsScreen() {
                       <Text style={{ fontSize: 12, color: colors.textMuted }}>
                         {insp.employee_id}{insp.jurisdiction ? ` • ${insp.jurisdiction}` : ''}
                       </Text>
+                      {!!insp.install_id && (
+                        <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }} numberOfLines={1}>
+                          device {String(insp.install_id).slice(0, 12)}{String(insp.install_id).length > 12 ? '…' : ''}
+                        </Text>
+                      )}
                     </View>
                     <View style={{ backgroundColor: insp.is_active ? colors.pass.fill : colors.notAssessed.fill, borderRadius: radius.full, paddingHorizontal: 10, paddingVertical: 3 }}>
                       <Text style={{ color: insp.is_active ? colors.pass.text : colors.notAssessed.text, fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }}>{insp.is_active ? 'Active' : 'Inactive'}</Text>
@@ -205,6 +232,7 @@ export default function InspectorsScreen() {
               {resetTarget ? `${resetTarget.full_name} (${resetTarget.employee_id}) will be unbound from their current device and can sign in on a new phone. Their active sessions end immediately.` : ''}
             </Text>
             <Input label="Reason (min 10 characters)" value={resetReason} onChangeText={setResetReason} placeholder="e.g. Officer changed handset" multiline />
+            {!!resetError && <Text style={{ color: colors.violation.text, fontSize: 12, marginBottom: spacing.sm }}>{resetError}</Text>}
             <View style={{ flexDirection: 'row', marginTop: spacing.sm }}>
               <PrimaryButton title="Cancel" variant="outline" onPress={() => setResetOpen(false)} style={{ flex: 1, marginRight: spacing.sm }} />
               <PrimaryButton title="Reset" variant="danger" onPress={doReset} loading={resetBusy} disabled={resetReason.trim().length < 10} style={{ flex: 1 }} />

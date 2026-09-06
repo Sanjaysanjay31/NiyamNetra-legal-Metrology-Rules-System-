@@ -63,7 +63,7 @@ Each entry states the attack or failure, then the solution. Where a plausible fi
 
 ### 8. GPS drift indoors locks out an honest inspector **[inverse]**
 **Failure:** Inside a concrete shop a fix can sit 300 m off, or never arrive. A hard geofence block means the inspection cannot be recorded at all.
-**Solution:** Treat the geofence as **advisory with justification**, never as a hard block. Beyond 100 m the app requires a reason and the shop-board photograph, then submits with `geofence_status = "outside_with_justification"` and the measured distance and horizontal accuracy. Where reported accuracy exceeds 100 m the distance test is meaningless and the status is `"unreliable_fix"`. The admin dashboard lists these for review. An inspector who cannot file a finding will stop filing findings.
+**Solution:** Treat the geofence as **advisory with justification**, never as a hard block. Beyond the store radius the app requires a reason and the shop-board photograph, then submits with the canonical `geofence_status = "outside"` and the measured distance, accuracy and justification in `geofence_reason`. Where reported accuracy is too poor for the distance test to mean anything the status is `"unknown"` with the reason in `geofence_reason` (matching `routers/inspections.py`: `inside`/`outside`/`unknown` only — `outside_with_justification` and `unreliable_fix` are not valid values). The admin dashboard lists these for review. An inspector who cannot file a finding will stop filing findings.
 
 ### 9. Perceptual-hash false positive accuses an honest inspector **[inverse]**
 **Failure:** Two genuinely different photographs of the same SKU on the same white shelf can land within Hamming distance 5. The honest inspector is told they reused evidence.

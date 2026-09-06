@@ -23,7 +23,7 @@ export default function Input({
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor={colors.textFaint}
+        placeholderTextColor={colors.placeholder}
         secureTextEntry={secureTextEntry}
         autoCapitalize={autoCapitalize}
         keyboardType={keyboardType}
@@ -32,7 +32,7 @@ export default function Input({
         style={{
           backgroundColor: editable ? colors.white : colors.background,
           borderWidth: 1.5,
-          borderColor: error ? colors.violation.text : colors.border,
+          borderColor: error ? colors.violation.text : colors.inputBorder,
           borderRadius: radius.md,
           paddingHorizontal: spacing.md,
           paddingVertical: spacing.sm + 2,

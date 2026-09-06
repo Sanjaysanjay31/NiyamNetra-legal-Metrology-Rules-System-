@@ -1,7 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text, StyleSheet } from 'react-native';
-import { colors, spacing, typography } from '../theme';
+import { colors } from '../theme';
 import RaidsScreen from '../screens/admin/RaidsScreen';
 import InspectorsScreen from '../screens/admin/InspectorsScreen';
 import RecordsScreen from '../screens/admin/RecordsScreen';
@@ -10,9 +10,14 @@ import MoreScreen from '../screens/admin/MoreScreen';
 
 const Tab = createBottomTabNavigator();
 
-function TabIcon({ focused, icon }) {
+// Emoji kept (lucide-react-native is not installed). Active 2px indicator bar
+// + accessibility labels so selection is perceivable without colour alone.
+function TabIcon({ focused, icon, label }) {
   return (
-    <View style={styles.tabIconContainer}>
+    <View style={styles.tabIconContainer} accessible accessibilityRole="image" accessibilityLabel={label}>
+      {focused && (
+        <View style={{ height: 2, width: 28, backgroundColor: colors.netraTeal, borderRadius: 1, marginBottom: 2 }} />
+      )}
       <Text style={[styles.tabIcon, { color: focused ? colors.netraTeal : colors.textMuted }]}>{icon}</Text>
     </View>
   );
@@ -49,7 +54,8 @@ export default function AdminTabs() {
         component={RaidsScreen}
         options={{
           tabBarLabel: 'Raids',
-          tabBarIcon: ({ focused }) => <TabIcon icon="🎯" focused={focused} />,
+          tabBarAccessibilityLabel: 'Raids, live inspection tracking',
+          tabBarIcon: ({ focused }) => <TabIcon icon="🎯" focused={focused} label="Raids" />,
         }}
       />
       <Tab.Screen
@@ -57,7 +63,8 @@ export default function AdminTabs() {
         component={InspectorsScreen}
         options={{
           tabBarLabel: 'Inspectors',
-          tabBarIcon: ({ focused }) => <TabIcon icon="👥" focused={focused} />,
+          tabBarAccessibilityLabel: 'Inspectors, officer roster',
+          tabBarIcon: ({ focused }) => <TabIcon icon="👥" focused={focused} label="Inspectors" />,
         }}
       />
       <Tab.Screen
@@ -65,7 +72,8 @@ export default function AdminTabs() {
         component={RecordsScreen}
         options={{
           tabBarLabel: 'Records',
-          tabBarIcon: ({ focused }) => <TabIcon icon="📋" focused={focused} />,
+          tabBarAccessibilityLabel: 'Records, store-wise inspection data',
+          tabBarIcon: ({ focused }) => <TabIcon icon="📋" focused={focused} label="Records" />,
         }}
       />
       <Tab.Screen
@@ -73,7 +81,8 @@ export default function AdminTabs() {
         component={ReportsScreen}
         options={{
           tabBarLabel: 'Reports',
-          tabBarIcon: ({ focused }) => <TabIcon icon="📊" focused={focused} />,
+          tabBarAccessibilityLabel: 'Reports, compliance analytics',
+          tabBarIcon: ({ focused }) => <TabIcon icon="📊" focused={focused} label="Reports" />,
         }}
       />
       <Tab.Screen
@@ -81,7 +90,8 @@ export default function AdminTabs() {
         component={MoreScreen}
         options={{
           tabBarLabel: 'More',
-          tabBarIcon: ({ focused }) => <TabIcon icon="≡" focused={focused} />,
+          tabBarAccessibilityLabel: 'More, profile and settings',
+          tabBarIcon: ({ focused }) => <TabIcon icon="≡" focused={focused} label="More" />,
         }}
       />
     </Tab.Navigator>

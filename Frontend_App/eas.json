@@ -32,3 +32,9 @@
     "production": {}
   }
 }
+// NOTE (single source of truth): the fallback LAN host lives ONLY in
+// api/config.js (FALLBACK_HOST). The EXPO_PUBLIC_API_BASE_URL values above are
+// build-time overrides that win over auto-detect when set — they never
+// duplicate the fallback IP by design. To re-point a build, edit the profile
+// env above (then rebuild) or switch at runtime on the login screen; to change
+// the last-resort fallback, edit api/config.js only.

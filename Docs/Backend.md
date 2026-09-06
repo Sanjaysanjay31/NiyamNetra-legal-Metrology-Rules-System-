@@ -35,12 +35,12 @@ Anything in this document that contradicts the list below is an error in this do
 | C5 | A package scan from the mobile app evaluates **16 of 18**; CHK15 and CHK16 need a web listing | `02` §6 |
 | C6 | Rule versioning is `rules_as_at DATE` + `catalog_hash` + `engine_version`. There is no version enum. | `06` §3.4 |
 | C7 | Device identity is a server-issued random 32-byte `install_id`. Never IMEI, never a fingerprint. | `09_SECURITY.md` §3.3 |
-| C8 | JWT access token 12 hours, held in memory only. Refresh token 30 days, httpOnly SameSite=Strict cookie. | `09` §3.2 |
+| C8 | JWT access token 12 hours, held in memory only. Refresh token 30 days, httpOnly cookie (`SameSite=Strict` locally, `SameSite=None; Secure` in prod cross-site). | `09` §3.2 |
 | C9 | The evidence hash is computed over the bytes **as stored**, never over the bytes as uploaded | `09` §5.1 |
 | C10 | The audit chain hashes `seq, inspection_id, scan_id, user_id, action, old_value, new_value, reason, timestamp, hash_prev` | `06` §5.2, `09` §6.2 |
 | C11 | `findings.engine_verdict` is written once and never updated. Human overrides go in a separate column with a reason. | `06` §3.6 |
 | C12 | Ports: FastAPI **8000**, Vite portal **5173**, Expo dev server **8081** | `07_Tech_Stack.md` |
-| C13 | No hosted vision API, no hosted LLM, no Docker, no S3, no Supabase, no generative super-resolution | `07` §1, `09` §5.2 |
+| C13 | Local FS primary, Supabase Storage optional best-effort mirror (`SUPABASE_*`), OCR.space optional fallback when local OCR absent, `Backend/Dockerfile` present for Render; no hosted LLM, no S3, no generative super-resolution | `07` §1, `09` §5.2 |
 | C14 | Millimetre measurement requires a scale reference; `mm_per_pixel = panel_height_mm / panel_pixel_height` | `02` §7.4 |
 | C15 | Fifteen ledger entries L-01…L-15 are UNVERIFIED and must not be cited to a pinpoint provision | `02` §15 |
 
@@ -137,7 +137,7 @@ python-multipart==0.0.9
 # --- database ---
 SQLAlchemy==2.0.29
 alembic==1.13.1
-psycopg[binary]==3.1.18        # PostgreSQL only; SQLite needs nothing
+psycopg[binary]==3.1.18        # PostgreSQL (Supabase pooler) — REQUIRED, no SQLite fallback
 
 # --- auth ---
 PyJWT==2.8.0
@@ -207,7 +207,10 @@ class Settings(BaseSettings):
     PUBLIC_BASE_URL: str = "http://localhost:8000"
 
     # --- database ---
-    DATABASE_URL: str = f"sqlite:///{BASE_DIR / 'niyamnetra.db'}"
+    # REQUIRED. Supabase / PostgreSQL only — there is no SQLite fallback.
+    # Set in .env as  postgresql+psycopg://...  (psycopg 3, session pooler port 5432).
+    # If it is missing, the app refuses to start rather than creating a SQLite file.
+    DATABASE_URL: str
 
     # --- auth ---
     JWT_SECRET: str
@@ -218,10 +221,14 @@ class Settings(BaseSettings):
 
     # --- CORS ---
     # A regex, not a glob. Starlette does not expand "*" inside an origin.
+    # Covers localhost, 127.0.0.1, 10.x, 192.168.x, 172.16-31.x on ports
+    # 3000/5173/8081/19006, plus exp:// for Expo Go (see config.py:73-80).
     CORS_ORIGIN_REGEX: str = (
-        r"^(https?://localhost:(5173|8081)"
-        r"|https?://127\.0\.0\.1:(5173|8081)"
-        r"|https?://192\.168\.\d{1,3}\.\d{1,3}:(5173|8081)"
+        r"^(https?://localhost:(3000|5173|8081|19006)"
+        r"|https?://127\.0\.0\.1:(3000|5173|8081|19006)"
+        r"|https?://10\.\d{1,3}\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)"
+        r"|https?://192\.168\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)"
+        r"|https?://172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)"
         r"|exp://.*)$"
     )
 
@@ -490,11 +497,11 @@ class Scan(Base):
     # the officer said the pack was domestic.
     net_quantity_value: Mapped[float | None] = mapped_column(Float)
     net_quantity_unit: Mapped[str | None] = mapped_column(String(12))
-    is_imported: Mapped[bool | None] = mapped_column(Boolean)          # CHK11
-    is_perishable: Mapped[bool | None] = mapped_column(Boolean)        # CHK12
-    is_medical_device: Mapped[bool | None] = mapped_column(Boolean)    # CHK14
-    is_tobacco: Mapped[bool | None] = mapped_column(Boolean)           # CHK17
-    has_sticker: Mapped[bool | None] = mapped_column(Boolean)          # CHK13
+    is_imported: Mapped[bool | None] = mapped_column(Boolean)          # CHK12, country of origin, 6(1)(aa)
+    is_perishable: Mapped[bool | None] = mapped_column(Boolean)        # CHK13, best-before, 6(1)(da)
+    is_medical_device: Mapped[bool | None] = mapped_column(Boolean)    # CHK14, proviso to Rule 2(h)
+    is_tobacco: Mapped[bool | None] = mapped_column(Boolean)           # CHK02 tobacco carve-out under Rule 26(a); CHK17 is the FSSAI advisory
+    has_sticker: Mapped[bool | None] = mapped_column(Boolean)          # CHK11, 6(3)-6(4A)
     sticker_reduces_price: Mapped[bool | None] = mapped_column(Boolean)
     sticker_covers_original: Mapped[bool | None] = mapped_column(Boolean)
 
@@ -904,6 +911,8 @@ def inspection_trend(db: Session, start: date, end: date):
 
 ### 3.1 password_handler.py
 
+Password policy: 12-character minimum for new accounts (`CreateUserRequest.password`, change-password `new_password`) and 8-character minimum at login (`LoginRequest.password`, so existing shorter passwords are not locked out at the gate). Both bounds are `max_length=72` (bcrypt truncation limit).
+
 ```python
 """bcrypt via passlib. See requirements.txt for why bcrypt is pinned <4.1."""
 from passlib.context import CryptContext
@@ -1168,8 +1177,9 @@ class LoginResponse(BaseModel):
     expires_in: int                     # seconds; the client refreshes before this
     user: UserOut
     install_id: str
-    # The refresh token is NOT in this body. It is set as an httpOnly
-    # SameSite=Strict cookie so that no JavaScript in the portal can read it.
+    # The refresh token is NOT in this body. It is set as an httpOnly cookie
+    # (SameSite=Strict locally, SameSite=None; Secure in prod cross-site)
+    # so that no JavaScript in the portal can read it.
 
 
 # ------------------------------------------------------------ inspections
@@ -1466,6 +1476,20 @@ def store_upload(raw: bytes, mime: str, inspection_id: int, scan_id: int) -> Sto
     dest.write_bytes(raw)                    # byte-for-byte, no re-encode
     stored = dest.read_bytes()               # read back what is actually there
     digest = hashlib.sha256(stored).hexdigest()
+
+    # Optional best-effort mirror to Supabase Storage (local remains primary).
+    # Configured via SUPABASE_URL / SUPABASE_SERVICE_KEY / SUPABASE_BUCKET;
+    # a mirror failure never fails the scan.
+    if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_KEY:
+        try:
+            from supabase import create_client
+            supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+            key = f"{inspection_id}/{scan_id}/{dest.name}"
+            supabase.storage.from_(settings.SUPABASE_BUCKET).upload(
+                key, stored, {"content-type": mime, "upsert": "true"}
+            )
+        except Exception:
+            pass
 
     return StoredImage(
         path=dest,
@@ -1843,6 +1867,9 @@ def run_ocr(bgr: np.ndarray) -> OcrResult:
         ocr_engine.ocr(image_path, cls=True)
     -- passing the path of the file on disk. Every line of preprocessing was
     computed and discarded. The pipeline looked sophisticated and did nothing.
+
+    Cascade: PaddleOCR -> Tesseract -> OCR.space (cloud, optional) -> engine="none".
+    The cloud stage lets the slim Render deploy read text at all (needs OCR_SPACE_API_KEY).
     """
     prepped = preprocess_for_ocr(bgr)
     try:
@@ -1905,7 +1932,7 @@ def _tesseract_fallback(bgr: np.ndarray, why: str) -> OcrResult:
     )
 ```
 
-When `OcrResult.engine == "none"`, every text-dependent check returns `not_assessed` carrying `failure_reason`. The scan is still recorded, still counted, still visible in the review queue. Nine of the nineteen rows come back `not_assessed` in that case, and the report says so on its face.
+When both local engines are absent (slim Render deploy), `run_ocr` falls back to OCR.space (`OCR_SPACE_API_KEY`) before giving up — see `ocr_engine._ocrspace_fallback`. When `OcrResult.engine == "none"`, every text-dependent check returns `not_assessed` carrying `failure_reason`. The scan is still recorded, still counted, still visible in the review queue. Nine of the nineteen rows come back `not_assessed` in that case, and the report says so on its face.
 
 ### 6.3 Field extraction
 
@@ -3542,12 +3569,16 @@ def health():
 | POST | `/inspections/{inspection_id}/submit` | inspector | `owned_inspection` | Draft → submitted, audited |
 | POST | `/inspections/{inspection_id}/scans` | inspector | `owned_inspection` | One scan per package |
 | POST | `/scans/{scan_id}/images` | inspector | `owned_scan` | Multiple panels, one scan |
+| PATCH | `/scans/{scan_id}` | inspector | `owned_scan` | Update declared scope flags (`commodity_generic`, `brand_name`, `commodity_category`, `batch_number`, `net_quantity_value/unit`, `is_imported`, `is_perishable`, `is_medical_device`, `is_tobacco`, `has_sticker` + sticker_*); frozen once submitted |
+| POST | `/scans/{scan_id}/listing` | inspector | `owned_scan` | Attach e-commerce listing `{url}` for CHK15/CHK16 via SSRF-guarded fetch |
 | POST | `/scans/{scan_id}/assess` | inspector | `owned_scan` | Runs all 19 checks |
 | GET | `/scans/{scan_id}` | inspector | `owned_scan` | Findings + counts |
 | GET | `/scans/{scan_id}/verify` | any | `owned_scan` | Rehashes stored files |
 | GET | `/reports/today` | inspector | token | Four-state counts |
-| GET | `/reports/today.pdf` | inspector | token | |
-| GET | `/reports/today.docx` | inspector | token | |
+| GET | `/reports/today.pdf` | inspector | token | Daily PDF |
+| GET | `/reports/today.docx` | inspector | token | Daily DOCX |
+| GET | `/reports/inspections/{inspection_id}/pdf` | inspector | own rows (admin: all) | Per-inspection PDF |
+| GET | `/reports/inspections/{inspection_id}/docx` | inspector | own rows (admin: all) | Per-inspection DOCX |
 | GET | `/reports/calendar` | inspector | token | Which dates have data |
 | GET | `/admin/dashboard` | admin | `require_admin` | |
 | GET | `/admin/users` | admin | `require_admin` | |
@@ -3583,13 +3614,17 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _set_refresh_cookie(resp: Response, token: str) -> None:
+    # SameSite=None is only honoured together with Secure, so the two flags move
+    # as one. Cross-site in prod (portal and API on different sites), strict on
+    # local http. See config.refresh_cookie_cross_site.
+    cross_site = settings.refresh_cookie_cross_site
     resp.set_cookie(
         key=settings.REFRESH_COOKIE_NAME,
         value=token,
         max_age=settings.REFRESH_TOKEN_DAYS * 86400,
         httponly=True,                     # no JavaScript can read it
-        secure=settings.ENV == "prod",     # over http on the LAN in dev
-        samesite="strict",
+        secure=cross_site or settings.ENV == "prod",
+        samesite="none" if cross_site else "strict",
         path="/auth",
     )
 
@@ -4504,7 +4539,7 @@ The pattern throughout: **degradation produces a recorded `not_assessed`, not an
 | Near-duplicate images treated as fraud | §5.4 | Review item only, with the legitimate-cause reasoning recorded |
 | Cross-user data access | §3.3 | Ownership resolved from the row the path names, in the database; 404 not 403 |
 | Session outliving its device | §3.2, §3.4, §8.3 | `install_id` in the token, verified per request; `token_epoch` on password change |
-| Token theft from browser storage | §8.3 | Access token in memory only; refresh in an httpOnly SameSite=Strict cookie |
+| Token theft from browser storage | §8.3 | Access token in memory only; refresh in an httpOnly cookie (Strict locally, None+Secure in prod cross-site) |
 | SSRF via a listing URL | §10.5 | https only, resolve-then-connect-to-literal-IP, no redirects, private nets blocked |
 | Decompression bomb | §1.3, §5.1 | 80-megapixel ceiling before decode |
 | Dashboard and page disagreeing | §2.3 | `review_queue_size()` is the single definition used by both |
@@ -4657,12 +4692,12 @@ print(verify_chain(SessionLocal()))
 | 37 | requirements.txt | Missing `pytesseract`, `ultralytics`, `pyzbar`, `pydantic-settings`, `alembic`; no system packages listed | §1.2, with apt/brew lines |
 | 38 | `functools.lru_cache` on the catalog | No TTL, so an admin edit never took effect without a restart | `cachetools.TTLCache` |
 | 39 | `PRAGMA foreign_keys` | Issued once in a script; per-connection, so pooled connections never had it and every FK was decorative | `@event.listens_for(engine, "connect")` |
-| 40 | `Scan` | The five scope flags, both sticker sub-flags, `net_quantity_value`/`_unit` and `total_surface_area_cm2` lived only on the in-memory `CheckContext` and were never persisted, so CHK02/03/05/08/11/12/13/14/17 could not be reproduced or defended after the fact | Nine columns on `scans`, nullable by design |
+| 40 | `Scan` | The five scope flags, both sticker sub-flags, `net_quantity_value`/`_unit` and `total_surface_area_cm2` lived only on the in-memory `CheckContext` and were never persisted, so CHK02/03/05/08/11/12/13/14 could not be reproduced or defended after the fact | Nine columns on `scans`, nullable by design |
 | 41 | `Finding` | `FindingResult.limb` was computed and then dropped on persist, leaving `scans.violation_limb` unexplainable — the aggregate said 36(2) and no row said why | `findings.limb`, plus `ck_finding_limb_only_on_fail` |
 | 42 | `phash_bands` | Four 16-bit bands were claimed to be a complete filter at Hamming distance 5 "by the pigeonhole principle". The bound is d ≤ bands − 1, so four bands guarantee only distance 3; bits {5, 9, 16, 38, 50} differ in all four bands at distance 5 and were silently unfindable | Eight 8-bit bands (`phash_b0`…`phash_b7`), complete through distance 7, with an assertion tying the threshold to the band count |
 | 43 | §1.1 | Cited `13_…prompt….md`, which is not in the document set | Reference removed |
 
-Confirmed clean in version 1.x and preserved: no hosted vision or LLM service, no Gemini or GPT call, no Supabase, no S3, no Docker, no IMEI, no row-level security predicated on a database role this application never assumes, and no claim that PyJWT signs a PDF.
+Confirmed clean in version 1.x and preserved: no hosted LLM service, no Gemini or GPT call, no S3, no IMEI, no row-level security predicated on a database role this application never assumes, and no claim that PyJWT signs a PDF. Local FS is primary with an optional best-effort Supabase mirror, OCR.space is an optional fallback when local OCR is absent, and `Backend/Dockerfile` exists for the Render deploy.
 
 ---
 

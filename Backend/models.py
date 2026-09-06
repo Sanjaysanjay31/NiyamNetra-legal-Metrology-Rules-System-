@@ -136,11 +136,11 @@ class Scan(Base):
     # the officer said the pack was domestic.
     net_quantity_value: Mapped[float | None] = mapped_column(Float)
     net_quantity_unit: Mapped[str | None] = mapped_column(String(12))
-    is_imported: Mapped[bool | None] = mapped_column(Boolean)          # CHK11
-    is_perishable: Mapped[bool | None] = mapped_column(Boolean)        # CHK12
-    is_medical_device: Mapped[bool | None] = mapped_column(Boolean)    # CHK14
-    is_tobacco: Mapped[bool | None] = mapped_column(Boolean)           # CHK17
-    has_sticker: Mapped[bool | None] = mapped_column(Boolean)          # CHK13
+    is_imported: Mapped[bool | None] = mapped_column(Boolean)          # CHK12, country of origin, 6(1)(aa)
+    is_perishable: Mapped[bool | None] = mapped_column(Boolean)        # CHK13, best-before, 6(1)(da)
+    is_medical_device: Mapped[bool | None] = mapped_column(Boolean)    # CHK14, proviso to Rule 2(h)
+    is_tobacco: Mapped[bool | None] = mapped_column(Boolean)           # CHK02 tobacco carve-out under Rule 26(a); CHK17 is the FSSAI advisory
+    has_sticker: Mapped[bool | None] = mapped_column(Boolean)          # CHK11, 6(3)-6(4A)
     sticker_reduces_price: Mapped[bool | None] = mapped_column(Boolean)
     sticker_covers_original: Mapped[bool | None] = mapped_column(Boolean)
 

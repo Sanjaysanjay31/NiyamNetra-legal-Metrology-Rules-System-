@@ -185,7 +185,7 @@ Detailed, version-pinned install instructions live in `07_Tech_Stack.md`. This i
 
 **Rule engine.** Python regular expressions for the field patterns (MRP, quantity, date) plus JSON rule files carrying `source_act`, `rule_reference`, `effective_date`, `violation_tier` and scope flags, loaded at startup. spaCy is optional for address / phone extraction if regex proves insufficient.
 
-**Database and storage.** SQLite for development (a single file, zero setup) and PostgreSQL for production — the same SQLAlchemy code, with `DATABASE_URL` the only change. Uploaded images and generated reports are stored on the local filesystem, each image carrying a SHA-256 hash. There is no object-store dependency in the MVP.
+**Database and storage.** Supabase PostgreSQL (session pooler) is REQUIRED — `DATABASE_URL` has no default and there is no SQLite fallback; the backend refuses to start without it. Uploaded images and generated reports are stored on the local filesystem, each image carrying a SHA-256 hash. There is no object-store dependency in the MVP.
 
 **Reports.** ReportLab for PDF and python-docx for the editable Word document, each with the annotated evidence images and a QR verification code.
 
@@ -209,7 +209,7 @@ cd niyamnetra-portal && npm install && npm run dev
 cd niyamnetra-app && npm install && npx expo start
 ```
 
-Binding the backend to `0.0.0.0` lets the field app reach it over the LAN. Note that `--workers > 1` is a PostgreSQL-only option: on SQLite the single-writer model and the audit-sequence allocation require a single worker.
+Binding the backend to `0.0.0.0` lets the field app reach it over the LAN. The backend runs on Supabase PostgreSQL, so multiple Uvicorn workers are supported; there is no SQLite single-writer constraint.
 
 ### 6.1 Authentication summary
 

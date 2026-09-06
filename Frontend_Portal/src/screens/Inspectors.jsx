@@ -231,9 +231,11 @@ export default function Inspectors() {
   )
 }
 
-/** Create. employee_id >= 3, full_name >= 2, password >= 12 — mirroring
-    CreateUserRequest. A duplicate employee ID returns 409 with a plain message
-    and no field map, so it is surfaced above the form. */
+/** Create. employee_id >= 3, full_name >= 2, password >= 12 with at least one
+    letter and one digit — mirroring Backend/schemas.py:CreateUserRequest
+    (min_length=12 plus _validate_password_strength). A duplicate employee ID
+    returns 409 with a plain message and no field map, so it is surfaced above
+    the form. */
 function CreateUserModal({ onClose, onDone }) {
   const { t } = useI18n()
   const [employeeId, setEmployeeId] = useState('')
@@ -244,8 +246,21 @@ function CreateUserModal({ onClose, onDone }) {
   const create = useMutation((body) => endpoints.admin.createUser(body))
   const fe = create.fieldErrors
 
+  /* Backend/schemas.py:_validate_password_strength: at least one letter and
+     one digit, on top of the 12-character minimum. */
+  const pwHasLetter = /[A-Za-z]/.test(password)
+  const pwHasDigit = /[0-9]/.test(password)
+  const pwStrong = password.length >= 12 && pwHasLetter && pwHasDigit
+  const pwError =
+    fe?.password ??
+    (password.length > 0 && password.length < 12
+      ? 'Use at least 12 characters.'
+      : password.length >= 12 && (!pwHasLetter || !pwHasDigit)
+        ? 'Include at least one letter and one digit.'
+        : undefined)
+
   const canSubmit =
-    employeeId.trim().length >= 3 && fullName.trim().length >= 2 && password.length >= 12 && !create.pending
+    employeeId.trim().length >= 3 && fullName.trim().length >= 2 && pwStrong && !create.pending
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -279,7 +294,7 @@ function CreateUserModal({ onClose, onDone }) {
             icon={UserPlus}
             loading={create.pending}
             disabled={!canSubmit}
-            disabledReason="Enter an employee ID, a name, and an initial password of at least 12 characters."
+            disabledReason="Enter an employee ID, a name, and an initial password of at least 12 characters with a letter and a digit."
             onClick={onSubmit}
           >
             Create account
@@ -308,7 +323,7 @@ function CreateUserModal({ onClose, onDone }) {
         <Field label="Full name" error={fe?.full_name} required>
           {(props) => <Input {...props} value={fullName} onChange={(e) => setFullName(e.target.value)} />}
         </Field>
-        <Field label="Initial password" hint="At least 12 characters. The officer changes it on first sign-in." error={fe?.password} required>
+        <Field label="Initial password" hint="At least 12 characters with a letter and a digit. The officer changes it on first sign-in." error={pwError} required>
           {(props) => (
             <Input {...props} type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
           )}

@@ -50,7 +50,7 @@ curl -s localhost:8000/health | python -m json.tool
 
 `checks_registered` must read **19** and `rules_as_at` must read the date you expect. Do not proceed past a wrong number on either: a nineteen that reads eighteen means a check failed to register and every report from then on is quietly short.
 
-Only **one** value must be filled by hand for a local run: `JWT_SECRET`. Every other field has a working default. Two more are needed the moment a phone is involved — `EXPO_PUBLIC_API_BASE_URL` and the LAN address in `CORS_ORIGIN_REGEX`.
+Only **two** values must be filled by hand: `JWT_SECRET` and `DATABASE_URL` (Supabase session pooler, REQUIRED — there is no SQLite fallback). Every other field has a working default in `config.py`. Two more are needed the moment a phone is involved — `EXPO_PUBLIC_API_BASE_URL` and the LAN address in `CORS_ORIGIN_REGEX`.
 
 Do not generate the secret from a website. Version 1.1 suggested an online generator as one of three options; a secret produced by a third party, transmitted over the network and pasted into a project is not a secret, and the two local commands are no harder.
 
@@ -74,13 +74,13 @@ Every field of `Settings`, in declaration order. "Required" means there is no de
 
 | Key | Default | Notes |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///<backend>/niyamnetra.db` | One URL change switches engines |
+| `DATABASE_URL` | **REQUIRED, no default** | Supabase session pooler (`postgresql+psycopg://`, port 5432). No SQLite fallback — the app refuses to start without it |
 
-SQLite for development and for the demo; PostgreSQL for production. The same SQLAlchemy models generate the DDL for both, which is why `06` presents both dialects rather than one block claiming to be portable.
+Supabase PostgreSQL is the only supported engine. There is no SQLite fallback: `config.py` declares `DATABASE_URL` with no default and the app refuses to start when it is missing rather than creating a local file. The same SQLAlchemy models generate the DDL, which is why `06` documents the constraints and triggers that only a real PostgreSQL enforces.
 
 ```text
-sqlite:///./niyamnetra.db                                   # relative — three slashes then a dot
-postgresql+psycopg://niyamnetra:PASSWORD@localhost:5432/niyamnetra
+postgresql+psycopg://postgres.<PROJECT_REF>:<PASSWORD>@aws-0-<REGION>.pooler.supabase.com:5432/postgres?sslmode=require   # session pooler (IPv4, recommended)
+postgresql+psycopg://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres?sslmode=require                     # direct (IPv6-only unless IPv4 add-on)
 ```
 
 The schema is created by **`alembic upgrade head`**, never by `Base.metadata.create_all()`. `create_all` skips the `CHECK` constraints and triggers that carry the project's guarantees — that a `not_assessed` finding must have a reason, that `engine_verdict` cannot be updated, that `checks_assessed <= checks_total`, that `audit_logs` is append-only. A database built with `create_all` looks identical and enforces none of it.
@@ -101,7 +101,7 @@ Twelve hours, because it covers a full field shift and an inspector in a no-netw
 
 Rotating `JWT_SECRET` invalidates every token everywhere, which is the correct response to a suspected leak. Revoking one user is `token_epoch` on their row instead.
 
-The bcrypt cost factor is set in `auth_utils.py`, not in `.env` — passlib records the cost inside each hash, so old hashes keep verifying after a change, and this is not a knob that benefits from being turned in the field. Note also that bcrypt truncates input at 72 bytes; `09` §2.2 covers the pre-hash.
+The bcrypt cost factor is set in `password_handler.py` (`CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)`), not in `.env` — passlib records the cost inside each hash, so old hashes keep verifying after a change, and this is not a knob that benefits from being turned in the field. Note also that bcrypt truncates input at 72 bytes; `09` §2.2 covers the pre-hash.
 
 ### 3.4 CORS
 
@@ -110,12 +110,12 @@ The bcrypt cost factor is set in `auth_utils.py`, not in `.env` — passlib reco
 | `CORS_ORIGIN_REGEX` | see below | A **regex**, matched by Starlette against the `Origin` header |
 
 ```text
-^(https?://localhost:(5173|8081)|https?://127\.0\.0\.1:(5173|8081)|https?://192\.168\.\d{1,3}\.\d{1,3}:(5173|8081)|exp://.*)$
+^(https?://localhost:(3000|5173|8081|19006)|https?://127\.0\.0\.1:(3000|5173|8081|19006)|https?://10\.\d{1,3}\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)|https?://192\.168\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)|https?://172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)|exp://.*)$
 ```
 
 Version 1.1 used `allow_origins=["http://localhost:5173","exp://*", …]`. `allow_origins` is an **exact string comparison**; Starlette does not expand `*` inside an entry, so `exp://*` matched no origin at all and blocked every request it was written to allow. `allow_origin_regex` is the parameter that takes a pattern. Separately, `allow_origins=["*"]` with `allow_credentials=True` is forbidden by the CORS specification and the refresh cookie would be dropped.
 
-The `192.168.\d+\.\d+` branch is why no LAN IP needs editing on most networks. Find yours with `ipconfig` (Windows) or `ifconfig | grep inet` (macOS/Linux); if it is on a `10.` or `172.` network, add a branch.
+The regex already covers localhost, `127.0.0.1`, LAN `192.168.x.x` **plus** `10.x.x.x` and `172.16–31.x.x` (campus / office Wi-Fi, Docker / VPN), on ports `3000` (generic dev), `5173` (Vite portal), `8081` (Metro/Expo web) and `19006` (legacy Expo web), plus `exp://` for Expo Go. Find yours with `ipconfig` (Windows) or `ifconfig | grep inet` (macOS/Linux); no extra branch is needed for a `10.` or `172.` address.
 
 **CORS is a browser mechanism.** The Expo app sends no `Origin` header, so none of this applies to it — an Expo "network request failed" is a wrong host or a firewall, never CORS. Version 1.1 attributed Expo failures to CORS and sent people editing the wrong setting. The `exp://.*` branch is there only for the dev-client web preview.
 
@@ -207,15 +207,16 @@ Restart the dev server after changing either file. Vite and Expo inline these at
 
 ```ini
 # ---------------------------------------------------------------- backend/.env
-# Copy to backend/.env and fill JWT_SECRET. Everything else has a default.
+# Copy to backend/.env and fill JWT_SECRET + DATABASE_URL. Everything else has a default.
 # Settings is extra="forbid": a key that is not a field here will stop the app.
 
 ENV=dev
 APP_NAME=NiyamNetra
 PUBLIC_BASE_URL=http://localhost:8000
 
-DATABASE_URL=sqlite:///./niyamnetra.db
-# DATABASE_URL=postgresql+psycopg://niyamnetra:PASSWORD@localhost:5432/niyamnetra
+# REQUIRED — Supabase session pooler (postgresql+psycopg://, port 5432). No SQLite fallback.
+DATABASE_URL=
+# e.g. DATABASE_URL=postgresql+psycopg://postgres.<PROJECT_REF>:<PASSWORD>@aws-0-<REGION>.pooler.supabase.com:5432/postgres?sslmode=require
 
 # REQUIRED. python -c "import secrets; print(secrets.token_hex(32))"
 JWT_SECRET=
@@ -224,8 +225,8 @@ ACCESS_TOKEN_HOURS=12
 REFRESH_TOKEN_DAYS=30
 REFRESH_COOKIE_NAME=nn_refresh
 
-# A regex, not a glob. Add a branch for a 10.x or 172.x LAN.
-CORS_ORIGIN_REGEX=^(https?://localhost:(5173|8081)|https?://127\.0\.0\.1:(5173|8081)|https?://192\.168\.\d{1,3}\.\d{1,3}:(5173|8081)|exp://.*)$
+# A regex, not a glob. Covers localhost, 127.0.0.1, 10.x, 192.168.x, 172.16-31.x on ports 3000/5173/8081/19006, plus exp://.
+CORS_ORIGIN_REGEX=^(https?://localhost:(3000|5173|8081|19006)|https?://127\.0\.0\.1:(3000|5173|8081|19006)|https?://10\.\d{1,3}\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)|https?://192\.168\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)|https?://172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)|exp://.*)$
 
 EVIDENCE_DIR=./evidence
 OUT_DIR=./out
@@ -374,7 +375,7 @@ curl -s localhost:8000/health | python -m json.tool
 | 15 | §3.8 | `PADDLEOCR_LANG=en+hi` — raises on construction | `OCR_LANGS=en,hi`; one reader per language |
 | 16 | §3.9 | `UPLOADS_DIR` / `REPORTS_DIR`; `file.save(...)` | `EVIDENCE_DIR` / `OUT_DIR`; hash read back off disk |
 | 17 | §3.10 | `MAX_IMAGE_SIZE_MB=5` with a 1280 px downscale | `MAX_UPLOAD_MB=25`, no width cap, `MAX_IMAGE_PIXELS` guard |
-| 18 | §3.11 | `BCRYPT_ROUNDS` as an env knob | Set in `auth_utils.py`; cost is recorded in the hash |
+| 18 | §3.11 | `BCRYPT_ROUNDS` as an env knob | Set in `password_handler.py` (`bcrypt__rounds=12`); cost is recorded in the hash |
 | 19 | §3.12, §4.3 | `SUPABASE_DB_URL`, `CLOUDINARY_URL` | Removed — third-party custody of evidence (§6) |
 | 20 | §3.5 | `BACKEND_HOST` / `BACKEND_PORT` as variables | Uvicorn flags; they never bound the socket |
 | 21 | — | `PUBLIC_BASE_URL` absent, so the QR pointed at `localhost` | §3.1, with the reason |
@@ -387,7 +388,7 @@ curl -s localhost:8000/health | python -m json.tool
 | 28 | §8 | Login check used `inspector@niyamnetra.gov.in` | Seeded `LMO-0001` on `@example.test` |
 | 29 | §8 | Checklist verified only that the file exists | §8 imports `Settings`, counts triggers, checks `/health`, and breaks a value on purpose |
 | 30 | §5 | "Use the same `JWT_SECRET` across laptops if sharing a backend" | Each developer generates their own; nothing is shared |
-| 31 | §2 | "Only 3 variables: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`" | One: `JWT_SECRET`. Two more when a phone is involved |
+| 31 | §2 | "Only 3 variables: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`" | Two REQUIRED: `JWT_SECRET` + `DATABASE_URL` (Supabase pooler). Two more when a phone is involved |
 | 32 | §1 | `.gitignore` listed `uploads/`, `reports/` — directories that do not exist | `backend/evidence/`, `backend/out/` |
 
 ---

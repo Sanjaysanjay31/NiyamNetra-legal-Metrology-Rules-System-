@@ -45,11 +45,15 @@ class TokenError(Exception):
 
 
 def decode_token(token: str, expect: str) -> dict:
+    # Fixed allow-list, never taken from settings directly: even if config
+    # validation were bypassed, `none` or any other alg cannot be smuggled in.
+    # settings.JWT_ALGORITHM is Literal["HS256"] so this assert documents the invariant.
+    assert settings.JWT_ALGORITHM == "HS256", "unsupported JWT algorithm configured"
     try:
         claims = jwt.decode(
             token,
             settings.JWT_SECRET,
-            algorithms=[settings.JWT_ALGORITHM],   # a list, never a bare string
+            algorithms=["HS256"],   # a list, never a bare string; fixed allow-list
             options={"require": ["exp", "iat", "sub", "token_type"]},
         )
     except ExpiredSignatureError as e:

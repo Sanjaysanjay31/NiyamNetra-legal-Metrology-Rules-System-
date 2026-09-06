@@ -17,7 +17,7 @@
 
 ### 1.1 What "good" means for this product
 
-The product's central claim is negative, and it is the reason to trust it: **NiyamNetra will not report a package as compliant unless all nineteen checks were actually assessed.** Where it cannot assess something — no scale reference in the frame, glare across the declarations, a statutory threshold the project has not been able to verify against a primary source — it says so, names the reason, and puts the scan in a review queue.
+The product's central claim is negative, and it is the reason to trust it: **NiyamNetra will not report a package as compliant unless every assessable check for its scan type was actually assessed (`assessed == total`).** A package scan without a listing honestly reports 16/18 (CHK15/CHK16 `not_assessed`) and resolves `not_assessed`, never `compliant`; with a listing the denominator is 18/18. Where it cannot assess something — no scale reference in the frame, glare across the declarations, a statutory threshold the project has not been able to verify against a primary source — it says so, names the reason, and puts the scan in a review queue.
 
 The alternative product, the one that reports a clean verdict on an unreadable photograph, is worse than no product. Its output goes into an enforcement record over an officer's name, and nobody audits a pass.
 
@@ -116,7 +116,7 @@ I verify the audit chain on demand and compare its head against the value publis
 
 ### 5.1 Authentication and access control
 
-Login by employee ID and password, bcrypt-hashed, 12-character minimum. A 12-hour access token held in client memory only; a 30-day refresh token in an httpOnly `SameSite=Strict` cookie on the web and in the platform keystore on the phone. Every token carries `install_id`, `jti` and `token_type`, and `token_type` is checked on every decode — without it a refresh token is accepted as an access token and the twelve-hour limit silently becomes thirty days.
+Login by employee ID and password, bcrypt-hashed, 12-character minimum for new accounts and 8-character minimum at login. A 12-hour access token held in client memory only; a 30-day refresh token in an httpOnly cookie on the web (`SameSite=Strict` locally, `SameSite=None; Secure` in prod cross-site) and in the platform keystore on the phone. Every token carries `install_id`, `jti` and `token_type`, and `token_type` is checked on every decode — without it a refresh token is accepted as an access token and the twelve-hour limit silently becomes thirty days.
 
 Two roles: Admin and Inspector. An inspector's scope is derived from their token by the server, never from a request parameter.
 
@@ -130,19 +130,19 @@ Government SSO is not implemented and is not claimed. Version 1.1's stories open
 
 ### 5.2 Inspection management
 
-Create an inspection against an existing store or a new one, with transaction type, GPS coordinates and accuracy, and server-side date. Scope intake happens here, before capture.
+Create an inspection against an existing store (`store_id` only) with transaction type (`retail_sale`, `wholesale`, `institutional`, `industrial`, `packed_in_presence`, `export`, `other`), GPS coordinates and accuracy, and server-side date. New stores are created separately via `POST /stores` (admin-only). Scope intake happens here, before capture. Signature status is `signed`, `refused` or `unavailable`; scale source is `declared`, `id1_card`, `coin_5inr` or `none`.
 
 GPS is **recorded, never enforced**. A geofence sounds like an anti-collusion control and is not one: assisted location in a concrete-walled godown is routinely hundreds of metres out, so a hard block stops real inspections while a determined bad actor spoofs the fix anyway. The coordinates and the reported accuracy are stored and shown to the reviewer.
 
 Batch grouping compares barcode, batch code, MRP and date against earlier scans in the same inspection. A near-duplicate is flagged for review and the record is kept; it is never rejected and never silently merged.
 
-Status: draft → submitted → reviewed → closed.
+Status: draft → submitted (the only two stored states; `signature_status` is separate).
 
 ### 5.3 Capture and evidence
 
 Camera only for inspectors; `expo-image-picker` is not installed at all, rather than installed and disabled.
 
-Four to five images per package — front, back, MRP panel, batch panel, barcode — all attached to **one** scan. Version 1.x created a scan per image, so a package photographed on four panels became four packages with four verdicts, three of them missing most declarations and therefore three spurious violations from one compliant pack.
+One scan carries images for the canonical panels — `front`, `back`, `side`, `mrp`, `batch`, `other` (`ALLOWED_PANELS` in `routers/scans.py`) — all attached to **one** scan. Barcode is a `Scan.barcode` field decoded by pyzbar, not a panel; `principal` is not a valid panel. Version 1.x created a scan per image, so a package photographed on four panels became four packages with four verdicts, three of them missing most declarations and therefore three spurious violations from one compliant pack.
 
 Blur, darkness, glare and panel completeness are **measured and recorded**, never grounds for rejection. The measured value goes into the reason of every check it affects. An HTTP 400 here discards the capture, the GPS fix and the officer's trip to the shop, and leaves no trace that an unreadable package was found — which quietly biases every statistic toward the photogenic subset of the field.
 
@@ -162,9 +162,9 @@ Measurements are reported with their uncertainty — "2.1 mm ± 0.3 mm against a
 
 ### 5.5 OCR and extraction
 
-OpenCV preprocessing — rectify, deskew, CLAHE — feeding the **resulting array** to the OCR engine. PaddleOCR as primary, English and Hindi, models cached locally at setup so the path needs no network. Tesseract as fallback. YOLOv8 optionally locates the panel so OCR ignores the shelf behind it.
+OpenCV preprocessing — rectify, deskew, CLAHE — feeding the **resulting array** to the OCR engine. PaddleOCR as primary, English and Hindi, models cached locally at setup so the path needs no network. Tesseract as fallback, then OCR.space as an optional fallback when local OCR is absent (slim Render deploy, `OCR_SPACE_API_KEY`). YOLOv8 optionally locates the panel so OCR ignores the shelf behind it.
 
-No hosted vision or language model, anywhere, for any reason. Version 1.1 listed "optional Gemini Vision for transparent/curved/stylized" and repeated it as a risk mitigation. Three independent objections, each sufficient: the venue network cannot be relied on, so it fails live; evidence in an enforcement file cannot be sent to a third-party endpoint that may return different wording on the same image next month; and a generative model asked to read an illegible label produces a *plausible* reading rather than reporting that it cannot read one — manufacturing precisely the false confidence this product exists to eliminate.
+No hosted LLM, anywhere, for any reason. Version 1.1 listed "optional Gemini Vision for transparent/curved/stylized" and repeated it as a risk mitigation. Three independent objections, each sufficient: the venue network cannot be relied on, so it fails live; evidence in an enforcement file cannot be sent to a third-party endpoint that may return different wording on the same image next month; and a generative model asked to read an illegible label produces a *plausible* reading rather than reporting that it cannot read one — manufacturing precisely the false confidence this product exists to eliminate.
 
 Extracted fields: commodity name, manufacturer/packer/importer name and address, country of origin, net quantity value and unit, MRP, month and year of manufacture, best-before or use-by, consumer care phone or email, batch or lot, and language of the declarations. Each with a confidence and a bounding box. Low confidence produces `not_assessed` on the checks that depend on it, with the confidence in the reason.
 
@@ -182,7 +182,7 @@ Order, with phase 1 first because scope must be settled before anything is asses
 
 | # | Check | Phase | Subject | Provision | Halts |
 |---|---|---|---|---|---|
-| 1 | CHK03 | 1 | Chapter II applicability — over 25 kg/25 L, industrial, institutional, packed in the customer's presence | Rule 3 | all |
+| 1 | CHK03 | 1 | Chapter II applicability — over 25 kg/25 L, industrial, institutional (`packed_in_presence` stays IN-SCOPE per `_RETAIL_TYPES`) | Rule 3 | all |
 | 2 | CHK02 | 1 | Small-package exemption, 10 g / 10 ml, with the tobacco carve-out | Rule 26(a) | all |
 | 3 | CHK14 | 1 | Medical device → Medical Devices Rules 2017 | Rule 2(h) proviso | phase 3 |
 | 4 | CHK01 | 2 | All Rule 6(1)(a)–(g) and 6(2) declarations present | Rule 6 | — |
@@ -210,7 +210,7 @@ An engine fault inside one check degrades that one row to `not_assessed` with th
 
 ### 5.7 Verdicts, results and the legal ledger
 
-Scan results are exactly four: `compliant`, `violation`, `not_assessed`, `out_of_scope`. `compliant` requires zero abstentions among the assessable checks. `Good`, `Bad`, `Review`, `NA` and `Passed` are abolished and the database rejects them on both engines.
+Scan results are exactly four: `compliant`, `violation`, `not_assessed`, `out_of_scope`. `compliant` requires zero abstentions among the assessable checks for its scan type (`assessed == total`: 16/16 for a package scan without a listing, 18/18 with one). `Good`, `Bad`, `Review`, `NA` and `Passed` are abolished and the database rejects them on both engines.
 
 Where a statutory figure could not be verified against a primary source, the check cites the **descriptive requirement** and discloses that the pinpoint provision is unverified, keyed to ledger entries L-01 to L-15 in `02_NiyamNetra_Rules.md` §15. No rupee penalty figure is printed anywhere, because the Section 36 amounts under Act 8 of 2026 are ledger entry L-12 and unverified — and a wrong penalty in a document handed to a trader is worse than no penalty at all.
 
@@ -236,7 +236,7 @@ Search by commodity, brand, manufacturer, store, region, date, result and catalo
 
 Five cards: total, compliant, violation, not assessed, out of scope. Charts: violations by check, trend over a period, breakdown by area and by manufacturer. A review queue whose badge is computed by the same query that renders the queue, so the two cannot disagree. Recent activity. Export to CSV and a PDF summary.
 
-Aggregates are SQL over the `findings` table on both database engines — not a Python loop over a JSON blob, and not SQLite-only `json_each`, which is how version 1.x's second chart came to raise `OperationalError` the moment the project moved to the PostgreSQL it claims to support in production.
+Aggregates are SQL over the `findings` table on PostgreSQL — not a Python loop over a JSON blob, and not SQLite-only `json_each`, which is how version 1.x's second chart came to raise `OperationalError` the moment the project moved to the PostgreSQL it claims to support in production.
 
 ### 5.11 Audit
 
@@ -250,13 +250,13 @@ Append-only chain over ten fields including `user_id` and `new_value`, with cano
 
 **Security.** Summarised in §5.1 and specified in `09_SECURITY.md`. Two things version 1.1 required that are **not** implemented and should not be: PDF digital signatures, because nothing in the stack signs a PDF and a document asserting a signature that does not exist is worse than one making no claim; and PostgreSQL row-level security, because RLS binds to a database role and this application connects as one role for all users, so the policies would block everything or nothing. Authorisation is in the application layer and tested for IDOR directly.
 
-**Portability.** SQLite in development, PostgreSQL in production, one URL change. Every schema-level test runs against both, because engine-specific SQL is invisible in a suite that only exercises one. No Docker and therefore no Compose file — version 1.1 asked twice for "Compose one-command run" in a stack that had already removed Docker.
+**Portability.** Supabase PostgreSQL via the session pooler is REQUIRED (`DATABASE_URL`, `postgresql+psycopg://`, no default, no SQLite fallback). Every schema-level test runs against PostgreSQL. No Compose file — version 1.1 asked twice for "Compose one-command run" — but `Backend/Dockerfile` exists for the Render deploy (Tesseract + libzbar). Local filesystem is the primary evidence store with an optional best-effort Supabase mirror (`SUPABASE_*`).
 
 **Usability.** Mobile-first responsive, guide overlays, Hindi and English, contrast ratios audited against the token pairs the UI actually renders and asserted by a unit test rather than promised in a build prompt.
 
 **Data retention.** Five years, per the record-keeping expectation for enforcement material, with a documented backup of the database and the evidence directory together — the hashes are meaningless if the files are restored separately.
 
-**No hosted AI, no object store, no Docker, no IMEI, no generative upscaling.** Each with its reason in `07_Tech_Stack.md` §0.1.
+**No hosted LLM, no primary object store, no IMEI, no generative upscaling.** Local FS primary with an optional Supabase mirror, OCR.space only as a fallback when local OCR is absent, `Backend/Dockerfile` present for Render. Each with its reason in `07_Tech_Stack.md` §0.1.
 
 **Performance.** Stated as shape, not as numbers. OCR dominates and is CPU-bound, so assessment is a separate API call from upload: the officer is not watching a spinner while four images are processed, and a slow assessment cannot time out an upload that already holds the evidence. Aggregates are indexed SQL. Images are files with hashes in the database, never BLOBs. Duplicate search uses eight indexed 8-bit hash bands rather than a table scan, which is a complete filter — not merely a fast one — for every Hamming distance up to seven, because *d* differing bits touch at most *d* bands and so leave *bands − d* identical. Four 16-bit bands, specified in an earlier draft, guarantee that only to distance 3 and therefore missed pairs at the threshold of 5. Version 1.1's "OCR 3-5 sec", "dashboard <2 sec for 1000 records" and "99% uptime for demo" were never measured; measure on the demo machine and then state the figures with the machine attached.
 
@@ -290,15 +290,15 @@ Three fields replace the old `rule_version` enum: `rules_as_at`, `catalog_hash`,
 
 ## 8. API SURFACE
 
-**Auth.** `POST /auth/login {employee_id, password, install_id}` · `POST /auth/refresh` · `POST /auth/logout` · `GET /auth/me`
+**Auth.** `POST /auth/login {employee_id, password}` (request only — `install_id` is server-issued via `bind_install` in `routers/auth_helpers.py` and returned in the response) · `POST /auth/refresh` · `POST /auth/logout` · `GET /auth/me`
 
 **Inspections.** `POST /inspections` · `GET /inspections` (server-scoped) · `GET /inspections/{id}` · `POST /inspections/{id}/submit`
 
-**Scans.** `POST /scans` · `POST /scans/{id}/images` · `POST /scans/{id}/assess` · `GET /scans/{id}` · `GET /scans/{id}/verify` · `PATCH /findings/{id}`
+**Scans.** `POST /inspections/{id}/scans` · `POST /scans/{id}/images` · `PATCH /scans/{id}` (declared scope flags: `commodity_generic`, `brand_name`, `commodity_category`, `batch_number`, `net_quantity_value/unit`, `is_imported`, `is_perishable`, `is_medical_device`, `is_tobacco`, `has_sticker`, `sticker_reduces_price`, `sticker_covers_original`) · `POST /scans/{id}/listing {url}` (SSRF-guarded fetch for CHK15/CHK16) · `POST /scans/{id}/assess` · `GET /scans/{id}` · `GET /scans/{id}/verify` · `PATCH /admin/findings/{id}`
 
-**Reports.** `GET /reports/inspection/{id}/pdf` · `.../docx` · `GET /reports/today`
+**Reports.** `GET /reports/inspections/{id}/pdf` · `.../docx` · `GET /reports/today` (+ `GET /reports/today.pdf`)
 
-**Admin.** `GET /admin/dashboard` · `GET /admin/review-queue` · `GET /admin/audit` · `GET /admin/audit/verify` · `POST /admin/users` · `GET /admin/users` · `PATCH /admin/users/{id}` · `GET /admin/rules` *(read-only)*
+**Admin.** `GET /admin/dashboard` · `GET /admin/review-queue` · `GET /admin/audit` (paginated, chain verification folded in as `chain_intact`/`chain_head`) · `POST /admin/users` · `GET /admin/users` · `PATCH /admin/users/{id}` · `GET /admin/rules` *(read-only)*
 
 **Health.** `GET /health` — returns `checks_registered`, which must read 19.
 
@@ -348,7 +348,7 @@ Version 1.1's criteria were "20 sample labels", "5 biscuits (2 Good, 3 Bad)", "1
 
 ## 12. MILESTONES
 
-**Day 1, morning — skeleton.** FastAPI, Alembic, SQLite, portal shell, blank Expo app, all talking. `alembic upgrade head` succeeds and `/health` reports `checks_registered: 19` even with every check a stub, because the registry assertion is what later prevents a silently short report. Login from both clients; create an inspection end to end.
+**Day 1, morning — skeleton.** FastAPI, Alembic, Supabase PostgreSQL (pooler), portal shell, blank Expo app, all talking. `alembic upgrade head` succeeds and `/health` reports `checks_registered: 19` even with every check a stub, because the registry assertion is what later prevents a silently short report. Login from both clients; create an inspection end to end.
 
 **Day 1, afternoon — evidence and OCR.** `store_upload` with its hash and `/verify` **first**, because the integrity guarantee is far easier to build than to retrofit. Then rectification, scale, and OCR as one function returning fields with confidences and boxes. Test on five real packs including a transparent bottle and a curved pouch, plus one deliberately awful photograph — the awful one is the important test, because it must be stored and flagged rather than rejected.
 

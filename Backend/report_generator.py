@@ -103,14 +103,20 @@ def verification_qr(inspection_id: int, chain_head: str) -> Path:
 
     v1.x encoded "niyamnetra://verify/{id}" — a private URI scheme that no
     phone camera resolves and no browser opens, so the QR code did nothing.
+
+    Unique uuid suffix per call: concurrent reports for the same inspection
+    never clobber each other's QR file. OUT_DIR disk errors propagate as
+    OSError so callers map them to 503, not 500.
     """
     import qrcode
+    import uuid as _uuid
     url = (
         f"{settings.PUBLIC_BASE_URL.rstrip('/')}"
         f"/verify?inspection={inspection_id}&head={chain_head[:16]}"
     )
     img = qrcode.make(url)
-    out = settings.OUT_DIR / f"qr_{inspection_id}.png"
+    settings.OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out = settings.OUT_DIR / f"qr_{inspection_id}_{_uuid.uuid4().hex[:8]}.png"
     img.save(out)
     return out
 

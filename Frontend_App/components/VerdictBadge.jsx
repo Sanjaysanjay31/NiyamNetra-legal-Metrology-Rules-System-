@@ -4,11 +4,14 @@ import { radius, spacing, typography, scanResultConfig, verdictConfig } from '..
 
 // §2.4 Verdict badge - word not colour, proper contrast
 // checkVerdict: pass | fail | not_assessed
-// scanResult: success | violation | not_assessed | out_of_scope
+// scanResult: success | compliant | violation | not_assessed | out_of_scope
+// ("success" is a legacy alias of "compliant" — both render the pass style so
+// no row ever renders a blank badge.)
 export default function VerdictBadge({ result, checkVerdict, size = 'md' }) {
+  const normalized = result === 'success' ? 'compliant' : result;
   const cfg = checkVerdict
     ? verdictConfig[checkVerdict]
-    : scanResultConfig[result];
+    : scanResultConfig[normalized] || scanResultConfig[result];
 
   if (!cfg) return null;
 

@@ -34,7 +34,11 @@
         "USE_BIOMETRIC",
         "USE_FINGERPRINT"
       ],
-      "usesCleartextTraffic": true
+      // LAN dev over http:// needs a dev-client build (Expo Go blocks cleartext
+      // on Android when this is false). Scoped to false deliberately: production
+      // talks https (Render) and http is dev-only. If LAN testing in Expo Go
+      // stops connecting, use `npx expo run` dev-client, not this flag.
+      "usesCleartextTraffic": false
     },
     "plugins": [
       [

@@ -3,7 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text, StyleSheet } from 'react-native';
 import SyncStrip from '../components/SyncStrip';
 import LowStorageGuard from '../components/LowStorageGuard';
-import { colors, spacing, typography } from '../theme';
+import { colors } from '../theme';
 import ScanScreen from '../screens/inspector/ScanScreen';
 import PassScreen from '../screens/inspector/PassScreen';
 import ViolationsScreen from '../screens/inspector/ViolationsScreen';
@@ -12,10 +12,15 @@ import MoreScreen from '../screens/inspector/MoreScreen';
 
 const Tab = createBottomTabNavigator();
 
-// Tab icon component
+// Tab icon component — emoji kept (lucide-react-native is not installed; no
+// new icon dependency). Each tab gets an accessibility label and a 2px active
+// indicator bar so the selected tab is perceivable without colour alone.
 function TabIcon({ label, focused, icon }) {
   return (
-    <View style={styles.tabIconContainer}>
+    <View style={styles.tabIconContainer} accessible accessibilityRole="image" accessibilityLabel={label}>
+      {focused && (
+        <View style={{ height: 2, width: 28, backgroundColor: colors.netraTeal, borderRadius: 1, marginBottom: 2 }} />
+      )}
       <Text style={[styles.tabIcon, { color: focused ? colors.netraTeal : colors.textMuted }]}>{icon}</Text>
     </View>
   );
@@ -29,8 +34,9 @@ const styles = StyleSheet.create({
 export default function InspectorTabs() {
   return (
     <LowStorageGuard>
-      <SyncStrip />
-      <Tab.Navigator
+      <View style={{ flex: 1 }}>
+        <SyncStrip />
+        <Tab.Navigator
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: colors.netraTeal,
@@ -54,15 +60,17 @@ export default function InspectorTabs() {
           component={ScanScreen}
           options={{
             tabBarLabel: 'Scan',
-            tabBarIcon: ({ focused }) => <TabIcon icon="📷" focused={focused} />,
+            tabBarAccessibilityLabel: 'Scan, capture a new inspection',
+            tabBarIcon: ({ focused }) => <TabIcon icon="📷" focused={focused} label="Scan" />,
           }}
         />
         <Tab.Screen
           name="Pass"
           component={PassScreen}
           options={{
-            tabBarLabel: 'Success',
-            tabBarIcon: ({ focused }) => <TabIcon icon="✓" focused={focused} />,
+            tabBarLabel: 'Pass',
+            tabBarAccessibilityLabel: 'Pass, successful inspections',
+            tabBarIcon: ({ focused }) => <TabIcon icon="✓" focused={focused} label="Pass" />,
           }}
         />
         <Tab.Screen
@@ -70,7 +78,8 @@ export default function InspectorTabs() {
           component={ViolationsScreen}
           options={{
             tabBarLabel: 'Violations',
-            tabBarIcon: ({ focused }) => <TabIcon icon="!" focused={focused} />,
+            tabBarAccessibilityLabel: 'Violations, flagged inspections',
+            tabBarIcon: ({ focused }) => <TabIcon icon="!" focused={focused} label="Violations" />,
           }}
         />
         <Tab.Screen
@@ -78,7 +87,8 @@ export default function InspectorTabs() {
           component={ReportsScreen}
           options={{
             tabBarLabel: 'Reports',
-            tabBarIcon: ({ focused }) => <TabIcon icon="📊" focused={focused} />,
+            tabBarAccessibilityLabel: 'Reports, inspection activity',
+            tabBarIcon: ({ focused }) => <TabIcon icon="📊" focused={focused} label="Reports" />,
           }}
         />
         <Tab.Screen
@@ -86,10 +96,12 @@ export default function InspectorTabs() {
           component={MoreScreen}
           options={{
             tabBarLabel: 'More',
-            tabBarIcon: ({ focused }) => <TabIcon icon="≡" focused={focused} />,
+            tabBarAccessibilityLabel: 'More, profile and settings',
+            tabBarIcon: ({ focused }) => <TabIcon icon="≡" focused={focused} label="More" />,
           }}
         />
-      </Tab.Navigator>
+        </Tab.Navigator>
+      </View>
     </LowStorageGuard>
   );
 }

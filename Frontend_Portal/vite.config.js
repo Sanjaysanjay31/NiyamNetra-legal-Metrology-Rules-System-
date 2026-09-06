@@ -23,9 +23,15 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Evidence images are never precached: they are large, and a stale
-        // evidence image is an integrity problem, not a performance win.
-        globPatterns: ['**/*.{js,css,html,svg,woff2}'],
+        // Evidence images are runtime uploads under the backend's evidence
+        // store, never part of this bundle, so the glob below cannot match
+        // them. The `png` entry exists only for the small static PWA icons
+        // (icon-192.png, icon-512.png); a stale icon is harmless, a stale
+        // evidence image would be an integrity problem.
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // Deep SPA routes (e.g. /inspector/inspections/12/capture) must serve
+        // index.html on reload/offline; /api traffic must never fall back.
+        navigateFallback: 'index.html',
         navigateFallbackDenylist: [/^\/api/],
       },
     }),

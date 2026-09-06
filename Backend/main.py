@@ -40,7 +40,7 @@ app = FastAPI(
 # which is why v1.x's Expo client could not reach the API from a phone.
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=settings.CORS_ORIGIN_REGEX,
+    allow_origin_regex=settings.effective_cors_regex,
     allow_credentials=True,               # required: the refresh cookie
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
@@ -66,7 +66,7 @@ async def security_headers(request: Request, call_next):
         )
     else:
         resp.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "default-src 'self'; script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; object-src 'none'; "
             "base-uri 'none'; frame-ancestors 'none'"
         )

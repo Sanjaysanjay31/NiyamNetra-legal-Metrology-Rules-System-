@@ -9,7 +9,8 @@ from pathlib import Path
 import cv2
 import imagehash
 import numpy as np
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+from PIL.Image import DecompressionBombError
 
 from config import settings
 
@@ -18,6 +19,29 @@ from config import settings
 Image.MAX_IMAGE_PIXELS = settings.MAX_IMAGE_PIXELS
 
 ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
+
+_FORMAT_TO_MIME = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}
+
+
+def sniff_mime(raw: bytes) -> str:
+    """Sniff the true MIME via PIL format, never trusting the claimed header.
+
+    Raises ValueError (mapped to 422 by callers / main.py handler) for
+    unidentified or unsupported images. Decompression-bomb images raise
+    ValueError("Image too large...") so callers can map to 413.
+    """
+    import io
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            fmt = im.format
+    except DecompressionBombError as e:
+        raise ValueError("Image too large: exceeds pixel limit") from e
+    except (UnidentifiedImageError, OSError, ValueError) as e:
+        raise ValueError(f"Unsupported or corrupt image: {e}") from e
+    mime = _FORMAT_TO_MIME.get((fmt or "").upper())
+    if mime is None:
+        raise ValueError(f"Unsupported image type: format={fmt!r}")
+    return mime
 
 
 @dataclass(slots=True)
@@ -48,19 +72,44 @@ def store_upload(raw: bytes, mime: str, inspection_id: int, scan_id: int) -> Sto
         raise ValueError(f"Unsupported image type: {mime}")
 
     # Verify it decodes, and get dimensions, without re-encoding it.
+    # Wrap PIL errors as ValueError so main.py's 422 handler catches them
+    # instead of leaking a 500. Decompression-bomb maps to 413 upstream.
     import io
-    with Image.open(io.BytesIO(raw)) as probe:
-        probe.verify()                       # raises on a malformed file
-    with Image.open(io.BytesIO(raw)) as im:
-        width, height = im.size
+    try:
+        with Image.open(io.BytesIO(raw)) as probe:
+            probe.verify()                       # raises on a malformed file
+    except DecompressionBombError as e:
+        raise ValueError("Image too large: exceeds pixel limit") from e
+    except (UnidentifiedImageError, OSError, ValueError) as e:
+        raise ValueError(f"Unsupported or corrupt image: {e}") from e
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            width, height = im.size
+    except DecompressionBombError as e:
+        raise ValueError("Image too large: exceeds pixel limit") from e
+    except (UnidentifiedImageError, OSError, ValueError) as e:
+        raise ValueError(f"Unsupported or corrupt image: {e}") from e
 
     ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[mime]
     folder = settings.EVIDENCE_DIR / str(inspection_id) / str(scan_id)
-    folder.mkdir(parents=True, exist_ok=True)
+    # Unique uuid suffix per file: concurrent uploads for the same panel never
+    # clobber each other (no shared temp name, no lock needed). Disk errors
+    # (ENOSPC, EACCES) propagate as OSError so callers map them to 503, not 422.
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("evidence mkdir failed: %s", e)
+        raise
     dest = folder / f"{uuid.uuid4().hex}{ext}"
 
-    dest.write_bytes(raw)                    # byte-for-byte, no re-encode
-    stored = dest.read_bytes()               # read back what is actually there
+    try:
+        dest.write_bytes(raw)                    # byte-for-byte, no re-encode
+        stored = dest.read_bytes()               # read back what is actually there
+    except OSError as e:
+        import logging as _logging2
+        _logging2.getLogger(__name__).warning("evidence write failed: %s", e)
+        raise
     digest = hashlib.sha256(stored).hexdigest()
 
     # Mirror to Supabase Storage if configured — best-effort, never blocks local evidence.
@@ -88,8 +137,16 @@ def store_upload(raw: bytes, mime: str, inspection_id: int, scan_id: int) -> Sto
 
 
 def verify_stored_image(path: Path, expected_sha256: str) -> bool:
-    """Called by the report generator and by GET /scans/{id}/verify."""
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest() == expected_sha256
+    """Called by the report generator and by GET /scans/{id}/verify.
+
+    Streams in 1 MB chunks so a 25 MB evidence file never loads fully into
+    memory on a small worker.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest() == expected_sha256
 
 
 def delete_stored_file(file_path, inspection_id: int, scan_id: int) -> None:

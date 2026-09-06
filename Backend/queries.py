@@ -6,7 +6,7 @@ a join, so on SQLite it is enforced here in the service layer rather than
 declaratively.
 """
 from datetime import date
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from models import Finding, Inspection, Scan, Store, User
@@ -40,9 +40,15 @@ def resolve_duplicate(db: Session, scan: Scan, inspection: Inspection) -> int | 
 
 
 def _result_counts(col=Scan.overall_result):
-    """Four counts. Not two. A scan that could not be assessed is not a pass."""
+    """Four counts. Not two. A scan that could not be assessed is not a pass.
+
+    total counts SCANS (Scan.id), not join rows: with the outer join an
+    inspection with zero scans yields one NULL-scan row, and func.count()
+    would count it as 1 while every bucket counts 0 — total != sum. Counting
+    Scan.id keeps total == compliant+violation+not_assessed+out_of_scope.
+    """
     return (
-        func.count().label("total"),
+        func.count(Scan.id).label("total"),
         func.sum(case((col == "compliant", 1), else_=0)).label("compliant"),
         func.sum(case((col == "violation", 1), else_=0)).label("violation"),
         func.sum(case((col == "not_assessed", 1), else_=0)).label("not_assessed"),
@@ -115,14 +121,19 @@ def admin_stats(db: Session, start: date, end: date):
 
 def review_queue_size(db: Session) -> int:
     """Everything a human still has to look at, counted the same way the
-    review endpoint lists it, so the badge and the page can never disagree."""
+    review endpoint lists it, so the badge and the page can never disagree.
+
+    Low-confidence includes NULL confidence (e.g. OCR.space reports no
+    per-line confidence): unknown confidence must be reviewed, not skipped.
+    """
     na_scans = db.scalar(
         select(func.count()).select_from(Scan)
         .where(Scan.overall_result == "not_assessed", LIVE)
     ) or 0
     low_conf = db.scalar(
         select(func.count()).select_from(Finding)
-        .where(Finding.confidence < 0.60, Finding.human_verdict.is_(None))
+        .where(or_(Finding.confidence < 0.60, Finding.confidence.is_(None)),
+               Finding.human_verdict.is_(None))
     ) or 0
     offline_edits = db.scalar(
         select(func.count()).select_from(Inspection)

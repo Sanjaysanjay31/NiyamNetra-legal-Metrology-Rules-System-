@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, ActivityIndicator } from 'react-native';
 import { colors, spacing, typography, radius } from '../../theme';
 import Header from '../../components/Header';
@@ -14,10 +14,17 @@ export default function RaidsScreen({ navigation }) {
   const [stats, setStats] = useState(null);
   const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState(null); // null | 'forbidden' | 'network'
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(false);
+    if (!mounted.current) return;
+    setLoading(true); setError(null);
     try {
       const { start } = rangeFor(period);
       const [d, inspections, stores, users] = await Promise.all([
@@ -26,24 +33,42 @@ export default function RaidsScreen({ navigation }) {
         fetchStores(),
         fetchUsers(),
       ]);
+      if (!mounted.current) return; // unmount guard: never setState after unmount
       const storeMap = Object.fromEntries(stores.map((s) => [s.id, s.name]));
       const userMap = Object.fromEntries(users.map((u) => [u.id, u.full_name]));
       setStats(d);
       setRecent(inspections.slice(0, 8).map((i) => ({
         id: i.id,
         store: storeMap[i.store_id] || `Store #${i.store_id}`,
+        store_id: i.store_id,
         inspector: userMap[i.user_id] || `Officer #${i.user_id}`,
         status: i.status, // draft | submitted
         checks: i.scan_count,
         date: i.inspection_date,
       })));
-    } catch { setError(true); }
-    finally { setLoading(false); }
+    } catch (e) {
+      if (!mounted.current) return;
+      const status = e?.status ?? e?.response?.status;
+      setError(status === 403 || e?.code === 'FORBIDDEN' ? 'forbidden' : 'network');
+    }
+    finally { if (mounted.current) setLoading(false); }
   }, [period]);
 
-  useEffect(() => { let m = true; load(); return () => { m = false; }; }, [load]);
+  useEffect(() => { load(); }, [load]);
 
-  const counts = stats?.counts || { compliant: 0, violation: 0 };
+  const counts = stats?.counts || { compliant: 0, violation: 0, not_assessed: 0 };
+  const reviewQueue = stats?.review_queue ?? 0;
+
+  // Store breakdown note: per-store inspection counts from the recent window.
+  const storeBreakdown = recent.reduce((acc, r) => {
+    acc[r.store] = (acc[r.store] || 0) + 1;
+    return acc;
+  }, {});
+  const breakdownNote = Object.entries(storeBreakdown)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, n]) => `${name} (${n})`)
+    .join(' • ');
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -64,17 +89,32 @@ export default function RaidsScreen({ navigation }) {
             <ActivityIndicator color={colors.netraTeal} />
           </View>
         ) : error ? (
-          <EmptyState icon="⚠️" title="Could not load data" subtitle="Check your connection and try again." />
+          <EmptyState
+            icon="⚠️"
+            title={error === 'forbidden' ? 'Not permitted' : 'Could not load data'}
+            subtitle={error === 'forbidden'
+              ? 'Your account cannot view raid data. Contact your administrator.'
+              : 'Check your connection and try again.'}
+          />
         ) : (
           <>
             <View style={{ flexDirection: 'row', marginTop: spacing.lg, marginBottom: spacing.md }}>
               <StatCard label="Inspections" value={stats?.inspections ?? 0} />
               <StatCard label="Success" value={counts.compliant} color={colors.pass.text} />
             </View>
-            <View style={{ flexDirection: 'row', marginBottom: spacing.lg }}>
+            <View style={{ flexDirection: 'row', marginBottom: spacing.md }}>
               <StatCard label="Violations" value={counts.violation} color={colors.violation.text} alert />
+              <StatCard label="Not assessed" value={counts.not_assessed ?? 0} color={colors.textMuted} />
+            </View>
+            <View style={{ flexDirection: 'row', marginBottom: spacing.lg }}>
+              <StatCard label="Under review" value={reviewQueue} color={colors.warning} subtitle="review queue" />
               <StatCard label="Active Inspectors" value={stats?.active_inspectors ?? 0} color={colors.netraTeal} />
             </View>
+            {breakdownNote ? (
+              <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: spacing.md }}>
+                Top stores: {breakdownNote}
+              </Text>
+            ) : null}
 
             <Text style={{ ...typography.h4, marginBottom: spacing.sm }}>Recent Activity</Text>
             {recent.length === 0 ? (

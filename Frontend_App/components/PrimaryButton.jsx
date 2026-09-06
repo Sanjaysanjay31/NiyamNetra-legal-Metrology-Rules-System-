@@ -12,14 +12,20 @@ export default function PrimaryButton({
   icon,
   style,
 }) {
+  const disabledBg = '#E2E8F0';
+  const disabledLabel = '#64748B';
   const bg = {
-    primary: disabled ? colors.disabled : colors.niyamBlue,
-    secondary: disabled ? colors.disabled : colors.netraTeal,
+    primary: disabled ? disabledBg : colors.niyamBlue,
+    secondary: disabled ? disabledBg : colors.netraTeal,
     outline: 'transparent',
-    danger: disabled ? colors.disabled : colors.violation.text,
+    danger: disabled ? disabledBg : colors.violation.text,
   }[variant];
 
-  const textColor = variant === 'outline' ? colors.niyamBlue : colors.white;
+  const textColor = disabled
+    ? disabledLabel
+    : variant === 'outline'
+      ? colors.niyamBlue
+      : colors.white;
   const borderWidth = variant === 'outline' ? 2 : 0;
   const borderColor = variant === 'outline' ? (disabled ? colors.disabled : colors.niyamBlue) : 'transparent';
 

@@ -29,7 +29,11 @@ def get_current_user(
     except TokenError:
         raise UNAUTHORIZED
 
-    user = db.get(User, int(claims["sub"]))
+    try:
+        user_id = int(claims["sub"])
+    except (ValueError, TypeError, OverflowError):
+        raise UNAUTHORIZED
+    user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise UNAUTHORIZED
 

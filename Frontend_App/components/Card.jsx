@@ -4,7 +4,7 @@ import { colors, radius, spacing, typography, shadows } from '../theme';
 
 // §3.3 Surface card
 export default function Card({ children, onPress, style, title, subtitle, rightElement, padding = 'md' }) {
-  const padSize = { sm: spacing.sm, md: spacing.md, lg: spacing.lg }[padding];
+  const padSize = { none: 0, sm: spacing.sm, md: spacing.md, lg: spacing.lg }[padding] ?? spacing.md;
 
   const content = (
     <View

@@ -24,7 +24,7 @@ export default function StatCard({ label, value, subtitle, color, alert }) {
       <Text style={{ fontSize: 11, fontWeight: '600', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
         {label}
       </Text>
-      <Text style={{ fontSize: 28, fontWeight: '700', color: alert ? colors.violation.text : colors.niyamBlue, marginTop: 4 }}>
+      <Text style={{ ...typography.statNumber, color: alert ? colors.violation.text : accentColor, marginTop: 4 }}>
         {value}
       </Text>
       {subtitle && (

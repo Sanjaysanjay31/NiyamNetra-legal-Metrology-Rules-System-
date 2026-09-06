@@ -16,6 +16,7 @@ def hash_password(plain: str) -> str:
 def verify_password(plain: str, hashed: str) -> bool:
     try:
         return pwd_context.verify(plain, hashed)
-    except ValueError:
-        # Malformed stored hash. Fail closed, do not raise into the request.
+    except Exception:
+        # Malformed stored hash or backend error. Fail closed, do not raise
+        # into the request (would otherwise become a 500 oracle).
         return False

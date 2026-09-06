@@ -227,13 +227,13 @@ Each specification below gives inputs, precondition, verdict logic and the exact
 ### CHK03 - Chapter II applicability (gate)
 
 ```text
-inputs      operator.transaction_type in {retail, institutional, industrial, packed_in_presence}
+inputs      operator.transaction_type in {retail_sale, wholesale, institutional, industrial, packed_in_presence, export, other}
             operator.net_quantity_declared (for the >25kg/25L test)
             operator.commodity_group (cement | fertiliser | agri_produce | other)
 precondition  none - always runnable
 logic
-    if transaction_type == packed_in_presence -> EXCLUDED
-       "quantity determined in the purchaser's presence; not a pre-packaged commodity"
+    if transaction_type == packed_in_presence -> IN SCOPE
+       "made up in the purchaser's presence at retail; Chapter II applies (matches _RETAIL_TYPES in routers/inspections.py)"
     if transaction_type in {institutional, industrial} -> EXCLUDED
        "package for {type} consumers; Chapter II does not apply"
     if qty > 25 kg or 25 L:

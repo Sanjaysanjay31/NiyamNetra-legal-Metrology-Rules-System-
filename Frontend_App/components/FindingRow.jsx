@@ -5,11 +5,6 @@ import VerdictBadge from './VerdictBadge';
 
 // §3.5 Inspection finding row
 export default function FindingRow({ finding, onPress }) {
-  const isCompliance = finding.result || finding.checkVerdict;
-  const cfg = finding.checkVerdict
-    ? { pass: 'pass', fail: 'fail', not_assessed: 'not_assessed' }[finding.checkVerdict]
-    : { compliant: 'success', violation: 'violation', not_assessed: 'not_assessed', out_of_scope: 'out_of_scope' }[finding.result];
-
   return (
     <Pressable
       onPress={onPress}

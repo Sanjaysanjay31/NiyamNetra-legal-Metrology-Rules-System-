@@ -4,6 +4,19 @@ import { API_BASE_URL, BACKEND_TARGETS, getCustomUrl, loadCustomUrl, loadSavedTa
 let accessToken = null;
 export const setAccessToken = (t) => { accessToken = t; };
 
+// Session-death broadcast. The response interceptor cannot import AuthContext
+// (circular import), so it emits here and AuthContext subscribes on mount to
+// drop role → app returns to Login. Screens can also subscribe.
+const sessionListeners = new Set();
+export const onSessionExpired = (cb) => {
+  sessionListeners.add(cb);
+  return () => { sessionListeners.delete(cb); };
+};
+function emitSessionExpired() {
+  setAccessToken(null);
+  sessionListeners.forEach((cb) => { try { cb(); } catch { /* listener must not throw */ } });
+}
+
 // Last cookie-host mismatch warning (web only), refreshed whenever the target
 // changes. The login screen reads it so the trap is visible in the UI instead
 // of only in the console — see warnIfCookieHostMismatch in ./config.
@@ -94,9 +107,10 @@ export async function applySavedBackend() {
 if (__DEV__) console.log('[NiyamNetra] API base URL =', api.defaults.baseURL);
 
 api.interceptors.request.use((cfg) => {
+  cfg.headers = cfg.headers || {};
   if (accessToken) cfg.headers.Authorization = `Bearer ${accessToken}`;
   // Idempotency-Key for every write 11 §2.4
-  if (['post', 'patch', 'put'].includes(cfg.method)) {
+  if (['post', 'patch', 'put'].includes((cfg.method || '').toLowerCase())) {
     cfg.headers['Idempotency-Key'] = cfg.headers['Idempotency-Key'] || idempotencyKey();
   }
   return cfg;
@@ -104,22 +118,53 @@ api.interceptors.request.use((cfg) => {
 
 let refreshing = null;
 api.interceptors.response.use(null, async (err) => {
-  const orig = err.config;
-  if (err.response?.status === 401 && !orig._retried) {
-    if (!refreshing) {
-      refreshing = api.post('/auth/refresh').then(r => {
-        setAccessToken(r.data.access_token);
-        return r.data.access_token;
-      }).catch(e => { throw e; }).finally(() => { refreshing = null; });
+  const orig = err?.config;
+  const status = err?.response?.status;
+
+  // 403 = authenticated but not permitted. Never retry, never refresh — flag
+  // it so the UI can say "not permitted" instead of "incorrect/unreachable".
+  if (status === 403) {
+    const forbidden = new Error('Not permitted for this account');
+    forbidden.code = 'FORBIDDEN';
+    forbidden.status = 403;
+    forbidden.original = err;
+    return Promise.reject(forbidden);
+  }
+
+  // Non-401, or a 401 with no request to retry (network/timeout errors have
+  // no err.config) — nothing to do here.
+  if (status !== 401 || !orig) return Promise.reject(err);
+
+  // Already retried once and still 401: the session is dead. Clear it so the
+  // app routes to login instead of replaying forever.
+  if (orig._retried) {
+    emitSessionExpired();
+    return Promise.reject(err);
+  }
+  // Mark BEFORE awaiting the refresh: parallel 401s must share the single
+  // in-flight refresh, not each trigger their own replay storm.
+  orig._retried = true;
+
+  if (!refreshing) {
+    refreshing = api.post('/auth/refresh').then(r => {
+      setAccessToken(r.data.access_token);
+      return r.data.access_token;
+    }).catch(e => { throw e; }).finally(() => { refreshing = null; });
+  }
+  try {
+    const tok = await refreshing;
+    orig.headers = orig.headers || {};
+    orig.headers.Authorization = `Bearer ${tok}`;
+    // Reuse the original idempotency key when present; mint one only if the
+    // first attempt never had one. A fresh random key per retry would let the
+    // server execute the write twice.
+    if (['post', 'patch', 'put'].includes((orig.method || '').toLowerCase())) {
+      orig.headers['Idempotency-Key'] = orig.headers['Idempotency-Key'] || idempotencyKey();
     }
-    try {
-      const tok = await refreshing;
-      orig._retried = true;
-      orig.headers.Authorization = `Bearer ${tok}`;
-      return api(orig);
-    } catch {
-      // route to login handled by AuthContext
-    }
+    return api(orig);
+  } catch {
+    // Refresh itself failed → session is dead, route to login.
+    emitSessionExpired();
   }
   return Promise.reject(err);
 });

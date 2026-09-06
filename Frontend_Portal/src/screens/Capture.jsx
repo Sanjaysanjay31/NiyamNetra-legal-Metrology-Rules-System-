@@ -6,8 +6,9 @@
  *
  * 1. THE FRONT PANEL IS REQUIRED, AND NOTHING ELSE IS. build_context in
  *    rules_engine.py raises without a `front` image, so assessment is disabled
- *    until the front is captured. Back, principal-display and other panels help,
- *    but the engine will run on the front alone.
+ *    until the front is captured. Back, side, MRP, batch and other panels help,
+ *    but the engine will run on the front alone. The panel allow-list is
+ *    Backend/routers/scans.py:ALLOWED_PANELS.
  *
  * 2. A POOR PHOTOGRAPH IS FLAGGED, NEVER REFUSED. POST /scans/{id}/images accepts
  *    an image it judges low quality and returns a `quality_note`; only an
@@ -50,6 +51,7 @@ import {
 import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDocumentTitle, useMutation, useResource } from '../lib/hooks'
+import { enqueueScan, flushQueue, putBlob } from '../lib/queue'
 import { inspections as inspectionsFixture, storesById } from '../mock/fixtures'
 import CameraCapture from '../ui/CameraCapture'
 import {
@@ -65,15 +67,31 @@ import {
   RadioCards,
   Select,
   Skeleton,
+  Textarea,
   cx,
+  useToast,
 } from '../ui'
 
-/* The four panels the engine understands. `front` is the only one it insists on;
-   the rest sharpen a reading without gating it. */
+function newClientUuid() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+  })
+}
+
+/* Units the backend accepts (Backend/routers/scans.py:ALLOWED_QUANTITY_UNITS). */
+const QTY_UNITS = ['g', 'kg', 'mg', 'gm', 'ml', 'l', 'ltr', 'litre', 'pcs', 'pc', 'pack', 'm', 'cm', 'mm', 'n', 'u']
+
+/* The six panels the backend accepts (Backend/routers/scans.py:ALLOWED_PANELS).
+   `front` is the only one the engine insists on; the rest sharpen a reading
+   without gating it. */
 const PANELS = [
   { key: 'front', required: true },
   { key: 'back', required: false },
-  { key: 'principal', required: false },
+  { key: 'side', required: false },
+  { key: 'mrp', required: false },
+  { key: 'batch', required: false },
   { key: 'other', required: false },
 ]
 
@@ -207,15 +225,35 @@ export default function Capture() {
   const [blowMoulded, setBlowMoulded] = useState(false)
   const [scaleSource, setScaleSource] = useState('declared')
 
+  /* Scope flags — persisted via PATCH /scans/{id} after the save (they decide
+     CHK02/11/12/13/14). Null = unknown -> not_assessed, never pass. */
+  const [netQtyValue, setNetQtyValue] = useState('')
+  const [netQtyUnit, setNetQtyUnit] = useState('g')
+  const [isImported, setIsImported] = useState(false)
+  const [isPerishable, setIsPerishable] = useState(false)
+  const [isMedical, setIsMedical] = useState(false)
+  const [isTobacco, setIsTobacco] = useState(false)
+  const [hasSticker, setHasSticker] = useState(false)
+  const [stickerReduces, setStickerReduces] = useState(false)
+  const [stickerCovers, setStickerCovers] = useState(false)
+  const [listingUrl, setListingUrl] = useState('')
+  const [scopeMsg, setScopeMsg] = useState(null)
+
   /* Scan lifecycle: null until the package is saved, then the panels attach. */
   const [scanId, setScanId] = useState(null)
   const [savedSummary, setSavedSummary] = useState(null)
   const [panels, setPanels] = useState({})
+  const [queuedScan, setQueuedScan] = useState(false)
   /* Which panel's camera is open right now. Camera-only capture: the portal has
      no file input and no gallery, so the live camera is the only way an image
      enters the system — the "absent, not disabled" rule of 08 §4.3. */
   const [camPanel, setCamPanel] = useState(null)
-  const createScan = useMutation((body) => endpoints.inspections.createScan(id, body))
+  const toast = useToast()
+  /* Idempotency travels as the `Idempotency-Key` header (CORS-allowed), not as
+     a body field: CreateScanRequest has no client_uuid. */
+  const createScan = useMutation(({ body, key }) =>
+    endpoints.inspections.createScan(id, body, { headers: { 'Idempotency-Key': key } })
+  )
   const assess = useMutation(() => endpoints.scans.assess(scanId))
 
   /* The shape validators from PanelGeometry, mirrored so a save is never spent to
@@ -242,8 +280,46 @@ export default function Capture() {
   const frozen = submitted || createErr?.status === 409
   const canSave = !geomError && !frozen && !createScan.pending
 
+  function scopePatch() {
+    const patch = {}
+    const qv = toNum(netQtyValue)
+    if (qv != null) patch.net_quantity_value = qv
+    if (netQtyUnit.trim()) patch.net_quantity_unit = netQtyUnit.trim().toLowerCase()
+    if (isImported) patch.is_imported = true
+    if (isPerishable) patch.is_perishable = true
+    if (isMedical) patch.is_medical_device = true
+    if (isTobacco) patch.is_tobacco = true
+    if (hasSticker) {
+      patch.has_sticker = true
+      if (stickerReduces) patch.sticker_reduces_price = true
+      if (stickerCovers) patch.sticker_covers_original = true
+    }
+    return Object.keys(patch).length > 0 ? patch : null
+  }
+
+  async function persistScopeAndListing(targetScanId) {
+    const patch = scopePatch()
+    setScopeMsg(null)
+    if (patch) {
+      try {
+        await endpoints.scans.updateScan(targetScanId, patch)
+      } catch (e) {
+        setScopeMsg(`Scope flags could not be saved: ${e.message}`)
+      }
+    }
+    const url = listingUrl.trim()
+    if (url) {
+      try {
+        await endpoints.scans.attachListing(targetScanId, url)
+      } catch (e) {
+        setScopeMsg((m) => [m, `Listing could not be attached: ${e.message}`].filter(Boolean).join(' '))
+      }
+    }
+  }
+
   async function onSave() {
     if (!canSave) return
+    setQueuedScan(false)
     const rect = shape === 'rectangular'
     const cyl = shape === 'cylindrical'
     const geometry = {
@@ -262,15 +338,41 @@ export default function Capture() {
       batch_number: batch.trim() || null,
       geometry,
     }
+    const key = newClientUuid()
     try {
-      const res = await createScan.run(body)
-      setScanId(res?.scan_id ?? null)
+      const res = await createScan.run({ body, key })
+      const newScanId = res?.scan_id ?? res?.id ?? null
+      setScanId(newScanId)
       setSavedSummary({
         overall_result: res?.overall_result ?? null,
         checks_total: res?.checks_total ?? null,
       })
-    } catch {
-      /* held on createScan.error and surfaced in the form */
+      if (newScanId != null) {
+        await persistScopeAndListing(newScanId)
+        flushQueue().catch(() => {})
+      }
+    } catch (err) {
+      /* Offline: hold the scan body plus scope answers in the outbox. The
+         badge (queueSummary) reflects the real outbox depth. */
+      if (err?.offline || err?.status === 0) {
+        try {
+          await enqueueScan(
+            id,
+            body,
+            [],
+            { scope: scopePatch(), listingUrl: listingUrl.trim() || null }
+          )
+          setQueuedScan(true)
+          toast.push({
+            family: 'review',
+            title: 'Package queued on this device',
+            body: 'No connection, so the package will be created when you are back online.',
+          })
+        } catch {
+          /* held on createScan.error and surfaced in the form */
+        }
+      }
+      /* held on createScan.error and surfaced in the form otherwise */
     }
   }
 
@@ -279,11 +381,41 @@ export default function Capture() {
     const previewUrl = URL.createObjectURL(file)
     setPanels((p) => ({ ...p, [key]: { status: 'uploading', progress: 0, previewUrl } }))
     try {
-      const result = await endpoints.scans.uploadImage(scanId, file, key, (frac) =>
-        setPanels((p) => ({ ...p, [key]: { ...p[key], progress: frac } }))
+      const result = await endpoints.scans.uploadImage(
+        scanId,
+        file,
+        key,
+        (frac) => setPanels((p) => ({ ...p, [key]: { ...p[key], progress: frac } })),
+        { headers: { 'Idempotency-Key': `${scanId}:${key}:${Date.now()}` } }
       )
       setPanels((p) => ({ ...p, [key]: { ...p[key], status: 'done', progress: 1, result } }))
     } catch (e) {
+      if (e?.offline || e?.status === 0) {
+        /* No connection: keep the bytes in IndexedDB and queue the scan for
+           replay. The preview stays so the officer sees what is held. */
+        try {
+          const blob = file instanceof Blob ? file : new Blob([file], { type: 'image/jpeg' })
+          const handle = await putBlob(blob, { panel: key, name: `${key}.jpg` })
+          await enqueueScan(
+            id,
+            null,
+            [{ blobId: handle.blobId, panel: key, name: `${key}.jpg` }],
+            { scanId }
+          )
+          setPanels((p) => ({
+            ...p,
+            [key]: { ...p[key], status: 'error', message: 'No connection — held on this device and queued to sync.', code: 0 },
+          }))
+          toast.push({
+            family: 'review',
+            title: `${key} panel queued`,
+            body: 'The photo is stored on this device and will upload when you are back online.',
+          })
+          return
+        } catch {
+          /* fall through to the generic error below */
+        }
+      }
       setPanels((p) => ({ ...p, [key]: { ...p[key], status: 'error', message: e.message, code: e.status } }))
     }
   }
@@ -293,6 +425,8 @@ export default function Capture() {
     setSavedSummary(null)
     setPanels({})
     setCamPanel(null)
+    setQueuedScan(false)
+    setScopeMsg(null)
     setCommodity('')
     setBrand('')
     setCategory('')
@@ -302,6 +436,16 @@ export default function Capture() {
     setDiameterMm('')
     setAreaCm2('')
     setBlowMoulded(false)
+    setNetQtyValue('')
+    setNetQtyUnit('g')
+    setIsImported(false)
+    setIsPerishable(false)
+    setIsMedical(false)
+    setIsTobacco(false)
+    setHasSticker(false)
+    setStickerReduces(false)
+    setStickerCovers(false)
+    setListingUrl('')
     createScan.reset?.()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -519,6 +663,73 @@ export default function Capture() {
                     )}
                   </Callout>
                 )}
+                {queuedScan && (
+                  <Callout family="review" className="mt-4" title="Queued on this device — will sync automatically">
+                    No connection when you saved. The package and its scope answers are held in the
+                    offline outbox and will be created with the same idempotency key when you are
+                    back online.
+                  </Callout>
+                )}
+              </Card>
+
+              <Card className="p-5">
+                <div className="mb-3 flex items-center gap-2">
+                  <Gauge size={18} strokeWidth={1.8} className="text-ink-2" aria-hidden="true" />
+                  <h2 className="text-body font-semibold text-ink">Scope flags</h2>
+                </div>
+                <p className="mb-4 max-w-prose text-small text-ink-2">
+                  These decide CHK02/11/12/13/14 and are saved via PATCH /scans/{'{id}'} right
+                  after the package is created, before assessment. Leaving everything blank
+                  means unknown — the checks read not-assessed, never pass.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Net quantity value" optional hint="Positive number, e.g. 500.">
+                    {(props) => (
+                      <Input {...props} inputMode="decimal" value={netQtyValue} onChange={(e) => setNetQtyValue(e.target.value)} placeholder="e.g. 500" />
+                    )}
+                  </Field>
+                  <Field label="Net quantity unit" optional hint="Backend allow-list, lower-cased on send.">
+                    {(props) => (
+                      <Select {...props} value={netQtyUnit} onChange={(e) => setNetQtyUnit(e.target.value)}>
+                        {QTY_UNITS.map((u) => (
+                          <option key={u} value={u}>{u}</option>
+                        ))}
+                      </Select>
+                    )}
+                  </Field>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <Checkbox label="Imported package" hint="CHK11: declarations for imports." checked={isImported} onChange={(e) => setIsImported(e.target.checked)} />
+                  <Checkbox label="Perishable" hint="CHK12: expiry/best-before duties." checked={isPerishable} onChange={(e) => setIsPerishable(e.target.checked)} />
+                  <Checkbox label="Medical device" hint="CHK13: device-specific duties." checked={isMedical} onChange={(e) => setIsMedical(e.target.checked)} />
+                  <Checkbox label="Tobacco product" hint="CHK14: tobacco warnings." checked={isTobacco} onChange={(e) => setIsTobacco(e.target.checked)} />
+                </div>
+                <div className="mt-4">
+                  <Checkbox
+                    label="Price sticker affixed"
+                    hint="CHK02: only when a sticker covers or reduces the declared price."
+                    checked={hasSticker}
+                    onChange={(e) => setHasSticker(e.target.checked)}
+                  />
+                  {hasSticker && (
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <Checkbox label="Sticker reduces the price" checked={stickerReduces} onChange={(e) => setStickerReduces(e.target.checked)} />
+                      <Checkbox label="Sticker covers the original" checked={stickerCovers} onChange={(e) => setStickerCovers(e.target.checked)} />
+                    </div>
+                  )}
+                </div>
+                <div className="mt-4">
+                  <Field label="E-commerce listing URL" optional hint="Fetched server-side for CHK15/16 via POST /scans/{id}/listing. Leave blank if none.">
+                    {(props) => (
+                      <Input {...props} inputMode="url" value={listingUrl} onChange={(e) => setListingUrl(e.target.value)} placeholder="https://…" />
+                    )}
+                  </Field>
+                </div>
+                {scopeMsg && (
+                  <Callout family="review" className="mt-4" title="Scope note">
+                    {scopeMsg}
+                  </Callout>
+                )}
 
                 <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-divider pt-5">
                   <p className="flex items-center gap-1.5 text-caption text-ink-3">
@@ -546,6 +757,11 @@ export default function Capture() {
                   ? `The engine will run ${savedSummary.checks_total} checks once the front panel is captured.`
                   : 'Photograph the panels below. The front panel is the one the engine needs.'}
               </Callout>
+              {scopeMsg && (
+                <Callout family="review" title="Scope note">
+                  {scopeMsg}
+                </Callout>
+              )}
 
               {camPanel && (
                 <Card className="p-4">
@@ -582,8 +798,8 @@ export default function Capture() {
               </div>
               {!frontDone && (
                 <p className="text-caption text-ink-2">
-                  The front panel is required before the engine can assess. Back, principal-display and
-                  other panels are optional, but each one makes the reading surer.
+                  The front panel is required before the engine can assess. Back, side, MRP,
+                  batch and other panels are optional, but each one makes the reading surer.
                 </p>
               )}
 

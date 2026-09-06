@@ -1,6 +1,7 @@
 """Settings. Reads .env, validates at import time, fails loudly."""
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,12 +14,14 @@ WEAK_SECRETS = {
 
 
 class Settings(BaseSettings):
+    # extra=ignore (not forbid): unknown env vars (e.g. platform-injected
+    # PORT, RENDER_*) must not crash boot; required fields are still validated.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="forbid"
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
     # --- app ---
-    ENV: str = "dev"                       # dev | prod
+    ENV: Literal["dev", "prod", "test"] = "dev"
     APP_NAME: str = "NiyamNetra"
     PUBLIC_BASE_URL: str = "http://localhost:8000"
 
@@ -30,9 +33,16 @@ class Settings(BaseSettings):
 
     # --- auth ---
     JWT_SECRET: str
-    JWT_ALGORITHM: str = "HS256"
+    JWT_ALGORITHM: Literal["HS256"] = "HS256"
+    # Access tokens live 12h (C8): long enough for a field day without
+    # re-login, short enough that a stolen token expires same-day. Logout and
+    # password change bump token_epoch, which revokes REFRESH tokens only;
+    # the current access token stays valid until expiry (client re-logins to
+    # rotate it). Documented here so the behaviour is honest, not implied.
     ACCESS_TOKEN_HOURS: int = 12           # C8
-    REFRESH_TOKEN_DAYS: int = 30           # C8
+    REFRESH_TOKEN_DAYS: int = 30           # C8 — rotation is NOT single-use
+    # (no jti denylist); revocation is via token_epoch bump on logout /
+    # password change / install reset. See routers/auth.py.
     REFRESH_COOKIE_NAME: str = "nn_refresh"
 
     # Cross-site refresh cookie. A browser will not store or send a
@@ -77,6 +87,23 @@ class Settings(BaseSettings):
         r"|https?://172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)"
         r"|exp://.*)$"
     )
+    # Prod override: when ENV=prod the default above still allows localhost
+    # origins, which is wrong for a public deploy. Set CORS_ORIGIN_REGEX_PROD
+    # to a strict pattern (e.g. your portal domain) and it is used instead.
+    # If unset in prod, boot logs a warning (see _warn_prod_cors) and keeps
+    # the default — fail-open with a loud warning, not a silent localhost.
+    CORS_ORIGIN_REGEX_PROD: str | None = None
+
+    @property
+    def effective_cors_regex(self) -> str:
+        if self.ENV == "prod" and self.CORS_ORIGIN_REGEX_PROD:
+            return self.CORS_ORIGIN_REGEX_PROD
+        return self.CORS_ORIGIN_REGEX
+
+    # How many right-most X-Forwarded-For hops to trust (Render = 1 proxy).
+    # _client_ip takes the entry at index -count, not [0], so a client cannot
+    # spoof the IP by prepending to the header.
+    TRUSTED_PROXY_COUNT: int = 1
 
     # --- evidence ---
     EVIDENCE_DIR: Path = BASE_DIR / "evidence"
@@ -89,10 +116,15 @@ class Settings(BaseSettings):
     DERIVED_MAX_WIDTH_PX: int = 1600       # display copies only; originals are never resized
 
     # --- capacity, 11 §4 ---
+    # ASSESS_CONCURRENCY is enforced by the semaphore in routers/scans.py
+    # (0 → cpu_count, 503+Retry-After when busy). RATE_LIMIT_API_PER_MIN and
+    # DASHBOARD_CACHE_TTL_SECONDS are documented reservations, not enforced
+    # per-request guards: login brute-force is braked by the limiter in
+    # routers/auth.py; the review-queue badge is never cached.
     ASSESS_CONCURRENCY: int = 0            # 0 → os.cpu_count()
     ASSESS_QUEUE_WAIT_S: int = 20          # then 503 with Retry-After
     RATE_LIMIT_LOGIN_PER_MIN: int = 5      # per employee_id and per IP
-    RATE_LIMIT_API_PER_MIN: int = 300      # per user; a loop guard, not a throttle
+    RATE_LIMIT_API_PER_MIN: int = 300      # reserved; not enforced per-request
     DASHBOARD_CACHE_TTL_SECONDS: int = 60  # never applied to the review-queue badge
 
     # --- OCR ---
@@ -147,6 +179,12 @@ def get_settings() -> Settings:
     s = Settings()                      # raises at import if .env is missing JWT_SECRET
     s.EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     s.OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if s.ENV == "prod" and not s.CORS_ORIGIN_REGEX_PROD and "localhost" in s.CORS_ORIGIN_REGEX:
+        import logging
+        logging.getLogger(__name__).warning(
+            "ENV=prod but CORS_ORIGIN_REGEX_PROD is unset: default CORS regex "
+            "still allows localhost origins. Set CORS_ORIGIN_REGEX_PROD to the "
+            "portal domain for a strict prod policy.")
     return s
 
 

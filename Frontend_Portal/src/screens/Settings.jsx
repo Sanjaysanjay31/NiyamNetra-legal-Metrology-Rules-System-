@@ -12,7 +12,8 @@
  *
  * The change-password form mirrors the server contract exactly: the old
  * password is at least 8 characters and the new one at least 12 (see
- * schemas.ChangePasswordRequest). It also enforces new === confirm, which the
+ * Backend/routers/auth.py:ChangePasswordRequest — note it lives beside the
+ * auth routes, not in schemas.py). It also enforces new === confirm, which the
  * server cannot check because the confirmation field never leaves the browser.
  * On success the server bumps `token_epoch`, which kills every refresh token
  * already issued; the current access token keeps working until it expires, so

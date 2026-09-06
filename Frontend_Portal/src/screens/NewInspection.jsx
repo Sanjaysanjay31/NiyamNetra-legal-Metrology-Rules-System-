@@ -48,6 +48,7 @@ import {
 import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDebounced, useDocumentTitle, useMutation, useResource } from '../lib/hooks'
+import { enqueueInspection, flushQueue } from '../lib/queue'
 import { stores as storesFixture } from '../mock/fixtures'
 import {
   Button,
@@ -64,6 +65,7 @@ import {
   Skeleton,
   Textarea,
   cx,
+  useToast,
 } from '../ui'
 
 /* The seven values SubmitInspectionRequest permits on transaction_type, in the
@@ -90,10 +92,20 @@ const storeMatches = (s, q) => {
   return hay.includes(q.toLowerCase())
 }
 
+function newClientUuid() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+  })
+}
+
 export default function NewInspection() {
   const { t } = useI18n()
   useDocumentTitle(t('inspection.new'))
   const navigate = useNavigate()
+  const toast = useToast()
+  const [queued, setQueued] = useState(false)
 
   const [storeId, setStoreId] = useState(null)
   const [qRaw, setQRaw] = useState('')
@@ -108,7 +120,11 @@ export default function NewInspection() {
     label: t('inspection.store'),
   })
 
-  const create = useMutation((body) => endpoints.inspections.create(body))
+  /* Idempotency travels as the `Idempotency-Key` header (CORS-allowed), not
+     as a body field: CreateInspectionRequest has no client_uuid. */
+  const create = useMutation(({ body, key }) =>
+    endpoints.inspections.create(body, { headers: { 'Idempotency-Key': key } })
+  )
   const fieldErrors = create.fieldErrors
   const err = create.error
 
@@ -163,6 +179,7 @@ export default function NewInspection() {
 
   async function onCreate() {
     if (!canCreate) return
+    setQueued(false)
     const body = {
       store_id: storeId,
       transaction_type: transactionType,
@@ -174,13 +191,33 @@ export default function NewInspection() {
       body.longitude = geo.lon
       body.gps_accuracy_m = geo.accuracy
     }
+    const key = newClientUuid()
     try {
-      const created = await create.run(body)
+      const created = await create.run({ body, key })
       const newId = created?.id ?? created?.inspection_id
+      /* Drain anything else waiting in the outbox now that we are online. */
+      flushQueue().catch(() => {})
       if (newId != null) navigate(`/inspector/inspections/${newId}/capture`)
       else navigate('/inspector/inspections')
-    } catch {
-      /* useMutation already holds the error; the form surfaces it below. */
+    } catch (err) {
+      /* Offline or unreachable: hold the whole inspection in the IndexedDB
+         outbox and let the header badge (queueSummary) show it. Anything else
+         stays on useMutation's error and is surfaced below. */
+      if (err?.offline || err?.status === 0) {
+        try {
+          /* A fresh client_uuid is minted inside enqueueInspection for the
+             retry; the direct attempt above never reached the server. */
+          await enqueueInspection({ inspection: body, scans: [], submit: null })
+          setQueued(true)
+          toast.push({
+            family: 'review',
+            title: 'Saved on this device',
+            body: 'No connection, so the inspection is queued and will sync when you are back online.',
+          })
+        } catch {
+          /* enqueue failed: the original network error remains visible. */
+        }
+      }
     }
   }
 
@@ -197,6 +234,13 @@ export default function NewInspection() {
       />
 
       {/* ---- A refusal that is about the device, not the visit. ---- */}
+      {queued && (
+        <Callout family="review" title="Queued on this device — will sync automatically" className="mb-6">
+          No connection right now. The inspection is held in the offline outbox (see the sync
+          badge in the header) and will be sent with the same idempotency key when you are back
+          online, so it cannot be recorded twice.
+        </Callout>
+      )}
       {lowDisk && (
         <Callout
           family="violation"

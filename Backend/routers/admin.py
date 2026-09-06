@@ -66,15 +66,22 @@ def list_users(user: User = Depends(require_admin), db: Session = Depends(get_db
 @router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def create_user(body: CreateUserRequest, user: User = Depends(require_admin),
                 db: Session = Depends(get_db)):
+    from sqlalchemy.exc import IntegrityError
     if db.query(User).filter(User.employee_id == body.employee_id).first():
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Employee ID exists")
+    if body.email and db.query(User).filter(User.email == body.email).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Email already exists")
     target = User(
         employee_id=body.employee_id, full_name=body.full_name,
         password_hash=hash_password(body.password), role=body.role,
         jurisdiction=body.jurisdiction, email=body.email, phone=body.phone,
     )
     db.add(target)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="User already exists")
     db.refresh(target)
     append_audit(db, user_id=user.id, action="user_created",
                  new_value=f"{target.employee_id}:{target.role}")
@@ -84,13 +91,31 @@ def create_user(body: CreateUserRequest, user: User = Depends(require_admin),
 @router.patch("/users/{user_id}", response_model=UserOut)
 def update_user(user_id: int, body: UpdateUserRequest,
                 user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from sqlalchemy.exc import IntegrityError
     target = db.get(User, user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="User not found")
     changes = body.model_dump(exclude_unset=True)
+    if "email" in changes and changes["email"]:
+        clash = db.query(User).filter(User.email == changes["email"], User.id != user_id).first()
+        if clash:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Email already exists")
+    # Self-lockout guard: an admin must not deactivate themselves or remove
+    # their own admin role in a single call (would lock all admin access).
+    if target.id == user.id:
+        if changes.get("is_active") is False:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                detail="Cannot deactivate your own admin account")
+        if "role" in changes and changes["role"] != "admin" and target.role == "admin":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                detail="Cannot remove your own admin role")
     for field, value in changes.items():
         setattr(target, field, value)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="User update conflicts with existing data")
     db.refresh(target)
     append_audit(db, user_id=user.id, action="user_updated",
                  new_value=f"{target.employee_id}:{sorted(changes)}")
@@ -134,19 +159,53 @@ def override_finding(
 
     engine_verdict is protected by a database trigger as well (§10.3), so a
     stray UPDATE from a script cannot do what this endpoint refuses to do.
+
+    After the override the parent Scan.overall_result is recomputed from the
+    effective verdicts of ALL its findings: any fail -> violation; all pass
+    -> compliant; otherwise not_assessed. A scan that was out_of_scope keeps
+    that result (an override cannot pull a package back into scope).
+    Submitted inspections are frozen (409).
     """
+    from sqlalchemy.exc import IntegrityError
+
+    from models import Inspection as _Inspection
     f = db.get(Finding, finding_id)
     if f is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Finding not found")
+
+    scan = db.get(Scan, f.scan_id)
+    if scan is not None and scan.inspection_id is not None:
+        _insp = db.get(_Inspection, scan.inspection_id)
+        if _insp is not None and _insp.status == "submitted":
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                detail="Inspection submitted; findings frozen")
 
     old = f.human_verdict or f.engine_verdict
     f.human_verdict = body.human_verdict
     f.override_reason = body.override_reason
     f.overridden_by = user.id
     f.overridden_at = datetime.now(timezone.utc)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Override conflicts with existing data")
 
     scan = db.get(Scan, f.scan_id)
+    if scan is not None and scan.overall_result != "out_of_scope":
+        try:
+            _rows = db.query(Finding).filter(Finding.scan_id == scan.id).all()
+            _eff = [(r.human_verdict or r.engine_verdict) for r in _rows]
+            if any(v == "fail" for v in _eff):
+                scan.overall_result = "violation"
+            elif _eff and all(v == "pass" for v in _eff):
+                scan.overall_result = "compliant"
+            else:
+                scan.overall_result = "not_assessed"
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Recompute conflicts with existing data")
     append_audit(
         db, inspection_id=scan.inspection_id, scan_id=scan.id, user_id=user.id,
         action="finding_overridden",

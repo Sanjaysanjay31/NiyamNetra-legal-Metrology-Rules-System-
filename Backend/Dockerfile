@@ -23,7 +23,7 @@
 #   and drop the startCommand (the CMD below handles it). Everything else
 #   (envVars, healthCheckPath, rootDir) stays.
 
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # tesseract-ocr = the OCR fallback binary pytesseract shells out to.
 # libzbar0      = the shared library pyzbar loads to decode barcodes/QR.
@@ -32,6 +32,10 @@ FROM python:3.11-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tesseract-ocr libzbar0 \
     && rm -rf /var/lib/apt/lists/*
+
+# Non-root runtime user: evidence/out writes stay inside /app which is
+# chowned to appuser at build end.
+RUN useradd -m -u 10001 appuser
 
 WORKDIR /app
 
@@ -43,6 +47,14 @@ RUN pip install --no-cache-dir -r requirements-render.txt \
 
 COPY . .
 
-# Render injects $PORT; binding a fixed port gets the service killed. The shell
-# form is required so $PORT is expanded at runtime, not baked at build.
-CMD uvicorn main:app --host 0.0.0.0 --port $PORT
+RUN mkdir -p /app/evidence /app/out && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:' + ('${PORT:-8000}') + '/health')" || exit 1
+
+# Render injects $PORT; default 8000 locally. The shell form is required so
+# $PORT is expanded at runtime, not baked at build. .dockerignore ensures
+# .env / *.db / evidence / out never bake into the image.
+CMD sh -c "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"

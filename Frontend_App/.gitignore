@@ -18,6 +18,7 @@ web-build/
 
 # Metro
 metro-health-checks*
+metro*.log
 
 # debug
 npm-debug.log*
@@ -33,6 +34,7 @@ yarn-error.log*
 # macOS
 .DS_Store
 
-# Env files (optional - uncomment if you want to gitignore .env)
-# .env
-# .env.local
+# Env files
+.env
+.env.local
+# .env.example is the committed template — never ignore it.

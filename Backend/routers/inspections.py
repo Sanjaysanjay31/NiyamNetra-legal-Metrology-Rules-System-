@@ -24,12 +24,18 @@ router = APIRouter(tags=["inspections"])
 # /stores changes rarely and is read on every app launch; a short TTL keeps it
 # fresh without a query per launch. Plain dicts are cached, never ORM rows, so
 # nothing detached from a closed session leaks into a later request.
+# Thread-safe: TTLCache is not locked internally, so all access goes through
+# _STORE_LOCK (uvicorn threads share the process cache).
+import threading as _threading
+_STORE_LOCK = _threading.Lock()
 _STORE_CACHE: TTLCache = TTLCache(maxsize=1, ttl=300)
 
 # Transaction types that put a package inside Chapter II's retail-sale ambit.
 # The authoritative, per-package scope test is CHK03 in the engine; this is the
 # coarse inspection-level flag, recorded from what the officer selected.
-_RETAIL_TYPES = {"retail_sale", "packed_in_presence"}
+# packed_in_presence is NOT retail (CHK03 OUT_OF_SCOPE_TRANSACTIONS + docs):
+# it was wrongly listed here, marking made-in-presence visits in_scope.
+_RETAIL_TYPES = {"retail_sale"}
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -82,18 +88,21 @@ class CreateStoreRequest(BaseModel):
 @router.get("/stores")
 def list_stores(user: User = Depends(require_inspector), db: Session = Depends(get_db)):
     """Active stores, cached five minutes (settings-independent, deliberate)."""
-    cached = _STORE_CACHE.get("all")
-    if cached is not None:
-        return cached
+    with _STORE_LOCK:
+        cached = _STORE_CACHE.get("all")
+        if cached is not None:
+            return cached
     rows = db.query(Store).filter(Store.is_active.is_(True)).order_by(Store.name).all()
     data = [_store_dict(s) for s in rows]
-    _STORE_CACHE["all"] = data
+    with _STORE_LOCK:
+        _STORE_CACHE["all"] = data
     return data
 
 
 @router.post("/stores", status_code=status.HTTP_201_CREATED)
 def create_store(body: CreateStoreRequest, user: User = Depends(require_admin), db: Session = Depends(get_db)):
     """Admin creates a new store. Invalidates the 5-min cache so inspectors see it."""
+    from sqlalchemy.exc import IntegrityError
     existing = db.query(Store).filter(Store.name == body.name).first()
     if existing:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Store name already exists")
@@ -103,9 +112,14 @@ def create_store(body: CreateStoreRequest, user: User = Depends(require_admin), 
         latitude=body.latitude, longitude=body.longitude, geofence_radius_m=body.geofence_radius_m,
     )
     db.add(s)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Store already exists")
     db.refresh(s)
-    _STORE_CACHE.clear()
+    with _STORE_LOCK:
+        _STORE_CACHE.clear()
     append_audit(db, user_id=user.id, action="store_created", new_value=f"{s.id}:{s.name}")
     return _store_dict(s)
 
@@ -114,10 +128,16 @@ def create_store(body: CreateStoreRequest, user: User = Depends(require_admin), 
 def create_inspection(body: CreateInspectionRequest, request: Request,
                       user: User = Depends(require_inspector),
                       db: Session = Depends(get_db)):
-    # 11 §2.1 — refuse at gate if evidence disk low, not mid-capture
-    if _evidence_free_gb() < settings.EVIDENCE_MIN_FREE_GB:
+    # 11 §2.1 — refuse at gate if evidence disk low, not mid-capture.
+    # Disk errors map to 503 (not 500): the store is unavailable, not the code.
+    try:
+        _free = _evidence_free_gb()
+    except Exception:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Evidence store unavailable; retry shortly")
+    if _free < settings.EVIDENCE_MIN_FREE_GB:
         raise HTTPException(status.HTTP_507_INSUFFICIENT_STORAGE,
-                            detail=f"Evidence store low: {_evidence_free_gb():.1f}GB free < {settings.EVIDENCE_MIN_FREE_GB}GB floor. Sync or free space.")
+                            detail=f"Evidence store low: {_free:.1f}GB free < {settings.EVIDENCE_MIN_FREE_GB}GB floor. Sync or free space.")
     store = db.get(Store, body.store_id)
     if store is None or not store.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Store not found")
@@ -131,8 +151,15 @@ def create_inspection(body: CreateInspectionRequest, request: Request,
 
     # Geofence: distance from the store's registered point against its radius.
     # Unknown when either side lacks coordinates — never silently 'inside'.
+    # Mock locations can never attest presence: force unknown. Fixes with
+    # accuracy worse than 100 m are too coarse to place the officer: unknown.
     g_status, g_dist, g_reason = "unknown", None, None
-    if (body.latitude is not None and body.longitude is not None
+    if body.mock_location:
+        g_reason = "Mock location reported by the device; presence cannot be attested."
+    elif body.gps_accuracy_m is not None and body.gps_accuracy_m > 100:
+        g_reason = (f"GPS accuracy {body.gps_accuracy_m:g} m exceeds the 100 m "
+                    "threshold; presence cannot be attested.")
+    elif (body.latitude is not None and body.longitude is not None
             and store.latitude is not None and store.longitude is not None):
         g_dist = _haversine_m(body.latitude, body.longitude,
                               store.latitude, store.longitude)
@@ -148,11 +175,18 @@ def create_inspection(body: CreateInspectionRequest, request: Request,
 
     now = datetime.now(timezone.utc)
     skew = None
+    edited_offline = False
+    skew_note: str | None = None
     if body.local_created_at is not None:
         lc = body.local_created_at
         if lc.tzinfo is None:
             lc = lc.replace(tzinfo=timezone.utc)
         skew = int((now - lc).total_seconds())
+        # Future device clock (large negative skew): don't reject — flag as
+        # edited-offline with an audit note so the review queue sees it.
+        if skew is not None and skew < -300:
+            edited_offline = True
+            skew_note = f"Device clock {abs(skew)}s ahead of server; flagged for review."
 
     insp = Inspection(
         user_id=user.id, store_id=store.id, inspection_date=date.today(),
@@ -162,19 +196,32 @@ def create_inspection(body: CreateInspectionRequest, request: Request,
         gps_accuracy_m=body.gps_accuracy_m, geofence_status=g_status,
         geofence_distance_m=g_dist, geofence_reason=g_reason,
         mock_location=body.mock_location, local_created_at=body.local_created_at,
-        synced_at=now, clock_skew_seconds=skew, notes=body.notes,
+        synced_at=now, clock_skew_seconds=skew, edited_offline=edited_offline,
+        notes=body.notes,
     )
     db.add(insp)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        from sqlalchemy.exc import IntegrityError as _IE
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            detail="Inspection conflicts with existing data; retry")
     db.refresh(insp)
     append_audit(db, inspection_id=insp.id, user_id=user.id,
-                 action="inspection_created", new_value=f"store={store.id}")
+                 action="inspection_created", new_value=f"store={store.id}",
+                 reason=skew_note)
     return _inspection_dict(insp)
 
 
 def _evidence_free_gb() -> float:
     import shutil
-    return shutil.disk_usage(settings.EVIDENCE_DIR).free / (1024 ** 3)
+    try:
+        return shutil.disk_usage(settings.EVIDENCE_DIR).free / (1024 ** 3)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("evidence disk check failed: %s", e)
+        raise
 
 
 @router.get("/inspections")
@@ -188,7 +235,15 @@ def list_inspections(
     q: str | None = None,
 ):
     """Filters per 04_PRD §5.9 — store, status, date range, free-text q."""
-    query = db.query(Inspection)
+    from sqlalchemy.orm import joinedload, selectinload
+    if status is not None and status not in ("draft", "submitted"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="status must be draft or submitted")
+    query = db.query(Inspection).options(
+        selectinload(Inspection.scans),
+        joinedload(Inspection.store),
+        joinedload(Inspection.inspector),
+    )
     if user.role != "admin":
         query = query.filter(Inspection.user_id == user.id)
     if store_id is not None:
@@ -200,8 +255,12 @@ def list_inspections(
     if date_to is not None:
         query = query.filter(Inspection.inspection_date <= date_to)
     if q:
+        # Escape LIKE wildcards so %/_ in user input match literally; cap 100.
+        _qq = (q or "")[:100]
+        _esc = _qq.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         # search commodity_generic/brand_name via scans join is done client-side for now; store name search
-        query = query.join(Store, Store.id == Inspection.store_id).filter(Store.name.ilike(f"%{q}%"))
+        query = query.join(Store, Store.id == Inspection.store_id).filter(
+            Store.name.ilike(f"%{_esc}%", escape="\\"))
     rows = query.order_by(Inspection.inspection_date.desc(), Inspection.id.desc()).all()
     return [_inspection_dict(i) for i in rows]
 
@@ -240,7 +299,7 @@ def submit_inspection(body: SubmitInspectionRequest,
 
 
 @router.post("/inspections/{inspection_id}/scans",
-             status_code=status.HTTP_201_CREATED)
+              status_code=status.HTTP_201_CREATED)
 def create_scan(body: CreateScanRequest,
                 insp: Inspection = Depends(owned_inspection),
                 user: User = Depends(get_current_user),
@@ -251,6 +310,7 @@ def create_scan(body: CreateScanRequest,
     catalogue in force; the assess endpoint overwrites them with the exact set
     it actually ran against.
     """
+    from sqlalchemy.exc import IntegrityError
     if insp.status == "submitted":
         raise HTTPException(status.HTTP_409_CONFLICT,
                             detail="Inspection already submitted; scans are frozen")
@@ -274,8 +334,17 @@ def create_scan(body: CreateScanRequest,
         catalog_hash=catalog_hash(),
         engine_version=settings.ENGINE_VERSION,
     )
+    # Stash reference_pixel_size transiently for build_context/compute_scale
+    # (no DB column; held on the instance, next assess reads via getattr).
+    if getattr(g, "reference_pixel_size", None) is not None:
+        object.__setattr__(scan, "reference_pixel_size", g.reference_pixel_size)
     db.add(scan)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            detail="Scan conflicts with existing data; retry")
     db.refresh(scan)
     append_audit(db, inspection_id=insp.id, scan_id=scan.id, user_id=user.id,
                  action="scan_created",

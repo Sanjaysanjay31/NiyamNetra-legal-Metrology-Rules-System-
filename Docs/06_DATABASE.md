@@ -95,13 +95,13 @@ Inspector and admin accounts, role-based access, install binding.
 | `token_epoch` | INTEGER | NOT NULL DEFAULT 0 | Bumped to invalidate live refresh tokens |
 | `created_at` | TIMESTAMPTZ | DEFAULT now | |
 
-**Login is by `employee_id`, not email.** A Legal Metrology officer has an official identifier; an email address is a contact detail that changes on transfer and that the officer may not have at all. Version 2.0 marked `email` as "Login identity" and made it `UNIQUE NOT NULL`, which excludes an officer without one and puts a mutable field on the authentication path. `POST /auth/login` takes `{employee_id, password, install_id}`.
+**Login is by `employee_id`, not email.** A Legal Metrology officer has an official identifier; an email address is a contact detail that changes on transfer and that the officer may not have at all. Version 2.0 marked `email` as "Login identity" and made it `UNIQUE NOT NULL`, which excludes an officer without one and puts a mutable field on the authentication path. `POST /auth/login` takes `{employee_id, password}` only — `install_id` is server-issued via `bind_install` in `routers/auth_helpers.py` and returned in the login response, never sent in the request.
 
 **On `install_id`.** An earlier draft specified "phone IMEI or browser fingerprint". IMEI has been unavailable to non-privileged Android applications since Android 10, so that half was not implementable, and fingerprinting is both unreliable and a privacy problem of its own. Instead the server issues a random 32-byte identifier on first launch, the client keeps it in the platform keystore, and a login presenting a different one is surfaced for admin attention. This is what makes account sharing visible — `12` §6 (#65, #66), `08` §4.9.
 
 **On `token_epoch`.** Rotating `JWT_SECRET` invalidates every token for every user, which is right for a suspected key leak and much too broad for one compromised account. `token_epoch` is stamped into the refresh token and compared on use, so incrementing it logs out exactly one user's live sessions. There is no `failed_logins` or `locked_until` column: lockout by row invites a denial-of-service against a named officer, and the control that actually applies is `RATE_LIMIT_LOGIN_PER_MIN` per `employee_id` **and** per IP — `09` §2.3, `14` §3.5.
 
-**Access token 12 hours, refresh token 30 days.** Twelve hours covers a full field shift, which matters because an officer in a no-network area cannot re-authenticate. The access token lives in client memory only; the refresh token is an httpOnly `SameSite=Strict` cookie on the portal and a keystore entry in the app. `token_type` is checked on every decode, so a refresh token cannot be presented as an access token. This figure is authoritative across `04`, `05`, `09`, `11` and `14`.
+**Access token 12 hours, refresh token 30 days.** Twelve hours covers a full field shift, which matters because an officer in a no-network area cannot re-authenticate. The access token lives in client memory only; the refresh token is an httpOnly cookie on the portal (`SameSite=Strict` locally, `SameSite=None; Secure` in prod cross-site) and a keystore entry in the app. `token_type` is checked on every decode, so a refresh token cannot be presented as an access token. This figure is authoritative across `04`, `05`, `09`, `11` and `14`.
 
 **Seed accounts use `@example.test`.** Not a `gov.in` domain the project does not control — `05` §5, `14` §8.
 
@@ -140,9 +140,9 @@ One visit: one officer, one store, one date.
 | `store_id` | INTEGER | FK stores.id NOT NULL, indexed | |
 | `inspection_date` | DATE | NOT NULL DEFAULT today, indexed | **Server** date |
 | `status` | VARCHAR(16) | NOT NULL DEFAULT 'draft', CHECK IN ('draft','submitted') | |
-| `transaction_type` | VARCHAR(32) | NULL | `retail`, `institutional`, `industrial`, `packed_in_presence` |
-| `in_scope` | BOOLEAN | NULL | NULL = not yet determined |
-| `out_of_scope_reason` | TEXT | NULL | Required when `in_scope` is FALSE |
+| `transaction_type` | VARCHAR(32) | NULL | `retail_sale`, `wholesale`, `institutional`, `industrial`, `packed_in_presence`, `export`, `other` |
+| `in_scope` | BOOLEAN | NOT NULL | Always set at create: `transaction_type IN (retail_sale, packed_in_presence)` |
+| `out_of_scope_reason` | TEXT | NULL | Set when `in_scope` is FALSE |
 | `latitude` | FLOAT | NULL | Fix at the time of the visit |
 | `longitude` | FLOAT | NULL | |
 | `gps_accuracy_m` | FLOAT | NULL | The radius the fix is good to |
@@ -154,12 +154,12 @@ One visit: one officer, one store, one date.
 | `synced_at` | TIMESTAMPTZ | NULL | When the server received it |
 | `clock_skew_seconds` | INTEGER | NULL | Server time minus device time |
 | `edited_offline` | BOOLEAN | NOT NULL DEFAULT FALSE | |
-| `signature_status` | VARCHAR(24) | NULL | `signed`, `refused`, `not_requested` |
+| `signature_status` | VARCHAR(24) | NULL | `signed`, `refused`, `unavailable` |
 | `notes` | TEXT | NULL | Free text |
 | `created_at` | TIMESTAMPTZ | DEFAULT now | |
 | `submitted_at` | TIMESTAMPTZ | NULL | |
 
-**`in_scope` is nullable, and NULL is not FALSE.** A default of TRUE asserts that a scope determination was made when none was; NULL says the gate has not been reached yet, and the API refuses submission while it is still NULL. `transaction_type` drives it: `packed_in_presence` and `industrial` are the two that take a visit out of Chapter II.
+**`in_scope` is always a boolean set at create — there is no NULL gate.** `routers/inspections.py:125` computes `in_scope = transaction_type in _RETAIL_TYPES` (`{"retail_sale", "packed_in_presence"}`) and `inspections.py:157-160` stores it directly, so every inspection row has TRUE or FALSE from the start and submission is never refused on a NULL scope. `transaction_type` drives it: `retail_sale` and `packed_in_presence` are IN-SCOPE (Chapter II applies); `wholesale`, `institutional`, `industrial`, `export` and `other` are out of scope at the inspection level, with per-package applicability still recorded by CHK03.
 
 **Location is recorded, never enforced.** A fix inside the fence does not prove the officer was there, and a fix outside does not prove they were not — buildings, urban canyons and a cold GPS start all produce a bad fix at a real address. So `geofence_status` is stored with `gps_accuracy_m` and, when it is not `inside`, a reason. Blocking a submission on a geofence means an officer standing in the shop cannot record what they found, which is a worse failure than a wrong distance in a column. `mock_location` is stored the same way: a reported flag, not a rejection.
 
@@ -189,17 +189,17 @@ One package. The row is the whole reproducible record of one assessment: what wa
 |---|---|---|---|
 | `net_quantity_value` | FLOAT | NULL | As declared on the pack |
 | `net_quantity_unit` | VARCHAR(12) | NULL | SI units and count units kept apart |
-| `is_imported` | BOOLEAN | **NULL** | CHK11, country of origin, 6(1)(aa) |
-| `is_perishable` | BOOLEAN | **NULL** | CHK12, best before, 6(1)(da) |
+| `is_imported` | BOOLEAN | **NULL** | CHK12, country of origin, 6(1)(aa) |
+| `is_perishable` | BOOLEAN | **NULL** | CHK13, best-before, 6(1)(da) |
 | `is_medical_device` | BOOLEAN | **NULL** | CHK14, proviso to Rule 2(h) |
-| `is_tobacco` | BOOLEAN | **NULL** | CHK17, advisory only |
-| `has_sticker` | BOOLEAN | **NULL** | CHK13, 6(3)–6(4A) |
+| `is_tobacco` | BOOLEAN | **NULL** | CHK02 tobacco carve-out under Rule 26(a); CHK17 is the FSSAI advisory |
+| `has_sticker` | BOOLEAN | **NULL** | CHK11, 6(3)–6(4A) |
 | `sticker_reduces_price` | BOOLEAN | NULL | Only meaningful when `has_sticker` |
 | `sticker_covers_original` | BOOLEAN | NULL | Only meaningful when `has_sticker` |
 
 **These five flags are nullable on purpose, and they are persisted rather than merely passed in.** NULL means "the officer was not asked, or did not answer", and that is exactly what makes the dependent check return `not_assessed` with a reason instead of `pass`. Version 2.0 kept `is_imported` and `is_perishable` on `inspections` with `DEFAULT FALSE` — one answer for a whole shop, and a default that silently asserts a domestic, non-perishable pack. They belong per package, and a default of FALSE turns an unasked question into a passing grade.
 
-Before this revision the flags existed only on the in-memory `CheckContext` and were never written anywhere. The consequence is worth stating plainly: the answers that decided CHK11, CHK12, CHK13, CHK14 and CHK17 were discarded the moment the response was returned, so "why did country-of-origin pass?" had no answer six months later. `net_quantity_value` and `net_quantity_unit` were dropped the same way, which made CHK03, CHK05 and CHK08 unreproducible.
+Before this revision the flags existed only on the in-memory `CheckContext` and were never written anywhere. The consequence is worth stating plainly: the answers that decided CHK02, CHK11, CHK12, CHK13 and CHK14 were discarded the moment the response was returned, so "why did country-of-origin pass?" had no answer six months later. `net_quantity_value` and `net_quantity_unit` were dropped the same way, which made CHK03, CHK05 and CHK08 unreproducible.
 
 **Result**
 
@@ -449,11 +449,11 @@ CREATE TABLE inspections (
   submitted_at        DATETIME,
   CONSTRAINT ck_insp_status CHECK (status IN ('draft','submitted')),
   CONSTRAINT ck_insp_txn CHECK (transaction_type IS NULL OR transaction_type IN
-    ('retail','institutional','industrial','packed_in_presence')),
+    ('retail_sale','wholesale','institutional','industrial','packed_in_presence','export','other')),
   CONSTRAINT ck_insp_geofence CHECK (geofence_status IS NULL OR geofence_status IN
     ('inside','outside','unknown')),
   CONSTRAINT ck_insp_signature CHECK (signature_status IS NULL OR signature_status IN
-    ('signed','refused','not_requested')),
+    ('signed','refused','unavailable')),
   -- An out-of-scope determination must say why. `IS NOT FALSE` rather than
   -- `= 1`, so the constraint text is identical on SQLite and PostgreSQL and
   -- so NULL — "not yet determined" — is not treated as out of scope.
@@ -532,6 +532,8 @@ CREATE TABLE scans (
 ```
 
 The last constraint is the one worth pausing on. `overall_result = 'compliant'` requires `checks_assessed = checks_total`, so a partially assessed scan **cannot** be stored as compliant even if the application layer has a bug that tries. `04` §1.1 states the promise in prose; this is the same sentence in a form that survives a refactor.
+
+`checks_total` is per scan type: 16 for a package scan without a listing (CHK15/CHK16 return `not_assessed` with a listing reason, so the scan honestly reports 16/18 and resolves `not_assessed`, never `compliant`), 18 with a listing. `compliant` therefore means `assessed == total` for that scan's denominator — not "18" as a magic constant. No stricter CHECK (e.g. `checks_total = 18`) is added: it would reject the honest 16/18 package scan and break the seed.
 
 ```sql
 CREATE TABLE scan_images (
@@ -1077,7 +1079,7 @@ def seed_inspections(db, inspectors, stores):
     # 1. compliant — every check assessed
     a = Inspection(user_id=inspectors[0].id, store_id=stores[0].id,
                    inspection_date=today, status="submitted",
-                   transaction_type="retail", in_scope=True,
+                   transaction_type="retail_sale", in_scope=True,
                    latitude=17.3851, longitude=78.4866, gps_accuracy_m=8.0,
                    geofence_status="inside", geofence_distance_m=12.0,
                    signature_status="signed", edited_offline=False,
@@ -1092,14 +1094,14 @@ def seed_inspections(db, inspectors, stores):
                 panel_shape="rectangular", panel_height_mm=120.0,
                 panel_width_mm=80.0, pdp_area_cm2=96.0,
                 total_surface_area_cm2=310.0, is_blown_moulded=False,
-                mm_per_pixel=0.052, scale_source="declared_dimensions",
+                mm_per_pixel=0.052, scale_source="declared",
                 mm_per_pixel_uncertainty=0.004,
                 rules_as_at=date(2026, 7, 1), engine_version="2.0"))
 
     # 2. violation under s.36(2) — a false net-quantity declaration
     b = Inspection(user_id=inspectors[0].id, store_id=stores[1].id,
                    inspection_date=today, status="submitted",
-                   transaction_type="retail", in_scope=True,
+                   transaction_type="retail_sale", in_scope=True,
                    geofence_status="outside", geofence_distance_m=210.0,
                    geofence_reason="premises entrance behind the plotted point",
                    signature_status="refused", edited_offline=False,
@@ -1137,7 +1139,7 @@ def seed_inspections(db, inspectors, stores):
     c = Inspection(user_id=inspectors[1].id, store_id=stores[2].id,
                    inspection_date=today, status="submitted",
                    transaction_type="institutional", in_scope=True,
-                   signature_status="not_requested", submitted_at=utcnow())
+                   signature_status="unavailable", submitted_at=utcnow())
     db.add(c); db.flush()
     scan_c = Scan(inspection_id=c.id, commodity_generic="detergent powder",
                   overall_result="not_assessed",
@@ -1164,7 +1166,7 @@ def seed_inspections(db, inspectors, stores):
                    transaction_type="industrial", in_scope=False,
                    out_of_scope_reason="Rule 3: package intended for "
                                        "industrial consumer, not retail sale",
-                   signature_status="not_requested", submitted_at=utcnow())
+                   signature_status="unavailable", submitted_at=utcnow())
     db.add(d); db.flush()
     db.add(Scan(inspection_id=d.id, commodity_generic="bulk citric acid",
                 overall_result="out_of_scope",
@@ -1247,7 +1249,7 @@ Version 2.0 of this document described columns that do not exist in `Backend.md`
 | `stores.address_normalised` | stores | Needs a geocoding service. `address` plus `city`/`district`/`state`/`pincode` is enough to identify premises for an inspection. |
 | `stores.registration_no`, `proprietor_name` | stores | Neither is known at capture time in the field, and a column that is empty on every row is a column that trains its users to skip it. They belong to a premises registry this project does not own. |
 | `stores.visit_count` | stores | A denormalised counter that goes stale the first time an inspection is deleted or re-parented. `COUNT(*)` over an indexed FK, §5.3. |
-| `inspections.signature_path` | inspections | A path implies a stored signature image, which is biometric-adjacent personal data collected for no check. `signature_status` records what happened — `signed`, `refused`, `not_requested` — which is the fact the report needs. |
+| `inspections.signature_path` | inspections | A path implies a stored signature image, which is biometric-adjacent personal data collected for no check. `signature_status` records what happened — `signed`, `refused`, `unavailable` — which is the fact the report needs. |
 | `users.failed_logins`, `locked_until` | users | Lockout by row is a denial-of-service against a named officer: anyone who knows an `employee_id` can lock them out of the field. Rate limiting per `employee_id` and per IP is the control that applies — `09` §2.3. |
 | `users.install_approved_at` | users | Implies an approval workflow that does not exist. A login from an unrecognised `install_id` is surfaced for admin attention; it does not block the officer, because blocking one in the field on a device-identity heuristic is worse than the account sharing it detects. |
 

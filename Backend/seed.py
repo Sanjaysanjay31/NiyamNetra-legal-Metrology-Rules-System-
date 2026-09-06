@@ -81,7 +81,7 @@ def seed_inspections(db, inspectors, stores):
     # 1. compliant — every check assessed
     a = Inspection(user_id=inspectors[0].id, store_id=stores[0].id,
                    inspection_date=today, status="submitted",
-                   transaction_type="retail", in_scope=True,
+                   transaction_type="retail_sale", in_scope=True,
                    latitude=17.3851, longitude=78.4866, gps_accuracy_m=8.0,
                    geofence_status="inside", geofence_distance_m=12.0,
                    signature_status="signed", edited_offline=False,
@@ -96,14 +96,14 @@ def seed_inspections(db, inspectors, stores):
                 panel_shape="rectangular", panel_height_mm=120.0,
                 panel_width_mm=80.0, pdp_area_cm2=96.0,
                 total_surface_area_cm2=310.0, is_blown_moulded=False,
-                mm_per_pixel=0.052, scale_source="declared_dimensions",
+                mm_per_pixel=0.052, scale_source="declared",
                 mm_per_pixel_uncertainty=0.004, catalog_hash=ch,
                 rules_as_at=date(2026, 7, 1), engine_version="2.0"))
 
     # 2. violation under s.36(2) — a false net-quantity declaration
     b = Inspection(user_id=inspectors[0].id, store_id=stores[1].id,
                    inspection_date=today, status="submitted",
-                   transaction_type="retail", in_scope=True,
+                   transaction_type="retail_sale", in_scope=True,
                    geofence_status="outside", geofence_distance_m=210.0,
                    geofence_reason="premises entrance behind the plotted point",
                    signature_status="refused", edited_offline=False,
@@ -135,7 +135,7 @@ def seed_inspections(db, inspectors, stores):
     c = Inspection(user_id=inspectors[1].id, store_id=stores[2].id,
                    inspection_date=today, status="submitted",
                    transaction_type="institutional", in_scope=True,
-                   signature_status="not_requested", submitted_at=utcnow())
+                   signature_status="unavailable", submitted_at=utcnow())
     db.add(c); db.flush()
     scan_c = Scan(inspection_id=c.id, commodity_generic="detergent powder",
                   overall_result="not_assessed",
@@ -162,7 +162,7 @@ def seed_inspections(db, inspectors, stores):
                    transaction_type="industrial", in_scope=False,
                    out_of_scope_reason="Rule 3: package intended for "
                                        "industrial consumer, not retail sale",
-                   signature_status="not_requested", submitted_at=utcnow())
+                   signature_status="unavailable", submitted_at=utcnow())
     db.add(d); db.flush()
     db.add(Scan(inspection_id=d.id, commodity_generic="bulk citric acid",
                 overall_result="out_of_scope",
@@ -196,7 +196,7 @@ def seed_duplicate_pair(db, inspectors, stores):
 
     insp = Inspection(user_id=inspectors[0].id, store_id=stores[0].id,
                       inspection_date=today, status="submitted",
-                      transaction_type="retail", in_scope=True,
+                      transaction_type="retail_sale", in_scope=True,
                       geofence_status="inside", geofence_distance_m=9.0,
                       signature_status="signed", edited_offline=False,
                       submitted_at=utcnow())
