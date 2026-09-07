@@ -280,10 +280,20 @@ export const endpoints = {
       api.get(`/reports/inspections/${id}/xlsx`, { responseType: 'blob' }).then((r) => r.data),
     inspectionCsv: (id) =>
       api.get(`/reports/inspections/${id}/csv`, { responseType: 'blob' }).then((r) => r.data),
+    /* Range documents: one file for a month-of-work (0-31 days, own visits).
+       GET /reports/range.{pdf,docx,xlsx,csv}?start=&end=. */
+    rangeDoc: (fmt, params) =>
+      api.get(`/reports/range.${fmt}`, { params, responseType: 'blob' }).then((r) => r.data),
   },
 
   admin: {
     dashboard: (params) => unwrap(api.get('/admin/dashboard', { params })),
+    repeatViolators: (params) => unwrap(api.get('/admin/repeat-violators', { params })),
+    /* Office-wide range documents (all inspectors, or one via user_id). */
+    officeRangeDoc: (fmt, params) =>
+      api.get(`/admin/reports/range.${fmt}`, { params, responseType: 'blob' }).then((r) => r.data),
+    /* Gazette-table transcription to activate CHK10/CHK06b. Verified readings only. */
+    updateRuleTables: (body) => unwrap(api.put('/admin/rules/tables', body)),
     users: () => unwrap(api.get('/admin/users')),
     createUser: (body) => unwrap(api.post('/admin/users', body)),
     updateUser: (id, body) => unwrap(api.patch(`/admin/users/${id}`, body)),
@@ -296,6 +306,15 @@ export const endpoints = {
        {count: n} (Backend/routers/admin.py). Any params would be ignored by
        the backend, so none are accepted here. */
     reviewQueue: () => unwrap(api.get('/admin/review-queue')),
+    /* GET /admin/review-queue/items returns the listable rows behind the
+       count (not_assessed_scans + low_confidence_findings + offline_edits). */
+    reviewQueueItems: (params) => unwrap(api.get('/admin/review-queue/items', { params })),
+    /* Enforcement analytics: violation-ranked premises + same-doorstep pairs. */
+    repeatViolators: (params) => unwrap(api.get('/admin/repeat-violators', { params })),
+    proximityFlags: (params) => unwrap(api.get('/admin/proximity-flags', { params })),
+    /* Archive list of generated documents (who/what/sha256). */
+    reportHistory: (params) => unwrap(api.get('/admin/reports/history', { params })),
+    scanThumbnailUrl: (scanId, imageId) => `${BASE}/scans/${scanId}/images/${imageId}/thumbnail`,
     updateFinding: (findingId, body) =>
       unwrap(api.patch(`/admin/findings/${findingId}`, body)),
     audit: (params) => unwrap(api.get('/admin/audit', { params })),

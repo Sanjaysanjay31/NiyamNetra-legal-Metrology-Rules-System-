@@ -1,4 +1,15 @@
-# Listing rules (LISTING source)
-from rules_engine import FindingResult, Verdict, Severity
+# Listing rules (LISTING source) — shim.
+# Full logic lives in rules_engine.py. Re-exports shared types so imports work.
+from rules_engine import (  # noqa: F401
+    ALL_CHECK_IDS,
+    CheckContext,
+    FindingResult,
+    Severity,
+    Verdict,
+    assess,
+    catalog_hash,
+    load_catalog,
+)
 
-# Split from rules_engine.py 1383 lines (FIX 4.3) — migrate category logic here
+__all__ = ["ALL_CHECK_IDS", "CheckContext", "FindingResult", "Severity",
+           "Verdict", "assess", "catalog_hash", "load_catalog"]

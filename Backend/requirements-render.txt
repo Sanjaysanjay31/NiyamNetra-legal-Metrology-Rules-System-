@@ -61,3 +61,8 @@ qrcode[pil]==7.4.2
 python-dotenv==1.0.1
 cachetools==5.3.3
 httpx==0.27.0
+supabase==2.9.1                # optional mirror only - import guarded, never blocks boot
+# Cloud OCR needs only httpx + opencv (above) — no paddle/tesseract/libzbar.
+# Set OCR_SPACE_API_KEY and/or GOOGLE_VISION_API_KEY in .env (see .env.example).
+# Do NOT add paddleocr / tesseract / libzbar here: they are system/heavy
+# packages that break the 512MB free-tier build (see header).

@@ -1,6 +1,8 @@
-"""ocr_engine.py — PaddleOCR primary, Tesseract fallback."""
+"""ocr_engine.py — Cloud-first OCR for 512MB deploys, Paddle optional locally."""
 from __future__ import annotations
 
+import base64
+import os
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -14,10 +16,19 @@ from config import settings
 
 @lru_cache(maxsize=1)
 def get_paddle():
-    """Loaded once. Model init costs seconds; per-request init costs the demo."""
+    """Loaded once. Model init costs seconds; per-request init costs the demo.
+
+    Disabled on 512MB deploys via DISABLE_PADDLE=1 or OCR_PROVIDER=google/
+    ocrspace — raises immediately so run_ocr skips to cloud without importing
+    the 1.5GB stack.
+    """
+    if getattr(settings, "DISABLE_PADDLE", False):
+        raise RuntimeError("PaddleOCR disabled (DISABLE_PADDLE=1 for 512MB deploy)")
+    if getattr(settings, "OCR_PROVIDER", "auto") in ("google", "ocrspace"):
+        raise RuntimeError("PaddleOCR skipped (OCR_PROVIDER cloud-only)")
     from paddleocr import PaddleOCR
     return PaddleOCR(
-        lang="en",
+        lang=getattr(settings, "OCR_PADDLE_LANG", "en"),
         use_angle_cls=True,      # rotated text on cylindrical panels is the norm
         det_db_box_thresh=0.5,
         drop_score=0.30,         # keep low-confidence lines; we grade them ourselves
@@ -98,22 +109,86 @@ class OcrResult:
 
 
 def run_ocr(bgr: np.ndarray) -> OcrResult:
-    """Feed the PREPROCESSED ARRAY to the engine, not the original file path.
+    """Cloud-first cascade for 512MB Render free tier.
 
-    v1.x computed a deskewed, CLAHE-enhanced image into `img` and then called
-        ocr_engine.ocr(image_path, cls=True)
-    -- passing the path of the file on disk. Every line of preprocessing was
-    computed and discarded. The pipeline looked sophisticated and did nothing.
+    Order (OCR_PROVIDER=auto):
+      1. Google Cloud Vision DOCUMENT_TEXT_DETECTION (if GOOGLE_VISION_API_KEY)
+         — best accuracy on small/Hindi label text, 0MB RAM, only httpx.
+      2. OCR.space (if OCR_SPACE_API_KEY) — free, no card, only httpx+cv2.
+      3. Tesseract local (if binary present) — small, works in Docker.
+      4. PaddleOCR local (if installed + not DISABLE_PADDLE) — best offline,
+         but ~1.5GB, NEVER on Render free.
+      5. engine="none" with honest failure_reason → checks not_assessed.
 
-    Cascade: PaddleOCR → Tesseract → OCR.space (cloud) → engine="none".
-    The cloud stage is what lets the slim Render deploy read text at all.
+    OCR_PROVIDER forces one engine: google | ocrspace | tesseract | paddle.
+    The cloud stages run on the ORIGINAL photo (cloud engines read raw photos
+    better than our deskew/CLAHE output tuned for Paddle/Tesseract).
     """
+    provider = (getattr(settings, "OCR_PROVIDER", "auto") or "auto").lower()
+
+    def _cloud_first() -> OcrResult | None:
+        # Explicit provider pin.
+        if provider == "google":
+            return _google_vision_ocr(bgr, "Google Vision forced via OCR_PROVIDER.")
+        if provider == "ocrspace":
+            return _ocrspace_fallback(bgr, "OCR.space forced via OCR_PROVIDER.")
+        if provider == "tesseract":
+            return _tesseract_fallback(
+                preprocess_for_ocr(bgr), "Tesseract forced via OCR_PROVIDER.",
+                original=bgr)
+        if provider == "paddle":
+            return _paddle_ocr(bgr)
+        return None
+
+    forced = _cloud_first()
+    if forced is not None:
+        return forced
+
+    # auto: best cloud → free cloud → local light → local heavy.
+    if getattr(settings, "GOOGLE_VISION_API_KEY", None):
+        r = _google_vision_ocr(bgr, "auto cascade")
+        if r.engine != "none":
+            return r
+        _google_err = r.failure_reason
+    else:
+        _google_err = "Google Vision not configured."
+
+    if getattr(settings, "OCR_SPACE_API_KEY", None):
+        r = _ocrspace_fallback(bgr, f"{_google_err}")
+        if r.engine != "none":
+            return r
+        _cloud_err = r.failure_reason
+    else:
+        _cloud_err = f"{_google_err}; OCR.space not configured."
+
+    prepped = preprocess_for_ocr(bgr)
+    r = _tesseract_fallback(prepped, _cloud_err, original=bgr)
+    # _tesseract_fallback already chains to OCR.space→none on failure, but on
+    # a slim deploy without keys it returns none directly; try paddle last.
+    if r.engine != "none":
+        return r
+    p = _paddle_ocr(bgr)
+    if p.engine != "none":
+        return p
+    # Honest terminal reason naming both cloud keys so the operator knows
+    # exactly which .env key to add (see .env.example OCR section).
+    why = (p.failure_reason or r.failure_reason or _cloud_err or "")
+    if not getattr(settings, "GOOGLE_VISION_API_KEY", None) and not getattr(
+            settings, "OCR_SPACE_API_KEY", None):
+        why += (" No cloud OCR key configured: set GOOGLE_VISION_API_KEY "
+                "(best) or OCR_SPACE_API_KEY (free) in Backend/.env.")
+    return OcrResult(engine="none", failure_reason=why)
+
+
+def _paddle_ocr(bgr: np.ndarray) -> OcrResult:
+    """PaddleOCR stage (offline, heavy). Never crashes the request."""
     prepped = preprocess_for_ocr(bgr)
     try:
         raw = get_paddle().ocr(prepped, cls=True)
-    except Exception as e:                     # model missing, OOM, corrupt input
-        return _tesseract_fallback(prepped, f"PaddleOCR unavailable: {type(e).__name__}", original=bgr)
-
+    except Exception as e:                     # missing, OOM, disabled, corrupt
+        return OcrResult(
+            engine="none",
+            failure_reason=f"PaddleOCR unavailable: {type(e).__name__}: {e}")
     lines: list[OcrLine] = []
     for page in raw or []:
         for box, (text, conf) in page or []:
@@ -127,8 +202,8 @@ def run_ocr(bgr: np.ndarray) -> OcrResult:
                 )
             )
     if not lines:
-        return _tesseract_fallback(prepped, "PaddleOCR returned no text regions", original=bgr)
-
+        return OcrResult(engine="none",
+                         failure_reason="PaddleOCR returned no text regions")
     return OcrResult(
         lines=lines,
         engine="paddleocr",
@@ -196,6 +271,110 @@ def _encode_under_limit(bgr: np.ndarray, max_bytes: int = 1_000_000) -> bytes:
         if ok and buf.nbytes <= max_bytes:
             return buf.tobytes()
     return buf.tobytes()      # smallest we managed; let the API decide
+
+
+def _google_vision_ocr(bgr: np.ndarray, why: str) -> OcrResult:
+    """Best-accuracy cloud OCR: Google Cloud Vision DOCUMENT_TEXT_DETECTION.
+
+    Zero heavy deps (httpx + cv2 only) → safe on 512MB Render free.
+    Returns engine='google_vision' on success, else engine='none' with reason
+    so the cascade can try OCR.space next. Never raises.
+    """
+    key = getattr(settings, "GOOGLE_VISION_API_KEY", None)
+    if not key:
+        return OcrResult(engine="none",
+                         failure_reason=f"{why}; Google Vision not configured.")
+    try:
+        blob = _encode_under_limit(bgr, max_bytes=4_000_000)  # Vision allows 20MB; stay safe
+        content_b64 = base64.b64encode(blob).decode("ascii")
+    except Exception as e:
+        return OcrResult(engine="none",
+                         failure_reason=f"{why}; image encode failed ({type(e).__name__}).")
+    try:
+        import httpx
+        resp = httpx.post(
+            getattr(settings, "GOOGLE_VISION_URL",
+                    "https://vision.googleapis.com/v1/images:annotate"),
+            params={"key": key},
+            json={"requests": [{
+                "image": {"content": content_b64},
+                "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+                "imageContext": {"languageHints": ["en", "hi"]},
+            }]},
+            timeout=getattr(settings, "GOOGLE_VISION_TIMEOUT_S", 25.0),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+    except Exception as e:
+        return OcrResult(engine="none",
+                         failure_reason=f"{why}; Google Vision request failed ({type(e).__name__}).")
+    try:
+        responses = (body or {}).get("responses") or [{}]
+        first = responses[0] if responses else {}
+        if first.get("error"):
+            msg = (first["error"] or {}).get("message", "unknown error")
+            return OcrResult(engine="none",
+                             failure_reason=f"{why}; Google Vision error: {msg}.")
+        lines = _parse_google_vision(first)
+    except Exception as e:
+        return OcrResult(engine="none",
+                         failure_reason=f"{why}; Google Vision parse failed ({type(e).__name__}).")
+    if not lines:
+        return OcrResult(engine="none",
+                         failure_reason=f"{why}; Google Vision returned no text.")
+    confs = [l.confidence for l in lines if l.confidence is not None]
+    mean_c = float(sum(confs) / len(confs)) if confs else None
+    return OcrResult(lines=lines, engine="google_vision", mean_confidence=mean_c)
+
+
+def _parse_google_vision(resp: dict) -> list[OcrLine]:
+    """Vision fullTextAnnotation.pages[].blocks[].paragraphs[].words[].symbols
+    → one OcrLine per paragraph with pixel box + mean confidence."""
+    lines: list[OcrLine] = []
+    full = (resp or {}).get("fullTextAnnotation") or {}
+    for page in full.get("pages") or []:
+        for block in page.get("blocks") or []:
+            for para in block.get("paragraphs") or []:
+                words: list[str] = []
+                confs: list[float] = []
+                xs: list[float] = []
+                ys: list[float] = []
+                for w in para.get("words") or []:
+                    sym_text = "".join(s.get("text", "") for s in w.get("symbols") or [])
+                    if w.get("confidence") is not None:
+                        try:
+                            confs.append(float(w["confidence"]))
+                        except (TypeError, ValueError):
+                            pass
+                    bb = (w.get("boundingBox") or {}).get("vertices") or []
+                    for v in bb:
+                        try:
+                            xs.append(float(v.get("x", 0)))
+                            ys.append(float(v.get("y", 0)))
+                        except (TypeError, ValueError):
+                            continue
+                    if sym_text.strip():
+                        words.append(sym_text)
+                text = " ".join(words).strip()
+                if not text:
+                    continue
+                h = float(max(ys) - min(ys)) if ys else 0.0
+                box = [[min(xs), min(ys)], [max(xs), min(ys)],
+                       [max(xs), max(ys)], [min(xs), max(ys)]] if xs and ys else [[0.0, 0.0]]
+                mean_c = float(sum(confs) / len(confs)) if confs else None
+                lines.append(OcrLine(text=text, confidence=mean_c, box=box, height_px=h))
+    if lines:
+        return lines
+    # Fallback: textAnnotations[0] description (no boxes).
+    anns = (resp or {}).get("textAnnotations") or []
+    if anns and (anns[0].get("description") or "").strip():
+        out = []
+        for raw in anns[0]["description"].splitlines():
+            t = raw.strip()
+            if t:
+                out.append(OcrLine(text=t, confidence=None, box=[[0.0, 0.0]], height_px=0.0))
+        return out
+    return lines
 
 
 def _ocrspace_fallback(bgr: np.ndarray, why: str) -> OcrResult:
@@ -310,6 +489,25 @@ CARE_PATTERN = (
     r"(?:Customer|Consumer)\s+(?:Care|Service|Complaints?)"
     r"[\s\S]{0,120}?((?:\+?91[\-\s]?)?[6-9]\d{9}|[\w.\-]+@[\w.\-]+\.\w{2,})"
 )
+# P0 fix: manufacturer/packer/importer + commodity + date were never extracted,
+# so CHK01 always reported them missing. Patterns below are intentionally broad
+# (recall over precision) — the rules engine decides violation, not this file.
+MFR_PATTERNS = [
+    r"(?:Mfd\.?\s*by|Manufactured\s*by|Mfg\.?\s*by|Packed\s*by|Imported\s*by|Marketed\s*by|Mfr\.?|Pkd\.?\s*by)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9 .,&\-/()]{3,120})",
+    r"(?:Manufacturer|Packer|Importer)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9 .,&\-/()]{3,120})",
+]
+COMMODITY_PATTERN = (
+    r"(?:Commodity|Product|Item|Name\s*of\s*(?:the\s*)?(?:Commodity|Product))"
+    r"\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9 .()\-/&]{2,80})"
+)
+DATE_PATTERNS = [
+    r"(?:MFD|MFG|Mfd\.?|Mfg\.?|Manufactured|Packed\s*on|Pkd\.?|Date\s*of\s*(?:Mfg|Manufacture|Packing|Packaging|Import))\s*[:\-]?\s*(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}|\d{1,2}[/\-.]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{2,4}|\d{2,4}\s*/\s*\d{1,2})",
+    r"(?:Month\s*(?:and|&)\s*Year\s*of\s*(?:Manufacture|Mfg|Packing|Packaging|Import|Mfd))\s*[:\-]?\s*(\d{1,2}[/\-.]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{2,4}|\d{1,2}\s+\d{4})",
+]
+BATCH_PATTERN = r"(?:Batch\s*(?:No\.?|Number)?|Lot\s*(?:No\.?|Number)?|B\.?\s*No\.?)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{1,30})"
+DIMENSIONS_PATTERN = (
+    r"(?:Dimensions?|Size)\s*[:\-]?\s*(\d+(?:[.,]\d+)?\s*(?:cm|mm|m|inch|in)\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:cm|mm|m|inch|in)(?:\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:cm|mm|m|inch|in))?)"
+)
 
 
 @dataclass(slots=True)
@@ -349,6 +547,51 @@ def extract_fields(ocr: OcrResult) -> dict[str, ExtractedField]:
     put("country_of_origin", re.search(COUNTRY_PATTERN, text, re.I))
     put("best_before", re.search(BEST_BEFORE_PATTERN, text, re.I))
     put("consumer_care", re.search(CARE_PATTERN, text, re.I))
+    # P0 fix: previously these Rule-6 fields were never populated, so CHK01
+    # always failed manufacturer/commodity/date. Broad recall patterns above.
+    mfr_m = next((m for p in MFR_PATTERNS if (m := re.search(p, text, re.I))), None)
+    put("manufacturer", mfr_m)
+    # packer/importer share the manufacturer evidence: any of the three
+    # satisfies "name+address of manufacturer/packer/importer" presence.
+    if mfr_m:
+        line = _line_for(ocr, mfr_m.group(0))
+        for alias in ("packer", "importer"):
+            out[alias] = ExtractedField(
+                value=mfr_m.group(1).strip(),
+                confidence=line.confidence if line else ocr.mean_confidence,
+                source_line=line.text if line else None,
+                found=True,
+            )
+    else:
+        out["packer"] = ExtractedField(None, None, None, False)
+        out["importer"] = ExtractedField(None, None, None, False)
+    put("commodity", re.search(COMMODITY_PATTERN, text, re.I))
+    date_m = next((m for p in DATE_PATTERNS if (m := re.search(p, text, re.I))), None)
+    put("date_of_manufacture", date_m)
+    put("batch_number", re.search(BATCH_PATTERN, text, re.I))
+    put("dimensions", re.search(DIMENSIONS_PATTERN, text, re.I))
+    # Fallback: bare brand line (e.g. "Parle Hide & Seek") with no
+    # "Commodity:" prefix. Use the longest alpha line that is not MRP/net-qty/
+    # date/care, flagged at half confidence so the engine can weigh it.
+    # (Runs after date/batch puts above — it reads their source_lines.)
+    if not out["commodity"].found:
+        try:
+            _skip = (out["mrp"].source_line or "", out["net_quantity"].source_line or "",
+                     out["date_of_manufacture"].source_line or "",
+                     out["consumer_care"].source_line or "")
+            _cands = [l for l in ocr.lines
+                      if l.text and len(l.text.strip()) >= 3
+                      and l.text not in _skip
+                      and not re.search(r"(MRP|Net\s*(Qty|Quantity|Wt)|MFD|MFG|Batch|Customer|Consumer)", l.text, re.I)
+                      and re.search(r"[A-Za-z]{3,}", l.text)]
+            if _cands:
+                _best = max(_cands, key=lambda l: len(l.text.strip()))
+                _c = (0.5 * _best.confidence) if _best.confidence else 0.3
+                out["commodity"] = ExtractedField(
+                    value=_best.text.strip()[:80], confidence=_c,
+                    source_line=_best.text, found=True)
+        except Exception:
+            pass
 
     out["net_quantity_unit"] = ExtractedField(
         (re.search(NET_QTY_PATTERN, text, re.I).group(2)

@@ -207,9 +207,10 @@ def generate_docx(inspection, scans, findings_by_scan, out_path: Path) -> Path:
 # four-colour scheme, the same findings table, and the same disclaimer as the
 # per-inspection Word report above, so the two never diverge.
 # ---------------------------------------------------------------------------
-# PLACEHOLDER_DAILY_GENERATORS
 def generate_daily_pdf(inspector, report_date, blocks, chain_head: str,
-                       out_path: Path) -> Path:
+                       out_path: Path, period_label: str | None = None) -> Path:
+    """period_label (e.g. "03 Aug 2026 to 02 Sep 2026") switches the header to
+    a range report; None keeps the single-day header. Backward compatible."""
     styles = getSampleStyleSheet()
     h1 = ParagraphStyle("dh1", parent=styles["Heading1"], fontSize=15)
     h2 = ParagraphStyle("dh2", parent=styles["Heading2"], fontSize=12)
@@ -217,14 +218,16 @@ def generate_daily_pdf(inspector, report_date, blocks, chain_head: str,
     small = ParagraphStyle("dsmall", parent=styles["BodyText"], fontSize=7,
                            leading=9, textColor=colors.HexColor("#546E7A"))
 
+    _title = "NiyamNetra — Inspection Report"
+    _date_line = period_label or f"Date: {report_date.strftime('%d %B %Y')}"
     story = [
-        Paragraph("NiyamNetra — Daily Inspection Report", h1),
+        Paragraph(_title, h1),
         Paragraph(f"Inspector: {inspector.full_name} ({inspector.employee_id})", body),
-        Paragraph(f"Date: {report_date.strftime('%d %B %Y')}", body),
+        Paragraph(_date_line, body),
         Spacer(1, 6 * mm),
     ]
     if not blocks:
-        story.append(Paragraph("No inspections recorded on this date.", body))
+        story.append(Paragraph("No inspections recorded in this period.", body))
 
     for insp, scans, findings_by_scan in blocks:
         store_name = insp.store.name if insp.store else "-"
@@ -263,12 +266,12 @@ def generate_daily_pdf(inspector, report_date, blocks, chain_head: str,
 
     SimpleDocTemplate(
         str(out_path), pagesize=A4,
-        title=f"NiyamNetra daily report {report_date.isoformat()}",
+        title=f"NiyamNetra report {period_label or report_date.isoformat()}",
     ).build(story)
     return out_path
-# PLACEHOLDER_DAILY_DOCX
 def generate_daily_docx(inspector, report_date, blocks, chain_head: str,
-                        out_path: Path) -> Path:
+                        out_path: Path, period_label: str | None = None) -> Path:
+    """period_label switches to a range header; None keeps the daily header."""
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Pt, RGBColor
@@ -277,22 +280,23 @@ def generate_daily_docx(inspector, report_date, blocks, chain_head: str,
             "not_assessed": "E65100", "out_of_scope": "37474F"}
 
     doc = Document()
-    doc.core_properties.title = f"NiyamNetra daily report {report_date.isoformat()}"
-    h = doc.add_heading("Daily Inspection Report", level=0)
+    doc.core_properties.title = f"NiyamNetra report {period_label or report_date.isoformat()}"
+    h = doc.add_heading("Inspection Report", level=0)
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     meta = doc.add_table(rows=0, cols=2)
     meta.style = "Light Grid Accent 1"
     for label, value in (
         ("Inspector", f"{inspector.full_name} ({inspector.employee_id})"),
-        ("Date", report_date.strftime("%d %B %Y")),
+        ("Period" if period_label else "Date",
+         period_label or report_date.strftime("%d %B %Y")),
         ("Inspections", str(len(blocks))),
     ):
         cells = meta.add_row().cells
         cells[0].text, cells[1].text = label, value
 
     if not blocks:
-        doc.add_paragraph("No inspections recorded on this date.")
+        doc.add_paragraph("No inspections recorded in this period.")
 
     for insp, scans, findings_by_scan in blocks:
         store_name = insp.store.name if insp.store else "-"
@@ -351,7 +355,6 @@ def generate_daily_docx(inspector, report_date, blocks, chain_head: str,
 # formats share one flat row model (_daily_rows) so the columns never diverge
 # between them or from the PDF/DOCX narrative above. One finding = one row.
 # ---------------------------------------------------------------------------
-# PLACEHOLDER_SPREADSHEET
 
 _SPREADSHEET_COLUMNS = (
     "Inspection", "Inspection date", "Store", "Transaction", "Geofence",
@@ -408,8 +411,9 @@ def _daily_rows(blocks) -> list[list]:
 
 
 def generate_daily_xlsx(inspector, report_date, blocks, chain_head: str,
-                        out_path: Path) -> Path:
-    """The spreadsheet equivalent of the daily report. Openpyxl, no macros."""
+                        out_path: Path, period_label: str | None = None) -> Path:
+    """The spreadsheet equivalent of the daily report. Openpyxl, no macros.
+    period_label switches the header to a range; None keeps the daily header."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -419,10 +423,10 @@ def generate_daily_xlsx(inspector, report_date, blocks, chain_head: str,
     ws.title = "Findings"
 
     # Header band: who / when / integrity, then a blank row, then the table.
-    ws.append(["NiyamNetra — Daily Inspection Report"])
+    ws.append(["NiyamNetra — Inspection Report"])
     ws["A1"].font = Font(bold=True, size=14)
     ws.append([f"Inspector: {inspector.full_name} ({inspector.employee_id})"])
-    ws.append([f"Date: {report_date.strftime('%d %B %Y')}"])
+    ws.append([period_label or f"Date: {report_date.strftime('%d %B %Y')}"])
     ws.append([f"Inspections: {len(blocks)}"])
     ws.append([f"Audit chain head at generation: {chain_head[:32] or 'EMPTY'}"])
     ws.append([])
@@ -439,7 +443,7 @@ def generate_daily_xlsx(inspector, report_date, blocks, chain_head: str,
         ws.append(row)
 
     if ws.max_row == header_row_idx:
-        ws.append(["No inspections recorded on this date."])
+        ws.append(["No inspections recorded in this period."])
 
     # Wrap the free-text columns and give every column a sane width.
     widths = [12, 14, 22, 14, 12, 12, 26, 14, 10, 26, 14, 40, 40, 12, 11]
@@ -463,22 +467,23 @@ def generate_daily_xlsx(inspector, report_date, blocks, chain_head: str,
 
 
 def generate_daily_csv(inspector, report_date, blocks, chain_head: str,
-                       out_path: Path) -> Path:
+                       out_path: Path, period_label: str | None = None) -> Path:
     """CSV export. UTF-8 with BOM so Excel opens the °/₹/— glyphs correctly."""
     import csv
 
     with open(out_path, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh)
-        w.writerow(["NiyamNetra — Daily Inspection Report"])
+        w.writerow(["NiyamNetra — Inspection Report"])
         w.writerow(["Inspector", f"{inspector.full_name} ({inspector.employee_id})"])
-        w.writerow(["Date", report_date.strftime("%Y-%m-%d")])
+        w.writerow(["Period" if period_label else "Date",
+                    period_label or report_date.strftime("%Y-%m-%d")])
         w.writerow(["Inspections", len(blocks)])
         w.writerow(["Audit chain head", chain_head[:32] or "EMPTY"])
         w.writerow([])
         w.writerow(list(_SPREADSHEET_COLUMNS))
         rows = _daily_rows(blocks)
         if not rows:
-            w.writerow(["No inspections recorded on this date."])
+            w.writerow(["No inspections recorded in this period."])
         for row in rows:
             w.writerow(row)
     return out_path

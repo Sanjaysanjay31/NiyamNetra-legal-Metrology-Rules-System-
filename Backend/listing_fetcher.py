@@ -11,6 +11,11 @@ ALLOWED_HOSTS = {
     "flipkart.com", "www.flipkart.com",
     "jiomart.com", "www.jiomart.com",
     "bigbasket.com", "www.bigbasket.com",
+    "meesho.com", "www.meesho.com",
+    "nykaa.com", "www.nykaa.com",
+    "blinkit.com", "www.blinkit.com",
+    "zepto.com", "www.zepto.com",
+    "swiggy.com", "www.swiggy.com",
 }
 BLOCKED_NETS = [
     ipaddress.ip_network(n) for n in (

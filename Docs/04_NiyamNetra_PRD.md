@@ -122,7 +122,7 @@ Two roles: Admin and Inspector. An inspector's scope is derived from their token
 
 Device binding by a server-issued random 32-byte `install_id` stored in the platform keystore. Not IMEI, which apps cannot read on Android 10 or later.
 
-Revocation by `token_epoch` on the user row: incrementing it invalidates every live refresh token for that account immediately.
+Revocation by `token_epoch` on the user row: incrementing it invalidates every live refresh token for that account immediately. Refresh rotation is single-use with reuse detection — each refresh consumes its `jti`, and replaying a consumed `jti` is treated as theft and kills every session for that user.
 
 Requests for a record the caller may not see return **404**, not 403, so the endpoint cannot be used to enumerate which records exist.
 

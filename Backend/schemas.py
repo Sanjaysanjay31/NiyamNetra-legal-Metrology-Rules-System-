@@ -156,6 +156,7 @@ class CreateScanRequest(BaseModel):
 
 
 class FindingOut(ORMModel):
+    id: int
     check_id: str
     title: str
     engine_verdict: Verdict

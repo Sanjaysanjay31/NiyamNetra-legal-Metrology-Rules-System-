@@ -34,11 +34,12 @@
         "USE_BIOMETRIC",
         "USE_FINGERPRINT"
       ],
-      // LAN dev over http:// needs a dev-client build (Expo Go blocks cleartext
-      // on Android when this is false). Scoped to false deliberately: production
-      // talks https (Render) and http is dev-only. If LAN testing in Expo Go
-      // stops connecting, use `npx expo run` dev-client, not this flag.
-      "usesCleartextTraffic": false
+      // LAN dev over http:// needs cleartext allowed on Android. This flag only
+      // permits http — https (Render prod) always works either way. Expo Go on
+      // a phone + Metro on a laptop is http://<lan-ip>:8081/8000, so false
+      // breaks LAN testing with a white "cannot reach backend" error. Keep
+      // true; prod is unaffected (it uses https URLs).
+      "usesCleartextTraffic": true
     },
     "plugins": [
       [

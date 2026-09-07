@@ -28,10 +28,15 @@ try {
 } catch { /* literal fallback */ }
 
 const transactionTypes = [
-  { key: 'retail_package', label: 'Retail package', icon: '📦' },
-  { key: 'loose_item', label: 'Loose item', icon: '⚖️' },
-  { key: 'weighing_instrument', label: 'Weighing instrument', icon: '🏋️' },
-  { key: 'prepacked_batch', label: 'Pre-packed batch', icon: '📋' },
+  // Must match Backend/schemas.py CreateInspectionRequest (7 types).
+  // Previously used retail_package/loose_item/... which the API rejects (422).
+  { key: 'retail_sale', label: 'Retail sale', icon: '🛒' },
+  { key: 'wholesale', label: 'Wholesale', icon: '📦' },
+  { key: 'institutional', label: 'Institutional', icon: '🏢' },
+  { key: 'industrial', label: 'Industrial', icon: '🏭' },
+  { key: 'packed_in_presence', label: 'Packed in presence', icon: '⚖️' },
+  { key: 'export', label: 'Export', icon: '✈️' },
+  { key: 'other', label: 'Other', icon: '📋' },
 ];
 
 // Honest denominator copy: the server assesses 19 rows (CHK01–CHK18 + CHK06b).
@@ -135,9 +140,8 @@ export default function ScanScreen({ navigation }) {
   }, [step]);
 
   // Panel names per capture order — a photo is evidence of a named panel,
-  // not "photo #3". Extra shots beyond the four standard panels get an
-  // `extra-N` label so nothing is silently mislabelled.
-  const PANELS = ['front', 'back', 'mrp', 'batch'];
+  // not "photo #3". Matches Backend ALLOWED_PANELS {front,back,side,mrp,batch,other}.
+  const PANELS = ['front', 'back', 'side', 'mrp', 'batch', 'other'];
   const nextPanel = (count) => (count < PANELS.length ? PANELS[count] : `extra-${count - PANELS.length + 1}`);
 
   async function storageOk() {

@@ -388,3 +388,78 @@ def read_capture_time(raw: bytes) -> "datetime | None":
         return datetime.strptime(raw_dt, "%Y:%m:%d %H:%M:%S") if raw_dt else None
     except Exception:
         return None
+
+
+def estimate_contrast_ratio(bgr) -> float | None:
+    """WCAG-style luminance contrast between dark ink and light background.
+
+    Otsu-splits the grey panel into text/background, takes mean luminance of
+    each half, returns (L_light+0.05)/(L_dark+0.05). Returns None when the
+    split is degenerate (flat image). Heuristic for CHK08 — Rule 9 sets no
+    numeric threshold, the engine only reports this number.
+    """
+    try:
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        if gray.size == 0:
+            return None
+        _, thr = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        dark = gray[thr < 128]
+        light = gray[thr >= 128]
+        if dark.size < 100 or light.size < 100:
+            return None
+        dl, ll = float(dark.mean()), float(light.mean())
+        if ll < dl:
+            dl, ll = ll, dl
+        if ll - dl < 5:
+            return None
+        return round((ll + 0.05) / (dl + 0.05), 2)
+    except Exception:
+        return None
+
+
+def _order_corners(pts: np.ndarray) -> np.ndarray:
+    """Order 4 points as tl, tr, br, bl (sums/differences method)."""
+    s = pts.sum(axis=1)
+    d = np.diff(pts, axis=1).ravel()
+    return np.array([pts[np.argmin(s)], pts[np.argmin(d)],
+                     pts[np.argmax(s)], pts[np.argmax(d)]], dtype=np.float32)
+
+
+def detect_panel_quad(bgr: np.ndarray) -> np.ndarray | None:
+    """Classical panel-quad detector (no YOLO/torch needed).
+
+    Finds the largest convex quadrilateral contour (the pack's front face),
+    for the operator's on-screen adjustment or rectify(). ADVISORY ONLY: the
+    upload endpoint returns it as suggested_corners and never acts on it —
+    a wrong quad must not move evidence. Returns (4,2) float32 tl,tr,br,bl
+    or None when no confident quad exists.
+    """
+    try:
+        h, w = bgr.shape[:2]
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(gray, 50, 150)
+        edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL,
+                                       cv2.CHAIN_APPROX_SIMPLE)
+        frame = float(h * w)
+        best: np.ndarray | None = None
+        best_area = 0.0
+        for cnt in contours:
+            area = float(cv2.contourArea(cnt))
+            if area < 0.05 * frame or area > 0.95 * frame or area <= best_area:
+                continue
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+            if len(approx) != 4 or not cv2.isContourConvex(approx):
+                continue
+            quad = approx.reshape(4, 2).astype(np.float32)
+            # Reject degenerate quads: every edge must clear 10% of min dim.
+            edges_len = [float(np.linalg.norm(quad[(i + 1) % 4] - quad[i]))
+                         for i in range(4)]
+            if min(edges_len) < 0.10 * min(h, w):
+                continue
+            best, best_area = quad, area
+        return _order_corners(best) if best is not None else None
+    except Exception:
+        return None

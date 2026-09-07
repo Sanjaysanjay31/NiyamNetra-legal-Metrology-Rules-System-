@@ -28,9 +28,11 @@ export const EVIDENCE_MIN_FREE_BYTES = EVIDENCE_MIN_FREE_GB * 1024 ** 3;
 // EDIT HERE if auto-detect cannot apply (e.g. a production APK with no env var).
 // This must be your laptop's CURRENT LAN IP (the WiFi IP your phone is on).
 // Find it with: ipconfig  → look for "IPv4 Address" under your WiFi adapter.
-// SINGLE SOURCE OF TRUTH for the fallback host: eas.json build profiles and
-// .env only override via EXPO_PUBLIC_API_BASE_URL at build time — they never
-// duplicate this IP. (See the comment block at the bottom of eas.json.)
+// BOOTSTRAP ONLY: auto-detect (bundle host) and the saved Custom target win
+// whenever present. This IP is used only when neither exists (fresh install,
+// no dev server). If the WiFi changes, type the new IP once on the login
+// screen (Custom target) — it persists, no rebuild needed. Leave '' to fall
+// back to RENDER_API_URL instead of a stale LAN IP.
 const FALLBACK_HOST = '10.101.163.148';
 
 // ---------------------------------------------------------------------------
@@ -71,6 +73,9 @@ export function resolveApiBaseUrl() {
   if (explicit) return explicit.replace(/\/+$/, '');
   const host = bundleHost();
   if (host) return `http://${host}:${API_PORT}`;
+  // No dev server + no env (installed APK): stale FALLBACK_HOST is worse than
+  // useless on a new network — prefer the deployed backend when fallback is blank.
+  if (!FALLBACK_HOST) return RENDER_API_URL;
   return `http://${FALLBACK_HOST}:${API_PORT}`;
 }
 

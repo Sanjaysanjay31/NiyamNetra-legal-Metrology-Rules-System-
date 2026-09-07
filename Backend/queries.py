@@ -167,6 +167,79 @@ def violations_by_check(db: Session, start: date, end: date, limit: int = 10):
     ]
 
 
+# --- Query 7: repeat violators, for enforcement prioritisation ---
+def repeat_violators(db: Session, start: date, end: date, limit: int = 20):
+    """Stores ranked by live violation-scan count in the window, with the most
+    recent violation date. Powers GET /admin/repeat-violators and answers the
+    enforcement question 'which premises re-offend' without a map."""
+    return [
+        dict(r._mapping)
+        for r in db.execute(
+            select(
+                Store.id.label("store_id"),
+                Store.name.label("store_name"),
+                func.count(Scan.id).label("violations"),
+                func.max(Inspection.inspection_date).label("last_violation_date"),
+            )
+            .select_from(Scan)
+            .join(Inspection, Scan.inspection_id == Inspection.id)
+            .join(Store, Store.id == Inspection.store_id)
+            .where(
+                Scan.overall_result == "violation",
+                LIVE,
+                Inspection.inspection_date.between(start, end),
+            )
+            .group_by(Store.id, Store.name)
+            .order_by(func.count(Scan.id).desc())
+            .limit(limit)
+        )
+    ]
+
+
+# --- Query 8: proximity flags — different stores implausibly close ---
+def proximity_flags(db: Session, start: date, end: date, meters: float = 50.0,
+                    limit: int = 50):
+    """Pairs of inspections at DIFFERENT stores whose device fixes fall within
+    `meters` of each other. Same-store revisits are expected (see
+    repeat_violators); different names at one doorstep mean a duplicated shop
+    record, a mis-tagged visit, or GPS trouble — a human looks, the engine
+    never concludes. O(n²) in Python over at most 2000 located inspections."""
+    import math
+    rows = (db.query(Inspection)
+            .filter(Inspection.inspection_date.between(start, end),
+                    Inspection.latitude.is_not(None),
+                    Inspection.longitude.is_not(None))
+            .order_by(Inspection.id).limit(2000).all())
+    _R = 6_371_000.0
+
+    def _hav(a1: float, o1: float, a2: float, o2: float) -> float:
+        p1, p2 = math.radians(a1), math.radians(a2)
+        dp, dl = math.radians(a2 - a1), math.radians(o2 - o1)
+        h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+        return 2 * _R * math.asin(math.sqrt(h))
+
+    out: list[dict] = []
+    for i, a in enumerate(rows):
+        for b in rows[i + 1:]:
+            if a.store_id == b.store_id:
+                continue
+            try:
+                d = _hav(a.latitude, a.longitude, b.latitude, b.longitude)
+            except (TypeError, ValueError):
+                continue
+            if d <= meters:
+                out.append({
+                    "inspection_a": a.id, "inspection_b": b.id,
+                    "store_a": a.store_id, "store_b": b.store_id,
+                    "distance_m": round(d, 1),
+                    "date_a": a.inspection_date.isoformat(),
+                    "date_b": b.inspection_date.isoformat(),
+                })
+                if len(out) >= limit:
+                    return out
+    return out
+
+
 # --- Query 6: trend, for the line chart ---
 def inspection_trend(db: Session, start: date, end: date):
     total, comp, viol, na, oos = _result_counts()

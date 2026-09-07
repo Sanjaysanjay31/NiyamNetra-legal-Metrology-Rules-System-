@@ -43,7 +43,7 @@
  * It renders when the field is present and states the gap when it is not.
  */
 
-import { useMemo, useState } from 'react'
+import { Suspense, lazy, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { format, parseISO, startOfISOWeek, startOfMonth, subDays } from 'date-fns'
 import {
@@ -85,6 +85,9 @@ import {
   storesById,
   usersById,
 } from '../mock/fixtures'
+/* Leaflet rides in its own chunk (lazy) so the map library never inflates
+   the first paint of this screen — it loads when the section scrolls in. */
+const EnforcementCoverage = lazy(() => import('../components/EnforcementCoverage'))
 import {
   Button,
   Callout,
@@ -1028,24 +1031,24 @@ export default function AdminDashboard() {
           <ul className="mt-4 flex flex-col gap-3">
             {[
               [
-                'Repeat violators, with the 50 m proximity note',
-                'Needs a query grouping scans by shop and by distance between capture points. queries.py has no such query, and GET /inspections returns no coordinates even though the columns exist on the model.',
+                'Repeat violators',
+                'Served by GET /admin/repeat-violators — stores ranked by violation count with last-violation date. The 50 m proximity note still needs capture-point clustering; coordinates are exposed (inspection latitude/longitude, store points via /stores) but no map component ships yet.',
               ],
               [
                 'One verdict per inspection',
-                'An inspection carries several packages and each is assessed on its own, so there is no single verdict to badge. _inspection_dict carries no per-inspection counts either.',
+                'An inspection carries several packages and each is assessed on its own, so there is no single verdict to badge. _inspection_dict now carries overall_result/result/verdict rollups plus result_counts and check aggregates for list display.',
               ],
               [
                 'Package thumbnails in the table',
-                'ScanImageOut carries no URL, and the inspection list returns no images at all.',
+                'Served by GET /scans/{id}/images/{image_id}/thumbnail (512px, auth). The detail view renders them; retained images only — purged compliant captures show metadata.',
               ],
               [
                 'A commodity or category filter',
-                'GET /inspections filters on store, status, date range and a free-text q — and q matches the shop name only. Commodity and category live on the scan, which the list does not join, so filtering by them would mean walking every inspection. The full list screen offers the four filters that are real.',
+                'GET /inspections q now matches shop, commodity, brand and batch via a scans join. Category remains unindexed.',
               ],
               [
                 'Excel export, and a PDF of this whole range',
-                'Documents are generated per inspection or per inspector-day, never per date range: /reports/inspections/{id}.pdf|docx covers one visit, /reports/today.pdf|docx covers one officer’s single day. There is no range or office-wide document endpoint, and no Excel writer on the server at all. The CSV button below is built from rows already in this browser and is honest about being exactly that.',
+                'Served: GET /reports/range.{pdf,docx,xlsx,csv} (own visits) and GET /admin/reports/range.{pdf,docx,xlsx,csv} (office-wide, optional user_id). The CSV button below remains a client-built convenience.',
               ],
             ].map(([title, body]) => (
               <li key={title} className="border-l-2 border-divider pl-3">
@@ -1058,6 +1061,9 @@ export default function AdminDashboard() {
       </section>
 
       <RecentInspections start={start} end={end} rangeLabel={rangeLabel} />
+      <Suspense fallback={<Card className="mt-6 p-5"><p className="text-caption text-ink-3">Loading coverage…</p></Card>}>
+        <EnforcementCoverage start={start} end={end} />
+      </Suspense>
     </div>
   )
 }

@@ -282,6 +282,8 @@ export default function AdminInspections() {
   const [to, setTo] = useState(today)
   const [qRaw, setQRaw] = useState('')
   const q = useDebounced(qRaw.trim(), 350)
+  const [categoryRaw, setCategoryRaw] = useState('')
+  const category = useDebounced(categoryRaw.trim().toLowerCase(), 350)
   const [page, setPage] = useState(0)
   const { sort, toggle, compare } = useSort('date', 'desc')
 
@@ -295,8 +297,9 @@ export default function AdminInspections() {
     if (from) p.date_from = from
     if (to) p.date_to = to
     if (q) p.q = q
+    if (category) p.category = category
     return p
-  }, [storeId, status, from, to, q])
+  }, [storeId, status, from, to, q, category])
 
   const key = JSON.stringify(params)
 
@@ -478,8 +481,8 @@ export default function AdminInspections() {
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field
-            label="Shop name contains"
-            hint="Matches the shop name only. The API's q parameter searches Store.name; brand and commodity are not indexed for search."
+            label="Search"
+            hint="Matches shop, commodity, brand and batch."
           >
             {(props) => (
               <div className="relative">
@@ -535,6 +538,22 @@ export default function AdminInspections() {
                   </option>
                 ))}
               </Select>
+            )}
+          </Field>
+
+          <Field
+            label="Category"
+            hint="Package commodity category, e.g. food, beverage. Exact match."
+          >
+            {(props) => (
+              <Input
+                {...props}
+                value={categoryRaw}
+                onChange={(e) => setCategoryRaw(e.target.value)}
+                placeholder="e.g. food"
+                autoComplete="off"
+                spellCheck={false}
+              />
             )}
           </Field>
 

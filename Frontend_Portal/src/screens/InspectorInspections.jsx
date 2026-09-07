@@ -109,6 +109,8 @@ export default function InspectorInspections() {
   const [to, setTo] = useState(today)
   const [qRaw, setQRaw] = useState('')
   const q = useDebounced(qRaw.trim(), 350)
+  const [categoryRaw, setCategoryRaw] = useState('')
+  const category = useDebounced(categoryRaw.trim().toLowerCase(), 350)
 
   /* Only what the officer actually set travels. `status=` would filter for the
      empty string and match nothing, which is a different answer from "any". */
@@ -118,8 +120,9 @@ export default function InspectorInspections() {
     if (from) p.date_from = from
     if (to) p.date_to = to
     if (q) p.q = q
+    if (category) p.category = category
     return p
-  }, [status, from, to, q])
+  }, [status, from, to, q, category])
   const key = JSON.stringify(params)
 
   const list = useResource(() => endpoints.inspections.list(params), {
@@ -279,8 +282,8 @@ export default function InspectorInspections() {
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <Field
-            label="Shop name contains"
-            hint="Matches the shop name only. Commodity, brand and batch live on the package and are not searchable here."
+            label="Search"
+            hint="Matches shop, commodity, brand and batch."
           >
             {(props) => (
               <div className="relative">
@@ -333,6 +336,22 @@ export default function InspectorInspections() {
               )}
             </Field>
           </div>
+
+          <Field
+            label="Category"
+            hint="Package commodity category, e.g. food. Exact match."
+          >
+            {(props) => (
+              <Input
+                {...props}
+                value={categoryRaw}
+                onChange={(e) => setCategoryRaw(e.target.value)}
+                placeholder="e.g. food"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            )}
+          </Field>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-1.5" role="group" aria-label="Date presets">

@@ -1,5 +1,4 @@
 """routers/auth.py"""
-import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -20,52 +19,58 @@ from schemas import LoginRequest, LoginResponse, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Simple in-memory login rate limiter: per employee_id+IP, max 5 attempts per
-# 60s sliding window. Returns 429 with Retry-After when exceeded. No new deps.
-# Note: per-process memory only; a multi-worker deploy would need a shared
-# store (e.g. Redis) for a global limit. This is a brute-force brake, not a
-# distributed throttle. Bounded to 1000 keys (LRU eviction of oldest) with
-# periodic prune of empty buckets so a key-enumeration flood cannot grow memory
-# without bound.
-_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+# DB-backed login rate limiter: per employee_id+IP, max 5 attempts per 60s
+# sliding window. Rows live in login_attempts so every worker enforces the
+# same count (the old per-process dict did not survive multi-worker deploys).
+# 429 with Retry-After when exceeded. This is a brute-force brake, not a
+# distributed throttle.
 _LOGIN_WINDOW_S = 60.0
 _LOGIN_MAX_PER_WINDOW = 5
-_LOGIN_MAX_KEYS = 1000
 
 
 def _login_rate_key(employee_id: str, ip: str | None) -> str:
     return f"{(employee_id or '').strip().lower()}|{(ip or 'unknown')}"
 
 
-def _check_login_rate_limit(employee_id: str, ip: str | None) -> None:
-    now = time.time()
+def _check_login_rate_limit(db: Session, employee_id: str, ip: str | None) -> None:
+    from datetime import timedelta
+    from models import LoginAttempt, utcnow
+    now = utcnow()
+    cutoff = now - timedelta(seconds=_LOGIN_WINDOW_S)
     key = _login_rate_key(employee_id, ip)
-    hits = _LOGIN_ATTEMPTS.get(key, [])
-    # Prune outside the sliding window.
-    hits = [t for t in hits if now - t < _LOGIN_WINDOW_S]
-    if len(hits) >= _LOGIN_MAX_PER_WINDOW:
-        retry_after = int(_LOGIN_WINDOW_S - (now - hits[0])) + 1
+    # Opportunistic prune so the table cannot grow without bound.
+    try:
+        db.query(LoginAttempt).filter(LoginAttempt.attempted_at < cutoff).delete()
+        db.commit()
+    except Exception:
+        db.rollback()
+    hits = (db.query(LoginAttempt).filter(
+        LoginAttempt.rate_key == key,
+        LoginAttempt.attempted_at >= cutoff).count())
+    if hits >= _LOGIN_MAX_PER_WINDOW:
+        oldest = (db.query(LoginAttempt).filter(
+            LoginAttempt.rate_key == key,
+            LoginAttempt.attempted_at >= cutoff)
+            .order_by(LoginAttempt.attempted_at).first())
+        retry_after = 1
+        if oldest is not None and oldest.attempted_at is not None:
+            try:
+                _old = oldest.attempted_at
+                if _old.tzinfo is None:
+                    _old = _old.replace(tzinfo=timezone.utc)
+                retry_after = max(1, int(_LOGIN_WINDOW_S - (now - _old).total_seconds()) + 1)
+            except Exception:
+                pass
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts; try again shortly",
-            headers={"Retry-After": str(max(retry_after, 1))},
+            headers={"Retry-After": str(retry_after)},
         )
-    hits.append(now)
-    _LOGIN_ATTEMPTS[key] = hits
-    # Bound memory: evict oldest keys past the cap, and opportunistically
-    # drop buckets that have fully expired.
-    if len(_LOGIN_ATTEMPTS) > _LOGIN_MAX_KEYS:
-        # dicts preserve insertion order: pop oldest first (LRU approx).
-        for _old in list(_LOGIN_ATTEMPTS.keys())[: len(_LOGIN_ATTEMPTS) - _LOGIN_MAX_KEYS]:
-            _LOGIN_ATTEMPTS.pop(_old, None)
-        # Periodic prune of empty/expired buckets.
-        for _k in list(_LOGIN_ATTEMPTS.keys())[:200]:
-            _v = _LOGIN_ATTEMPTS.get(_k, [])
-            _v = [t for t in _v if now - t < _LOGIN_WINDOW_S]
-            if not _v:
-                _LOGIN_ATTEMPTS.pop(_k, None)
-            elif len(_v) != len(_LOGIN_ATTEMPTS.get(_k, [])):
-                _LOGIN_ATTEMPTS[_k] = _v
+    try:
+        db.add(LoginAttempt(rate_key=key, attempted_at=now))
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 def _set_refresh_cookie(resp: Response, token: str) -> None:
@@ -86,7 +91,7 @@ def _set_refresh_cookie(resp: Response, token: str) -> None:
 @router.post("/login", response_model=LoginResponse)
 def login(body: LoginRequest, request: Request, response: Response,
           db: Session = Depends(get_db)):
-    _check_login_rate_limit(body.employee_id, _client_ip(request))
+    _check_login_rate_limit(db, body.employee_id, _client_ip(request))
     user = db.query(User).filter(User.employee_id == body.employee_id).first()
 
     # Constant-ish work on both paths, and one message for both failures, so
@@ -144,9 +149,43 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
     if user.install_id and claims.get("install_id") != user.install_id:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Device not recognised")
 
-    # Rotation issues a new token; the old token remains valid until expiry.
-    # This is NOT single-use (no jti denylist); revocation is via token_epoch
-    # bump on logout / password change / install reset.
+    # Single-use rotation with reuse detection (RFC 6819 §5.2.2.3). The
+    # presented jti must not already be consumed: re-presenting a consumed jti
+    # means the token was stolen and replayed, so every refresh token for the
+    # user dies via a token_epoch bump and the replay fails closed.
+    from models import RevokedJti, utcnow
+    _jti = claims.get("jti")
+    if not _jti:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Refresh invalid")
+    if db.get(RevokedJti, _jti) is not None:
+        user.token_epoch += 1
+        try:
+            db.add(RevokedJti(jti=f"reuse-{_jti}"[:32], user_id=user.id, reason="reuse"))
+        except Exception:
+            pass
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        append_audit(db, user_id=user.id, action="refresh_reuse_detected",
+                     ip_address=_client_ip(request))
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Session superseded")
+    try:
+        db.add(RevokedJti(jti=_jti, user_id=user.id, reason="consumed"))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Session superseded")
+    # Opportunistic prune: refresh TTL is 30d, so anything revoked >31d ago
+    # belongs to an expired token and can go.
+    try:
+        from datetime import timedelta
+        _cut = utcnow() - timedelta(days=31)
+        db.query(RevokedJti).filter(RevokedJti.revoked_at < _cut).delete()
+        db.commit()
+    except Exception:
+        db.rollback()
+
     new_refresh = create_refresh_token(user.id, user.install_id, user.token_epoch)
     _set_refresh_cookie(response, new_refresh)
     return LoginResponse(

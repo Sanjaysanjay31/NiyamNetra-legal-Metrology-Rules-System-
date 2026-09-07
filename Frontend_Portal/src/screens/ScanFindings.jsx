@@ -447,6 +447,15 @@ function EvidencePanel({ images = [], scan }) {
                   {img.width_px}×{img.height_px}
                 </span>
               </div>
+              {scan?.id && img?.id && (
+                <img
+                  src={`${import.meta.env.VITE_API_URL?.replace(/\/+$/, '')}/scans/${scan.id}/images/${img.id}/thumbnail`}
+                  alt={`${img.panel} panel evidence`}
+                  loading="lazy"
+                  className="mt-3 max-h-64 w-full rounded-card border border-divider object-contain bg-surface"
+                  onError={(e) => { e.currentTarget.style.display = 'none' }}
+                />
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
                 <Pill family={img.rectified ? 'pass' : 'na'}>
                   {img.rectified ? 'Rectified' : 'Not rectified'}
@@ -486,13 +495,11 @@ function EvidencePanel({ images = [], scan }) {
         </p>
       )}
 
-      {/* Metadata only, and deliberately so: ScanImageOut carries a hash, the
-          geometry and the rectification diagnostics, but no URL or path. The
-          crops are not served back through the API, so nothing here pretends a
-          thumbnail is one click away. */}
+      {/* Thumbnails served by GET /scans/{id}/images/{image_id}/thumbnail
+          (auth, 512px copy; purged images 404 and hide via onError). */}
       <p className="mt-3 max-w-prose text-caption text-ink-3">
-        The portal records each panel&apos;s hash and geometry. The images themselves are
-        not served back through the API.
+        Thumbnails load from the evidence store when retained (violation /
+        not-assessed). Purged compliant images show metadata only.
       </p>
     </Card>
   )

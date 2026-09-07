@@ -68,11 +68,17 @@ services:
       - key: SUPABASE_BUCKET
         value: NiyamNetra_Images
 
-      # Cloud OCR fallback. This slim (runtime: python) deploy has NO PaddleOCR
-      # or Tesseract, so without a key every scan is not_assessed. Set this to
-      # your OCR.space key in the dashboard (sync: false = never committed) and
-      # scans read labels via the API instead. Free key: ocr.space/ocrapi/freekey.
-      # Not needed if you switch to the Docker runtime (Backend/Dockerfile ships
-      # Tesseract). Engine/language have safe defaults in config.py.
+      # Cloud OCR (512MB-safe). This slim deploy has NO PaddleOCR/Tesseract,
+      # so without a key every scan is not_assessed. BEST = Google Vision
+      # (console.cloud.google.com → Vision API → API key); FREE = OCR.space
+      # (ocr.space/ocrapi/freekey). Set at least one in the dashboard
+      # (sync: false = never committed). Cascade: Google → OCR.space.
+      - key: GOOGLE_VISION_API_KEY
+        sync: false
       - key: OCR_SPACE_API_KEY
         sync: false
+      # Cloud-only mode: never attempt the 1.5GB Paddle import on 512MB.
+      - key: OCR_PROVIDER
+        value: auto
+      - key: DISABLE_PADDLE
+        value: "1"

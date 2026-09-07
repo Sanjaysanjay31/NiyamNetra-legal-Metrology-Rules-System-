@@ -345,7 +345,7 @@ Extension restricted to `.jpg`, `.jpeg`, `.png`; MIME type checked; size capped;
 
 ### 7.3 Rate limiting
 
-A per-account limit with a `Retry-After` header on 429 covers both burst upload abuse and login guessing. Login attempts are additionally limited per account identifier so that a lockout on one account cannot be induced from another's traffic.
+A per-account limit with a `Retry-After` header on 429 covers both burst upload abuse and login guessing. Login attempts are additionally limited per account identifier so that a lockout on one account cannot be induced from another's traffic. The login limiter is DB-backed (`login_attempts` table), so every worker enforces the same 5/min/employee+IP count. Refresh tokens rotate single-use: each refresh consumes its `jti` into `revoked_jtis`, and replaying a consumed `jti` is treated as theft — every session for that user dies via a `token_epoch` bump (reuse detection).
 
 ### 7.4 Replay protection and idempotency
 
@@ -507,6 +507,15 @@ Recorded so that a future editor cannot reintroduce a defect that has already be
 | Verification domain | `verify.niyamnetra.gov.in` | Removed; the project does not own a `.gov.in` domain |
 | Device binding | IMEI or browser fingerprint | Server-issued 32-byte `install_id`; Play Integrity or DeviceCheck for stronger assurance |
 | Token storage | `localStorage` and `AsyncStorage`, 24h single token | 12h access token in memory, 30d refresh token in an httpOnly cookie |
+
+### Token persistence asymmetry (portal vs app) — deliberate, not drift
+
+| Client | Access token | Refresh token | Rationale |
+|--------|--------------|---------------|-----------|
+| Portal (browser) | Memory only (module var + React state, never `localStorage`) | httpOnly cookie (`nn_refresh`) | XSS cannot read either; reload re-runs refresh flow |
+| App (native) | `expo-secure-store` (device keystore) | `expo-secure-store` | No httpOnly cookies in native; keystore is the closest equivalent; device theft is the residual risk (see T9) |
+
+Both enforce 12h/30d lifetimes, `token_type` assertion, and `install_id` binding.
 | Token payload | No `token_type` | `token_type` asserted on every access path |
 | CORS | `exp://*` in `allow_origins` | `allow_origin_regex`; Starlette does not glob |
 | Ports | Expo `19000` implied | Expo `8081`, Vite `5173`, FastAPI `8000` |

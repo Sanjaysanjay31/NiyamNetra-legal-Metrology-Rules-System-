@@ -45,7 +45,9 @@ import {
   SeverityBadge,
 } from '../ui'
 
-/* Which check goes dark when a schedule table is empty. Keyed by the API flag. */
+/* Which check goes dark when a schedule table is empty. Keyed by the API flag.
+   Transcribe via PUT /admin/rules/tables (endpoints.admin.updateRuleTables) —
+   verified gazette readings only; the engine activates on the next assess. */
 const SCHEDULE_GAPS = [
   {
     flag: 'second_schedule_populated',

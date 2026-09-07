@@ -468,7 +468,7 @@ function Header({ onOpenDrawer, reviewCount }) {
         <span className="lg:hidden">
           <Mark size={22} className="text-navy" />
         </span>
-        <SyncBadge state={state} pending={pending} className="hidden sm:inline-flex" />
+        <SyncBadge state={state} pending={pending} className="inline-flex" />
       </div>
 
       {user?.role === 'admin' && reviewCount > 0 && (

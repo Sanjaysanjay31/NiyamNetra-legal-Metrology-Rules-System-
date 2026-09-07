@@ -11,6 +11,13 @@ export default function MoreScreen({ navigation }) {
   const { logout } = useAuth();
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [lang, setLang] = useState('en');
+
+  const STR = {
+    en: { more: 'More', signOut: 'Sign Out', admin: 'Administrator', dept: 'State Legal Metrology Department', language: 'Language', comingSoon: 'Coming soon' },
+    hi: { more: 'अधिक', signOut: 'साइन आउट', admin: 'प्रशासक', dept: 'राज्य विधिक माप विज्ञान विभाग', language: 'भाषा', comingSoon: 'जल्द आ रहा है' },
+  };
+  const t = STR[lang] || STR.en;
 
   useEffect(() => {
     let mounted = true;
@@ -24,9 +31,9 @@ export default function MoreScreen({ navigation }) {
     return () => { mounted = false; };
   }, []);
 
-  const name = me?.full_name || 'Administrator';
+  const name = me?.full_name || t.admin;
   const empId = me?.employee_id || '—';
-  const area = me?.jurisdiction || 'State Legal Metrology Department';
+  const area = me?.jurisdiction || t.dept;
   const initial = name.trim().charAt(0).toUpperCase() || 'A';
 
   const menuAction = (key) => {
@@ -46,7 +53,7 @@ export default function MoreScreen({ navigation }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <Header title="More" />
+      <Header title={t.more} />
       <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
         <Card padding="lg" style={{ marginBottom: spacing.md }}>
           {loading ? (
@@ -74,10 +81,10 @@ export default function MoreScreen({ navigation }) {
 
         <Card padding="none" style={{ marginBottom: spacing.md }}>
           {[
-            { key: 'settings', label: 'System Settings', icon: '⚙️' },
-            { key: 'export', label: 'Export Data', icon: '📤' },
-            { key: 'audit', label: 'Audit Log', icon: '📝' },
-            { key: 'about', label: 'About NiyamNetra', icon: 'ⓘ' },
+            { key: 'settings', label: lang === 'hi' ? 'सिस्टम सेटिंग्स' : 'System Settings', icon: '⚙️' },
+            { key: 'export', label: lang === 'hi' ? 'डेटा निर्यात' : 'Export Data', icon: '📤' },
+            { key: 'audit', label: lang === 'hi' ? 'ऑडिट लॉग' : 'Audit Log', icon: '📝' },
+            { key: 'about', label: lang === 'hi' ? 'नियमनेत्रा के बारे में' : 'About NiyamNetra', icon: 'ⓘ' },
           ].map((item, idx, arr) => (
             <Pressable
               key={item.key}
@@ -93,9 +100,21 @@ export default function MoreScreen({ navigation }) {
           ))}
         </Card>
 
+        <Pressable
+          onPress={() => Alert.alert(t.language, '', [
+            { text: 'English', onPress: () => setLang('en') },
+            { text: 'हिन्दी', onPress: () => setLang('hi') },
+            { text: 'Cancel', style: 'cancel' },
+          ])}
+          style={{ marginTop: spacing.md }}
+        >
+          <View style={{ borderRadius: radius.md, padding: spacing.md, alignItems: 'center', borderColor: colors.border, borderWidth: 1 }}>
+            <Text style={{ fontWeight: '600', fontSize: 14 }}>{t.language}: {lang === 'hi' ? 'हिन्दी' : 'English'}</Text>
+          </View>
+        </Pressable>
         <Pressable onPress={logout} style={{ marginTop: spacing.lg }}>
           <View style={{ backgroundColor: colors.errorBg, borderRadius: radius.md, padding: spacing.md, alignItems: 'center', borderColor: colors.violation.border, borderWidth: 1 }}>
-            <Text style={{ color: colors.error, fontWeight: '600', fontSize: 14 }}>Sign Out</Text>
+            <Text style={{ color: colors.error, fontWeight: '600', fontSize: 14 }}>{t.signOut}</Text>
           </View>
         </Pressable>
         <Text style={{ ...typography.caption, textAlign: 'center', marginTop: spacing.xxl }}>NiyamNetra v1.0 • Admin Module</Text>

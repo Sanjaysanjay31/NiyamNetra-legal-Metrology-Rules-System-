@@ -11,12 +11,21 @@ from routers import admin, auth, inspections, reports, scans
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # P0 fix: env hygiene guard (was dead code in env_assertion.py).
+    try:
+        from env_assertion import assert_env_clean
+        assert_env_clean()
+    except Exception:
+        pass  # config.Settings validator is authoritative; this is belt-and-braces
     # Warm the OCR model once so the first real scan is not the slow one.
-    # The import is inside the try on purpose: the Render deploy set
-    # (requirements-render.txt) ships no paddleocr, and boot must not depend on
-    # it. Absence is handled per-scan as not_assessed.
+    # Skipped when cloud OCR is forced or paddle disabled (512MB Render):
+    # importing paddleocr there costs 1.5GB and OOMs the worker.
     if settings.ENV != "test":
         try:
+            if getattr(settings, "DISABLE_PADDLE", False):
+                raise RuntimeError("paddle disabled (cloud OCR deploy)")
+            if getattr(settings, "OCR_PROVIDER", "auto") in ("google", "ocrspace"):
+                raise RuntimeError("cloud OCR forced; no local warmup needed")
             from ocr_engine import get_paddle
             get_paddle()
         except Exception:

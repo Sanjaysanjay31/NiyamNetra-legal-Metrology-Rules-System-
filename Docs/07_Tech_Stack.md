@@ -175,7 +175,7 @@ api.interceptors.request.use((cfg) => {
 ### 2.3 Verify
 
 ```bash
-cd niyamnetra-portal && npm run dev
+cd Frontend_Portal && npm run dev
 # Local: http://localhost:5173/ with no errors
 # The login screen renders and asks for an Employee ID — not an email address
 npm run test          # Vitest passes, including the contrast suite in 10 §9.1
@@ -188,8 +188,7 @@ npm run test          # Vitest passes, including the contrast suite in 10 §9.1
 Five screens, camera-first, no `android/` or `ios/` folders.
 
 ```bash
-npx create-expo-app@latest niyamnetra-app --template blank
-cd niyamnetra-app
+cd Frontend_App
 npx expo install expo-camera expo-location expo-secure-store expo-file-system
 npx expo install react-native-screens react-native-safe-area-context
 npm install @react-navigation/native @react-navigation/native-stack @react-navigation/bottom-tabs axios

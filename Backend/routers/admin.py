@@ -1,9 +1,11 @@
 """routers/admin.py — the override path (§8.6, verbatim) and the admin surface
 built to the §8.2 inventory around it.
 """
+import math
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from audit import append_audit, verify_chain
@@ -12,7 +14,8 @@ from database import get_db
 from models import AuditLog, Finding, Scan, User
 from password_handler import hash_password
 from queries import (
-    admin_stats, inspection_trend, review_queue_size, violations_by_check,
+    admin_stats, inspection_trend, proximity_flags, repeat_violators, review_queue_size,
+    violations_by_check,
 )
 from rbac import require_admin
 from schemas import (
@@ -56,6 +59,29 @@ def dashboard(start: date | None = Query(default=None),
         review_queue=stats.get("review_queue") or 0,
         top_failed_checks=top, trend=trend,
     )
+
+
+@router.get("/repeat-violators")
+def repeat_offenders(start: date | None = Query(default=None),
+                     end: date | None = Query(default=None),
+                     limit: int = Query(default=20, ge=1, le=100),
+                     user: User = Depends(require_admin),
+                     db: Session = Depends(get_db)):
+    """Stores ranked by violation count — answers 'which premises re-offend'
+    for enforcement prioritisation. Live scans only, duplicates excluded."""
+    end = end or date.today()
+    start = start or (end - timedelta(days=29))
+    rows = repeat_violators(db, start, end, limit)
+    return {
+        "period_start": start.isoformat(), "period_end": end.isoformat(),
+        "stores": [
+            {"store_id": r["store_id"], "store_name": r["store_name"],
+             "violations": r["violations"],
+             "last_violation_date": r["last_violation_date"].isoformat()
+              if r["last_violation_date"] else None}
+            for r in rows
+        ],
+    }
 
 
 @router.get("/users", response_model=list[UserOut])
@@ -142,9 +168,44 @@ def reset_install(user_id: int, body: ResetInstallRequest,
 
 
 @router.get("/review-queue")
-def review_queue(user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    # The same count the badge shows, computed the same way (queries §review).
+def review_queue(user: User = Depends(require_admin), db: Session = Depends(get_db)):    # The same count the badge shows, computed the same way (queries §review).
     return {"count": review_queue_size(db)}
+
+
+@router.get("/review-queue/items")
+def review_queue_items(limit: int = Query(default=200, ge=1, le=500),
+                       user: User = Depends(require_admin),
+                       db: Session = Depends(get_db)):
+    """P1 fix: the count endpoint is not listable — the portal walked up to
+    200 inspections client-side and edited_offline was unlistable at all.
+    Returns the three summed terms as rows (bounded by limit) so badge == page.
+    """
+    from models import Inspection
+    from queries import LIVE
+    from sqlalchemy import or_
+    na_scans = (db.query(Scan).filter(
+        Scan.overall_result == "not_assessed", LIVE)
+        .order_by(Scan.id.desc()).limit(limit).all())
+    low_conf = (db.query(Finding).filter(
+        or_(Finding.confidence < 0.60, Finding.confidence.is_(None)),
+        Finding.human_verdict.is_(None))
+        .order_by(Finding.id.desc()).limit(limit).all())
+    offline = (db.query(Inspection).filter(Inspection.edited_offline.is_(True))
+               .order_by(Inspection.id.desc()).limit(limit).all())
+    return {
+        "limit": limit,
+        "not_assessed_scans": [
+            {"scan_id": s.id, "inspection_id": s.inspection_id,
+             "commodity_generic": s.commodity_generic,
+             "overall_result": s.overall_result} for s in na_scans],
+        "low_confidence_findings": [
+            {"finding_id": f.id, "scan_id": f.scan_id, "check_id": f.check_id,
+             "title": f.title, "confidence": f.confidence} for f in low_conf],
+        "offline_edits": [
+            {"inspection_id": i.id, "store_id": i.store_id,
+             "clock_skew_seconds": i.clock_skew_seconds,
+             "edited_offline": True} for i in offline],
+    }
 
 
 @router.patch("/findings/{finding_id}")
@@ -244,4 +305,144 @@ def rules_status(user: User = Depends(require_admin), db: Session = Depends(get_
         "second_schedule_populated": bool(cat.get("second_schedule")),
         "net_quantity_heights_populated": bool(cat.get("net_quantity_heights")),
         "meta": cat.get("_meta"),
+    }
+
+
+class RuleTablesRequest(BaseModel):
+    """Transcribe gazette tables to activate CHK10 / CHK06b. Only from a
+    verified gazette reading — the engine never guesses schedule contents.
+
+    second_schedule: { "<category lowercased>": {"sizes": [<numbers>] } }
+    net_quantity_heights: { "bands": [{ "unit": "g|kg|ml|l",
+      "upper": <inclusive max>, "min_height_mm": <number> }] }
+    Omit a table (null) to leave it as-is; pass {} to clear it back to
+    not_assessed. At least one table must be provided.
+    """
+    second_schedule: dict | None = None
+    net_quantity_heights: dict | None = None
+
+
+def _validate_second_schedule(v: dict) -> None:
+    if not isinstance(v, dict):
+        raise ValueError("second_schedule must be an object")
+    for cat, grp in v.items():
+        if not isinstance(cat, str) or not cat.strip():
+            raise ValueError("second_schedule categories must be non-empty strings")
+        if not isinstance(grp, dict) or not isinstance(grp.get("sizes"), list) or not grp["sizes"]:
+            raise ValueError(f"second_schedule[{cat!r}] needs a non-empty 'sizes' list")
+        for s in grp["sizes"]:
+            if not isinstance(s, (int, float)) or not math.isfinite(s) or s <= 0:
+                raise ValueError(f"second_schedule[{cat!r}] sizes must be positive numbers")
+
+
+def _validate_nq_heights(v: dict) -> None:
+    if not isinstance(v, dict) or not isinstance(v.get("bands"), list) or not v["bands"]:
+        raise ValueError("net_quantity_heights needs a non-empty 'bands' list")
+    for b in v["bands"]:
+        if not isinstance(b, dict):
+            raise ValueError("each band must be an object")
+        if str(b.get("unit", "")).lower() not in {"g", "kg", "mg", "ml", "l", "ltr", "litre"}:
+            raise ValueError("band.unit must be a net-quantity unit (g|kg|mg|ml|l|...)")
+        for k in ("upper", "min_height_mm"):
+            if not isinstance(b.get(k), (int, float)) or not math.isfinite(b[k]) or b[k] <= 0:
+                raise ValueError(f"band.{k} must be a positive number")
+
+
+@router.put("/rules/tables")
+def update_rule_tables(body: RuleTablesRequest,
+                       user: User = Depends(require_admin),
+                       db: Session = Depends(get_db)):
+    """Activate the two data-blocked checks by transcribing verified gazette
+    tables. Writes the catalog JSON (timestamped .bak kept), clears the
+    engine caches so the next assess uses the new tables, and audits the
+    change with old/new hashes. Populate only from a verified gazette."""
+    import json
+    if body.second_schedule is None and body.net_quantity_heights is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Provide second_schedule and/or net_quantity_heights")
+    from rules_engine import catalog_hash as _ch, load_catalog as _lc
+    old_hash = _ch()
+    cat = dict(_lc())
+    if body.second_schedule is not None:
+        _validate_second_schedule(body.second_schedule)
+        cat["second_schedule"] = {k.lower(): v for k, v in body.second_schedule.items()}
+    if body.net_quantity_heights is not None:
+        _validate_nq_heights(body.net_quantity_heights)
+        cat["net_quantity_heights"] = body.net_quantity_heights
+    path = settings.RULES_CATALOG
+    try:
+        backup = path.with_suffix(f".bak-{datetime.now(timezone.utc):%Y%m%d%H%M%S}.json")
+        backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        path.write_text(json.dumps(cat, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=f"Catalog store unavailable: {e}")
+    try:
+        _lc.cache.clear()
+    except Exception:
+        pass
+    try:
+        _ch.cache_clear()
+    except Exception:
+        pass
+    new_hash = _ch()
+    append_audit(db, user_id=user.id, action="rule_tables_updated",
+                 old_value=old_hash[:16], new_value=new_hash[:16],
+                 reason="gazette transcription by admin")
+    return {
+        "catalog_hash": new_hash,
+        "second_schedule_populated": bool(cat.get("second_schedule")),
+        "net_quantity_heights_populated": bool(cat.get("net_quantity_heights")),
+    }
+
+
+@router.get("/reports/range.{fmt}")
+def admin_range_report(fmt: str, start: date = Query(...), end: date = Query(...),
+                       user_id: int | None = Query(default=None),
+                       user: User = Depends(require_admin),
+                       db: Session = Depends(get_db)):
+    """Office-wide range document (all inspectors, or one via user_id).
+    fmt is pdf|docx|xlsx|csv. The fix for 'a month of work = N downloads'."""
+    from routers.reports import _range_blocks_for, _range_doc
+    from audit import verify_chain as _vc
+    ids = [user_id] if user_id is not None else None
+    blocks = _range_blocks_for(db, start, end, ids)
+    owner = db.get(User, user_id) if user_id is not None else user
+    return _range_doc(fmt, start, end, blocks, owner or user, _vc(db).get("head") or "",
+                      db=db, caller=user, kind="office-range")
+
+
+@router.get("/proximity-flags")
+def proximity_review(meters: float = Query(default=50.0, gt=0, le=5000),
+                     days: int = Query(default=29, ge=1, le=365),
+                     limit: int = Query(default=50, ge=1, le=200),
+                     user: User = Depends(require_admin),
+                     db: Session = Depends(get_db)):
+    """Different stores within `meters` of each other — duplicated shop
+    records, mis-tagged visits, or GPS trouble. Review items, never verdicts."""
+    end = date.today()
+    start = end - timedelta(days=days)
+    return {
+        "meters": meters, "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+        "flags": proximity_flags(db, start, end, meters, limit),
+    }
+
+
+@router.get("/reports/history")
+def report_history(limit: int = Query(default=50, ge=1, le=200),
+                   user: User = Depends(require_admin),
+                   db: Session = Depends(get_db)):
+    """Archive list of generated documents: who generated what, when, and the
+    file sha256 so a kept copy verifies. Files stay ephemeral; rows are kept."""
+    from models import ReportRecord
+    rows = (db.query(ReportRecord).order_by(ReportRecord.id.desc()).limit(limit).all())
+    return {
+        "items": [
+            {"id": r.id, "generated_by": r.generated_by, "kind": r.kind,
+             "fmt": r.fmt, "label": r.label, "file_sha256": r.file_sha256,
+             "byte_size": r.byte_size,
+             "created_at": r.created_at.isoformat() if r.created_at else None}
+            for r in rows
+        ],
     }

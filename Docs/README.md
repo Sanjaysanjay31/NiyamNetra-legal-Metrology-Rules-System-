@@ -60,7 +60,7 @@ Two vocabularies are used consistently. A **check** resolves to `pass`, `fail` o
 ### Terminal 1 — backend
 
 ```bash
-cd backend
+cd Backend
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 python -c "from paddleocr import PaddleOCR; PaddleOCR(lang='en')"   # cache models once, for offline use
@@ -72,12 +72,12 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 # verify: curl -s localhost:8000/health  ->  checks_registered must read 19
 ```
 
-The schema is created only by `alembic upgrade head`, never by `Base.metadata.create_all()`, which would skip the CHECK constraints and triggers that enforce the compliance invariants. Run uvicorn from inside `backend/` so the flat imports resolve, and bind `0.0.0.0` so the phone can reach the API over the LAN.
+The schema is created only by `alembic upgrade head`, never by `Base.metadata.create_all()`, which would skip the CHECK constraints and triggers that enforce the compliance invariants. Run uvicorn from inside `Backend/` so the flat imports resolve, and bind `0.0.0.0` so the phone can reach the API over the LAN.
 
 ### Terminal 2 — Portal
 
 ```bash
-cd niyamnetra-portal
+cd Frontend_Portal
 npm install
 npm run dev            # http://localhost:5173
 ```
@@ -87,7 +87,7 @@ Log in with the demo `employee_id` and password printed by `seed.py` (an inspect
 ### Terminal 3 — Expo field app
 
 ```bash
-cd niyamnetra-app
+cd Frontend_App
 npm install
 # set EXPO_PUBLIC_API_BASE_URL to http://<your-LAN-IP>:8000, and add that origin to CORS_ORIGIN_REGEX on the backend
 npx expo start         # scan the QR with Expo Go on the same Wi-Fi
@@ -127,13 +127,13 @@ CORS is matched by a regex (`CORS_ORIGIN_REGEX`), not an exact list — an `exp:
 
 ```text
 NiyamNetra/
-├── niyamnetra-portal/        # React + Vite Portal (Inspector + Admin)
-├── niyamnetra-app/           # Expo app (APK) — Inspector (scan) + Admin (monitoring)
-├── backend/                  # FastAPI — flat module layout (no app/ package)
+├── Frontend_Portal/          # React + Vite Portal (Inspector + Admin)
+├── Frontend_App/             # Expo app (APK) — Inspector (scan) + Admin (monitoring)
+├── Backend/                  # FastAPI — flat module layout (no app/ package)
 │   ├── main.py               # app, middleware, router registration
 │   ├── config.py             # pydantic-settings
 │   ├── database.py           # engine, SessionLocal, get_db, PRAGMA listener
-│   ├── models.py             # 7 SQLAlchemy ORM models
+│   ├── models.py             # 10 SQLAlchemy ORM models (7 core + 3 security/audit)
 │   ├── schemas.py            # Pydantic request/response models
 │   ├── jwt_handler.py        # access/refresh mint + verify
 │   ├── password_handler.py   # bcrypt hash + verify

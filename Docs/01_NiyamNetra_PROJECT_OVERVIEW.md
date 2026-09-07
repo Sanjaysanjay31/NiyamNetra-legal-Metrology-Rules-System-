@@ -200,13 +200,13 @@ The three processes run in three terminals, without Docker:
 
 ```bash
 # Terminal 1 — backend
-cd backend && alembic upgrade head && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+cd Backend && alembic upgrade head && uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # Terminal 2 — Portal
-cd niyamnetra-portal && npm install && npm run dev
+cd Frontend_Portal && npm install && npm run dev
 
 # Terminal 3 — field app
-cd niyamnetra-app && npm install && npx expo start
+cd Frontend_App && npm install && npx expo start
 ```
 
 Binding the backend to `0.0.0.0` lets the field app reach it over the LAN. The backend runs on Supabase PostgreSQL, so multiple Uvicorn workers are supported; there is no SQLite single-writer constraint.
@@ -222,7 +222,7 @@ Authentication is defined in full in `09_SECURITY.md`; the shape is:
 
 ## 7. Data model (summary)
 
-The schema of record is `Backend.md` §4 (the SQLAlchemy models), mirrored table-for-table in `06_DATABASE.md`. There are **seven tables**:
+The schema of record is `Backend.md` §4 (the SQLAlchemy models), mirrored table-for-table in `06_DATABASE.md`. There are **ten tables** (7 core + 3 security/audit):
 
 | Table | Purpose |
 |-------|---------|
@@ -233,6 +233,9 @@ The schema of record is `Backend.md` §4 (the SQLAlchemy models), mirrored table
 | `scan_images` | Individual photos: filesystem path, SHA-256, and the perceptual-hash bands (`phash_b0`…`phash_b7`). |
 | `findings` | One row per check per scan (nineteen rows), each with a `pass` / `fail` / `not_assessed` verdict, the rule reference, the `limb`, and any override reason. |
 | `audit_logs` | The append-only ledger: `action`, old / new value, reason, timestamp, IP, `hash_prev` and `hash_self`. |
+| `revoked_jtis` | Single-use refresh token revocation and token theft detection (RFC 6819 §5.2.2.3). |
+| `login_attempts` | DB-backed distributed login rate limiting across multi-worker deployments. |
+| `report_records` | Generated document audit archive tracking file SHA-256, byte size, and generation metadata. |
 
 Two schema facts are worth stating in the overview because they are easy to get wrong:
 

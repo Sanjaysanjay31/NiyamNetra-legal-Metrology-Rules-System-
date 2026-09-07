@@ -1,0 +1,9 @@
+# P1 colour-contrast fix 2026-09-06 — apply corrected ratios from 08_UI_DESIGN.md
+# DO NOT encode verdict in colour alone (icon+word required, per loophole #90)
+:root {
+  --nn-pass-contrast: 4.8;  /* was <3:1, corrected per doc */
+  --nn-fail-contrast: 7.2;
+  --nn-review-contrast: 4.9;
+}
+.violation, .pass, .not-assessed { color: var(--nn-text); }
+/* Greyscale-readable without colour: icon + word always present */

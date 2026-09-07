@@ -7,11 +7,30 @@ import { useAuth } from '../../auth/AuthContext';
 import { useSync } from '../../offline/SyncProvider';
 import { fetchMe } from '../../api/admin';
 
-// Minimal en/hi strings for the header only — full localization is roadmap,
-// not shipped. The toggle below is honest about that (no fake Switch).
+// Full en/hi strings for this screen (was header-only preview).
 const STR = {
-  en: { more: 'More', signOut: 'Sign Out' },
-  hi: { more: 'अधिक', signOut: 'साइन आउट' },
+  en: {
+    more: 'More', signOut: 'Sign Out', officer: 'Officer',
+    fieldDivision: 'Field Division', syncNow: 'Sync now', syncing: 'Syncing...',
+    pending: 'pending', uploading: 'Uploading to server', tapToSync: 'Tap to sync now',
+    help: 'Help & Guidance', about: 'About NiyamNetra',
+    helpText: 'Capture front, back, MRP and batch panels. The server assesses 19 checks (CHK01–CHK18 + CHK06b) after sync.',
+    aboutText: 'NiyamNetra v1.0 • Assesses LM (PC) Rules 2011 only. Not a statutory notice.',
+    language: 'Language', english: 'English', hindi: 'हिन्दी',
+    footer: 'NiyamNetra v1.0 • Assesses LM (PC) Rules 2011 only',
+    langTitle: 'Language', langMsg: 'Choose display language for this screen.',
+  },
+  hi: {
+    more: 'अधिक', signOut: 'साइन आउट', officer: 'अधिकारी',
+    fieldDivision: 'क्षेत्रीय प्रभाग', syncNow: 'अभी सिंक करें', syncing: 'सिंक हो रहा है...',
+    pending: 'लंबित', uploading: 'सर्वर पर अपलोड हो रहा है', tapToSync: 'सिंक के लिए टैप करें',
+    help: 'सहायता और मार्गदर्शन', about: 'नियमनेत्रा के बारे में',
+    helpText: 'फ्रंट, बैक, MRP और बैच पैनल कैप्चर करें। सिंक के बाद सर्वर 19 जांचों (CHK01–CHK18 + CHK06b) का मूल्यांकन करता है।',
+    aboutText: 'नियमनेत्रा v1.0 • केवल LM (PC) नियम 2011 का मूल्यांकन। वैधानिक नोटिस नहीं।',
+    language: 'भाषा', english: 'English', hindi: 'हिन्दी',
+    footer: 'नियमनेत्रा v1.0 • केवल LM (PC) नियम 2011',
+    langTitle: 'भाषा', langMsg: 'इस स्क्रीन के लिए भाषा चुनें।',
+  },
 };
 
 // §5.6 More - profile, queue, language, logout (live profile from /auth/me)
@@ -35,18 +54,18 @@ export default function MoreScreen({ navigation }) {
   }, []);
 
   const t = STR[lang] || STR.en;
-  const name = me?.full_name || 'Officer';
+  const name = me?.full_name || t.officer;
   const empId = me?.employee_id || '—';
-  const area = me?.jurisdiction || 'Field Division';
+  const area = me?.jurisdiction || t.fieldDivision;
   const initials = name.trim().split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase() || 'O';
 
   const openLang = () => {
     Alert.alert(
-      'Language',
-      'Full Hindi localization is on the roadmap. The header can preview Hindi today.',
+      t.langTitle,
+      t.langMsg,
       [
-        { text: 'English', onPress: () => setLang('en') },
-        { text: 'हिन्दी (header)', onPress: () => setLang('hi') },
+        { text: STR.en.english, onPress: () => setLang('en') },
+        { text: STR.hi.hindi, onPress: () => setLang('hi') },
         { text: 'Cancel', style: 'cancel' },
       ],
     );
@@ -54,9 +73,9 @@ export default function MoreScreen({ navigation }) {
 
   const menuAction = (key) => {
     if (key === 'help') {
-      Alert.alert('Help & Guidance', 'Capture front, back, MRP and batch panels. The server assesses 19 checks (CHK01–CHK18 + CHK06b) after sync.');
+      Alert.alert(t.help, t.helpText);
     } else {
-      Alert.alert('About NiyamNetra', 'NiyamNetra v1.0 • Assesses LM (PC) Rules 2011 only. Not a statutory notice.');
+      Alert.alert(t.about, t.aboutText);
     }
   };
 
@@ -97,8 +116,8 @@ export default function MoreScreen({ navigation }) {
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Text style={{ fontSize: 20, marginRight: spacing.md }}>↻</Text>
                   <View>
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>{isSyncing ? 'Syncing...' : `${pending} pending`}</Text>
-                    <Text style={{ fontSize: 12, color: colors.textMuted }}>{isSyncing ? 'Uploading to server' : 'Tap to sync now'}</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>{isSyncing ? t.syncing : `${pending} ${t.pending}`}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textMuted }}>{isSyncing ? t.uploading : t.tapToSync}</Text>
                   </View>
                 </View>
                 <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.info.fill, justifyContent: 'center', alignItems: 'center' }}>
@@ -112,8 +131,8 @@ export default function MoreScreen({ navigation }) {
         {/* Menu items */}
         <Card padding="none" style={{ marginBottom: spacing.md }}>
           {[
-            { key: 'help', label: 'Help & Guidance', icon: '?' },
-            { key: 'about', label: 'About NiyamNetra', icon: 'ⓘ' },
+            { key: 'help', label: t.help, icon: '?' },
+            { key: 'about', label: t.about, icon: 'ⓘ' },
           ].map((item, idx, arr) => (
             <Pressable
               key={item.key}
@@ -129,15 +148,15 @@ export default function MoreScreen({ navigation }) {
           ))}
         </Card>
 
-        {/* Language — honest roadmap note, not a fake working switch */}
-        <Card title="Language" padding="md" style={{ marginBottom: spacing.md }}>
-          <Pressable onPress={openLang} accessibilityRole="button" accessibilityLabel="Choose language">
+        {/* Language — full en/hi for this screen */}
+        <Card title={t.language} padding="md" style={{ marginBottom: spacing.md }}>
+          <Pressable onPress={openLang} accessibilityRole="button" accessibilityLabel={t.language}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View>
                 <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>
-                  {lang === 'hi' ? 'हिन्दी (header preview)' : 'English'}
+                  {lang === 'hi' ? STR.hi.hindi : STR.en.english}
                 </Text>
-                <Text style={{ fontSize: 12, color: colors.textMuted }}>Full localization is on the roadmap</Text>
+                <Text style={{ fontSize: 12, color: colors.textMuted }}>{t.langMsg}</Text>
               </View>
               <Text style={{ color: '#64748B', fontSize: 16 }}>›</Text>
             </View>
@@ -150,7 +169,7 @@ export default function MoreScreen({ navigation }) {
             <Text style={{ color: colors.error, fontWeight: '600', fontSize: 14 }}>{t.signOut}</Text>
           </View>
         </Pressable>
-        <Text style={{ ...typography.caption, textAlign: 'center', marginTop: spacing.xxl }}>NiyamNetra v1.0 • Assesses LM (PC) Rules 2011 only</Text>
+        <Text style={{ ...typography.caption, textAlign: 'center', marginTop: spacing.xxl }}>{t.footer}</Text>
       </ScrollView>
     </View>
   );

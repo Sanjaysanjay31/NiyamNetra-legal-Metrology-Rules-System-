@@ -26,9 +26,12 @@ class Settings(BaseSettings):
     PUBLIC_BASE_URL: str = "http://localhost:8000"
 
     # --- database ---
-    # REQUIRED. Supabase / PostgreSQL only — there is no SQLite fallback.
-    # Set in .env as  postgresql+psycopg://...  (psycopg 3). If it is missing,
-    # the app refuses to start rather than silently creating a SQLite file.
+    # REQUIRED. Production runs Supabase / PostgreSQL only.
+    # SQLite is supported for local dev and the pytest suite (database.py
+    # branches on is_sqlite; tests run sqlite by default, postgres when
+    # PG_TEST_URL is set). Set in .env as  postgresql+psycopg://...  (psycopg 3).
+    # If it is missing, the app refuses to start rather than silently creating
+    # a SQLite file.
     DATABASE_URL: str
 
     # --- auth ---
@@ -40,9 +43,11 @@ class Settings(BaseSettings):
     # the current access token stays valid until expiry (client re-logins to
     # rotate it). Documented here so the behaviour is honest, not implied.
     ACCESS_TOKEN_HOURS: int = 12           # C8
-    REFRESH_TOKEN_DAYS: int = 30           # C8 — rotation is NOT single-use
-    # (no jti denylist); revocation is via token_epoch bump on logout /
-    # password change / install reset. See routers/auth.py.
+    REFRESH_TOKEN_DAYS: int = 30           # C8 — single-use rotation with
+    # reuse detection (revoked_jtis table): each refresh consumes its jti, and
+    # replaying a consumed jti bumps token_epoch, killing every session.
+    # Revocation is via token_epoch bump on logout / password change /
+    # install reset / reuse detection. See routers/auth.py.
     REFRESH_COOKIE_NAME: str = "nn_refresh"
 
     # Cross-site refresh cookie. A browser will not store or send a
@@ -128,9 +133,19 @@ class Settings(BaseSettings):
     DASHBOARD_CACHE_TTL_SECONDS: int = 60  # never applied to the review-queue badge
 
     # --- OCR ---
+    # Render free tier has 512MB RAM; PaddleOCR needs ~1.5GB, Tesseract needs
+    # apt binaries absent from the native Python runtime. So the deploy-safe
+    # path is CLOUD OCR (zero RAM, only httpx): Google Vision (best accuracy,
+    # Hindi + small fonts) first, OCR.space (free, no card) second, then local
+    # Tesseract/Paddle only when present. See ocr_engine.run_ocr cascade.
+    OCR_PROVIDER: str = "auto"  # auto | google | ocrspace | tesseract | paddle
     OCR_LANGS: str = "en,hi"
     OCR_MIN_CONFIDENCE: float = 0.60
     TESSERACT_CMD: str | None = None
+    DISABLE_PADDLE: bool = False  # set 1 on 512MB deploys to skip import attempt
+    # PaddleOCR recognition language (2.8 has no Devanagari model, so Hindi is
+    # covered by Tesseract eng+hin and Vision en+hi; override if yours does).
+    OCR_PADDLE_LANG: str = "en"
 
     # Cloud OCR fallback (OCR.space). When BOTH PaddleOCR and Tesseract are
     # absent — exactly the slim Render deploy — run_ocr falls back to this HTTPS
@@ -148,6 +163,14 @@ class Settings(BaseSettings):
                                            # non-Latin langs; 2 is Latin-only, no overlay.
     OCR_SPACE_LANGUAGE: str = "eng"        # OCR.space code, e.g. "eng" or "hin".
     OCR_SPACE_TIMEOUT_S: float = 25.0
+    # Best-accuracy cloud OCR: Google Cloud Vision DOCUMENT_TEXT_DETECTION.
+    # Needs only httpx (already in requirements-render.txt), ~0MB RAM.
+    # Get key: console.cloud.google.com → enable Vision API → create API key.
+    # When set, it runs BEFORE OCR.space (higher accuracy on small/Hindi text).
+    # Leave blank to use OCR.space only. See .env.example.
+    GOOGLE_VISION_API_KEY: str | None = None
+    GOOGLE_VISION_URL: str = "https://vision.googleapis.com/v1/images:annotate"
+    GOOGLE_VISION_TIMEOUT_S: float = 25.0
 
     # --- rules ---
     RULES_AS_AT: str = "2026-07-01"        # C6; GSR 128(E) in force

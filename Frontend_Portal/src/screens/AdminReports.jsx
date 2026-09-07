@@ -248,10 +248,11 @@ export default function AdminReports() {
     try {
       const blob = await fetcher(row.id)
       saveBlob(blob, `niyamnetra-inspection-${row.id}.${kind}`)
+      history.reload()
       toast.push({
         family: 'pass',
         title: `Inspection ${row.id} downloaded`,
-        body: `${row.shopName} · ${prettyDay(row.date)}. The "Inspector" line names you, not ${row.officerName} — see the note above the table.`,
+        body: `${row.shopName} · ${prettyDay(row.date)}. The "Inspector" line names ${row.officerName}, the visit's officer.`,
       })
     } catch (err) {
       toast.push({
@@ -263,6 +264,45 @@ export default function AdminReports() {
       setBusy(null)
     }
   }
+
+  /* Office-wide range document: a month of work in one download.
+     GET /admin/reports/range.{pdf,docx,xlsx,csv}?start=&end=[&user_id=].
+     The picked officer (if any) travels as user_id; otherwise the whole office. */
+  const [rangeFrom, setRangeFrom] = useState('')
+  const [rangeTo, setRangeTo] = useState('')
+  async function downloadOfficeRange(kind) {
+    setBusy(`office:${kind}`)
+    try {
+      const blob = await endpoints.admin.officeRangeDoc(kind, {
+        start: rangeFrom || from,
+        end: rangeTo || today,
+        ...(officerId ? { user_id: Number(officerId) } : {}),
+      })
+      saveBlob(blob, `niyamnetra-office-${rangeFrom || from}-to-${rangeTo || today}.${kind}`)
+      history.reload()
+      toast.push({
+        family: 'pass',
+        title: 'Office range downloaded',
+        body: officerId
+          ? 'One officer, the picked range. The header names that officer.'
+          : 'Every officer, the picked range. One file, not one per visit.',
+      })
+    } catch (err) {
+      toast.push({
+        family: 'violation',
+        title: 'The document could not be generated',
+        body: err?.message ?? 'The server did not return a file.',
+      })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  /* Archive list of generated documents (who/what/sha256). Reloaded after
+     every download on this screen so it never disagrees with reality. */
+  const history = useResource(() => endpoints.admin.reportHistory({ limit: 20 }), {
+    label: 'report-history',
+  })
 
   /* The caller's own day. Kept because it is a real endpoint and an
      administrator who also inspects will want it — labelled for what it is. */
@@ -277,6 +317,7 @@ export default function AdminReports() {
     try {
       const blob = await fetcher({})
       saveBlob(blob, `niyamnetra-report-${today}.${kind}`)
+      history.reload()
       toast.push({
         family: 'pass',
         title: 'Your own day downloaded',
@@ -326,7 +367,7 @@ export default function AdminReports() {
       <PageHeader
         eyebrow={t('nav.reports')}
         title={t('nav.reports')}
-        subtitle="Documents the server can actually produce: one visit at a time, or your own day. The jurisdiction figures below are context for choosing which."
+        subtitle="One visit, one day, a date range, or the whole office — each as PDF, Word, Excel or CSV. The jurisdiction figures below are context for choosing which."
         actions={
           <div className="flex items-center gap-2">
             {demo && <DemoChip />}
@@ -475,8 +516,8 @@ export default function AdminReports() {
           </Field>
 
           <Field
-            label="Shop name contains"
-            hint="Sent to the server. It matches the shop name only — commodity, brand and batch belong to a package, not a visit."
+            label="Search"
+            hint="Sent to the server. Matches shop, commodity, brand and batch."
           >
             {(props) => (
               <div className="relative">
@@ -532,17 +573,15 @@ export default function AdminReports() {
         </Button>
       </div>
 
-      {/* ---- The defect an administrator must know about before downloading. ---- */}
+      {/* ---- Attribution: fixed server-side (owner stamped, not caller). ---- */}
       <Callout
         family="review"
-        title="A per-visit document names you as the inspector"
+        title="Per-visit documents name the visit's officer"
         className="mt-4"
       >
-        report_generator writes <span className="nn-mono">Inspector: {'{caller}'}</span> into the
-        document header, and for these buttons the caller is you. A document pulled for another
-        officer's visit will therefore carry your name and employee number above their work. The
-        visit's own officer is on the row here and inside the body of the document; the header line
-        is the part to disregard. This is a server-side defect, recorded rather than hidden.
+        Fixed: the backend stamps the inspection owner into the document header
+        (routers/reports.py owner lookup). A document you pull for another
+        officer's visit carries their name, not yours.
       </Callout>
 
       {shops.error && (
@@ -691,6 +730,91 @@ export default function AdminReports() {
         </div>
       </Card>
 
+      {/* ---- Office-wide range document: a month of work in one download. ---- */}
+      <Card className="mt-4 p-5 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <SectionTitle caption="GET /admin/reports/range.{pdf,docx,xlsx,csv}. The picked officer above travels as user_id; with none picked the whole office is covered. At most 31 days per document.">
+              <span className="inline-flex items-center gap-2">
+                <Sigma size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
+                The office, as one document
+              </span>
+            </SectionTitle>
+            <div className="mt-3 grid max-w-md grid-cols-2 gap-3">
+              <Field label="From">
+                {(props) => (
+                  <Input
+                    {...props}
+                    type="date"
+                    value={rangeFrom || from}
+                    max={rangeTo || today}
+                    onChange={(e) => setRangeFrom(e.target.value)}
+                  />
+                )}
+              </Field>
+              <Field label="To">
+                {(props) => (
+                  <Input
+                    {...props}
+                    type="date"
+                    value={rangeTo || today}
+                    min={rangeFrom || from}
+                    max={today}
+                    onChange={(e) => setRangeTo(e.target.value)}
+                  />
+                )}
+              </Field>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {['docx', 'pdf', 'xlsx', 'csv'].map((kind) => (
+              <Button
+                key={kind}
+                variant={kind === 'pdf' ? undefined : 'secondary'}
+                icon={Download}
+                loading={busy === `office:${kind}`}
+                disabled={busy != null && busy !== `office:${kind}`}
+                disabledReason="A document is already being generated."
+                onClick={() => downloadOfficeRange(kind)}
+              >
+                {kind.toUpperCase()}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* ---- Generated-document archive: who made what, and its hash. ---- */}
+      <Card className="mt-4 p-5 sm:p-6">
+        <SectionTitle caption="GET /admin/reports/history. Files stay ephemeral; rows are kept, with the sha256 so a filed copy verifies.">
+          <span className="inline-flex items-center gap-2">
+            <FileText size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
+            Generated documents
+          </span>
+        </SectionTitle>
+        {history.loading ? (
+          <p className="mt-3 text-caption text-ink-3">Loading…</p>
+        ) : (history.data?.items ?? []).length === 0 ? (
+          <p className="mt-3 text-caption text-ink-3">
+            {history.error ? 'Could not be loaded.' : 'Nothing generated yet — download above and it lands here.'}
+          </p>
+        ) : (
+          <ul className="mt-3 flex flex-col gap-2">
+            {(history.data.items ?? []).slice(0, 10).map((r) => (
+              <li key={r.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-l-2 border-divider pl-3">
+                <span className="text-small font-semibold text-ink">
+                  {r.kind} · {r.fmt.toUpperCase()} · {r.label}
+                </span>
+                <span className="nn-mono text-caption text-ink-3">
+                  {r.created_at?.slice(0, 16)?.replace('T', ' ') ?? '—'}
+                  {r.file_sha256 ? ` · ${r.file_sha256.slice(0, 12)}…` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
       {/* ---- The honest boundary. ---- */}
       <Card className="mt-6 p-5 sm:p-6">
         <h2 className="text-h2 text-ink">What reporting cannot do here</h2>
@@ -700,16 +824,16 @@ export default function AdminReports() {
         <ul className="mt-4 flex flex-col gap-3">
           {[
             [
-              'There is no document for a date range, or for the office',
-              'Both document routes take one visit or one officer-day. A month of work is a month of separate downloads, and an office-wide report does not exist on the server in any format.',
+              'Range and office-wide documents',
+              'Served: GET /admin/reports/range.{pdf,docx,xlsx,csv}?start=&end= (office-wide, optional user_id) and GET /reports/range.* (own visits). A month of work is one download.',
             ],
             [
-              'There is no Excel writer',
-              'report_generator produces Word and PDF only. The CSV above is assembled in this browser from the rows already loaded, carries no findings, and is offered as exactly that rather than as an export feature.',
+              'There is no Excel writer on this screen',
+              'The server writes XLSX via GET /admin/reports/range.xlsx and per-visit routes; the CSV above is assembled in this browser from loaded rows and is offered as exactly that.',
             ],
             [
-              'Documents are not archived',
-              'Each request rebuilds the file and streams it back, overwriting the server-side copy under the same name. Nothing here lists a document produced last week, because no such list is kept.',
+              'Documents are filed as rows, not files',
+              'Each download logs who generated what and its sha256 (see Generated documents above) so a filed copy verifies. The files themselves stay ephemeral — nothing here re-serves last week\u2019s bytes.',
             ],
             [
               'Nothing is scheduled or emailed',

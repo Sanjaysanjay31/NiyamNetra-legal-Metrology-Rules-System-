@@ -32,7 +32,7 @@ Everything version 2.0 proposed that the models do not have is in **§10**, labe
 7. **Append-only audit, with a chain that covers the actor and the new value.**
 8. **Stores are entities.** Counting distinct premises visited requires a normalised store, not a name string.
 
-**Seven tables:** `users`, `stores`, `inspections`, `scans`, `scan_images`, `findings`, `audit_logs`. Not five. The two that earlier drafts omitted are the two that carry the evidence and the verdicts.
+**Ten tables:** `users`, `stores`, `inspections`, `scans`, `scan_images`, `findings`, `audit_logs`, `revoked_jtis`, `login_attempts`, `report_records`. Seven core domain tables plus three security, distributed rate-limiting, and report archive tables.
 
 ---
 
@@ -630,6 +630,30 @@ CREATE TABLE audit_logs (
   CONSTRAINT ck_audit_seq CHECK (seq > 0),
   CONSTRAINT ck_audit_hash_len CHECK (length(hash_self) = 64)
 );
+
+CREATE TABLE revoked_jtis (
+  jti        VARCHAR(32) PRIMARY KEY,
+  user_id    INTEGER     NOT NULL REFERENCES users(id),
+  revoked_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reason     VARCHAR(16) NOT NULL DEFAULT 'consumed'
+);
+
+CREATE TABLE login_attempts (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  rate_key     VARCHAR(80) NOT NULL,
+  attempted_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE report_records (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  generated_by INTEGER REFERENCES users(id),
+  kind         VARCHAR(16)  NOT NULL,
+  fmt          VARCHAR(8)   NOT NULL,
+  label        VARCHAR(160) NOT NULL,
+  file_sha256  VARCHAR(64),
+  byte_size    INTEGER,
+  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
 ### 4.3 Indexes
@@ -638,6 +662,9 @@ CREATE TABLE audit_logs (
 -- single-column: every foreign key, and the identity lookups
 CREATE UNIQUE INDEX ix_user_employee   ON users (employee_id);
 CREATE        INDEX ix_user_install    ON users (install_id);
+CREATE        INDEX ix_revoked_user    ON revoked_jtis (user_id);
+CREATE        INDEX ix_login_rate_ts   ON login_attempts (rate_key, attempted_at);
+CREATE        INDEX ix_report_created  ON report_records (created_at);
 CREATE        INDEX ix_store_name      ON stores (name);
 CREATE        INDEX ix_insp_user       ON inspections (user_id);
 CREATE        INDEX ix_insp_store      ON inspections (store_id);

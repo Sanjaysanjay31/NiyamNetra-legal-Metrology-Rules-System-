@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone
 from math import asin, cos, radians, sin, sqrt
 
 from cachetools import TTLCache
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from audit import append_audit
@@ -57,8 +57,54 @@ def _store_dict(s: Store) -> dict:
 
 
 def _inspection_dict(insp: Inspection) -> dict:
+    # P1 fix: App Pass/Violations/Records filtered on result/overall_result/
+    # verdict fields the list never returned → permanently empty tabs.
+    # Roll up live scans (duplicate_of IS NULL): any violation → violation,
+    # all compliant → compliant, any not_assessed → not_assessed, no scans →
+    # no_scans (client treats as empty, not as pass). edited_offline +
+    # store_name included so the review queue + search work client-side too.
+    try:
+        live = [s for s in (insp.scans or []) if getattr(s, "duplicate_of", None) is None]
+    except Exception:
+        live = []
+    results = [getattr(s, "overall_result", None) for s in live]
+    if not live:
+        rollup = "no_scans"
+    elif any(r == "violation" for r in results):
+        rollup = "violation"
+    elif any(r == "not_assessed" for r in results):
+        rollup = "not_assessed"
+    elif all(r == "compliant" for r in results):
+        rollup = "compliant"
+    elif any(r == "out_of_scope" for r in results) and all(
+            r in ("out_of_scope", "compliant") for r in results):
+        rollup = "out_of_scope"
+    else:
+        rollup = "not_assessed"
+    try:
+        store_name = insp.store.name if getattr(insp, "store", None) else None
+    except Exception:
+        store_name = None
+    # Check aggregates across live scans (App reads passed/pass_count,
+    # checks/checks_total; Portal reads counts). Evidence thumbs: first image
+    # per live scan so carousels render without extra round-trips.
+    try:
+        _passed = sum(int(getattr(s, "checks_assessed", 0) or 0)
+                      for s in live if getattr(s, "overall_result", None) == "compliant")
+        _total = sum(int(getattr(s, "checks_total", 0) or 0) for s in live)
+        _thumbs = []
+        for s in live:
+            try:
+                _imgs = sorted(getattr(s, "images", []) or [], key=lambda i: getattr(i, "id", 0))
+                if _imgs:
+                    _thumbs.append(f"/scans/{s.id}/images/{_imgs[0].id}/thumbnail")
+            except Exception:
+                continue
+    except Exception:
+        _passed, _total, _thumbs = 0, 0, []
     return {
         "id": insp.id, "store_id": insp.store_id, "user_id": insp.user_id,
+        "store_name": store_name,
         "inspection_date": insp.inspection_date.isoformat(),
         "status": insp.status, "transaction_type": insp.transaction_type,
         "in_scope": insp.in_scope, "out_of_scope_reason": insp.out_of_scope_reason,
@@ -67,10 +113,28 @@ def _inspection_dict(insp: Inspection) -> dict:
         "geofence_reason": insp.geofence_reason,
         "mock_location": insp.mock_location,
         "clock_skew_seconds": insp.clock_skew_seconds,
+        "edited_offline": bool(getattr(insp, "edited_offline", False)),
+        # Coordinates exposed so a map view can plot visits (stores carry
+        # their registered point via /stores; this is the device fix).
+        "latitude": insp.latitude, "longitude": insp.longitude,
+        "gps_accuracy_m": insp.gps_accuracy_m,
         "signature_status": insp.signature_status,
         "notes": insp.notes,
         "submitted_at": insp.submitted_at.isoformat() if insp.submitted_at else None,
         "scan_count": len(insp.scans),
+        # Rollup aliases — every name the clients filter on resolves.
+        "overall_result": rollup, "result": rollup, "verdict": rollup,
+        "result_counts": {
+            "compliant": sum(1 for r in results if r == "compliant"),
+            "violation": sum(1 for r in results if r == "violation"),
+            "not_assessed": sum(1 for r in results if r == "not_assessed"),
+            "out_of_scope": sum(1 for r in results if r == "out_of_scope"),
+        },
+        # Back-compat aggregates for App Pass/Violations/Records screens.
+        "passed": _passed, "pass_count": _passed, "checks_passed": _passed,
+        "checks": _total, "checks_total": _total,
+        "evidence_thumbnails": _thumbs, "evidence_uris": _thumbs,
+        "photos": _thumbs, "images": _thumbs,
     }
 class CreateStoreRequest(BaseModel):
     name: str = Field(min_length=2, max_length=160)
@@ -233,14 +297,24 @@ def list_inspections(
     date_from: date | None = None,
     date_to: date | None = None,
     q: str | None = None,
+    category: str | None = Query(default=None, max_length=60),
 ):
-    """Filters per 04_PRD §5.9 — store, status, date range, free-text q."""
+    """Filters per 04_PRD §5.9 — store, status, date range, free-text q,
+    category.
+
+    q matches shop name AND commodity/brand/batch (was shop-only → Portal
+    showed "Shop name only"). category filters scans by commodity_category
+    (e.g. food, beverage). Scans joined with LEFT OUTER so inspections
+    without scans still list; rows deduped by id in Python because the join
+    fans out one row per scan (dialect-safe, no DISTINCT + eager-load clash).
+    """
+    from sqlalchemy import or_
     from sqlalchemy.orm import joinedload, selectinload
     if status is not None and status not in ("draft", "submitted"):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="status must be draft or submitted")
     query = db.query(Inspection).options(
-        selectinload(Inspection.scans),
+        selectinload(Inspection.scans).selectinload(Scan.images),
         joinedload(Inspection.store),
         joinedload(Inspection.inspector),
     )
@@ -258,11 +332,31 @@ def list_inspections(
         # Escape LIKE wildcards so %/_ in user input match literally; cap 100.
         _qq = (q or "")[:100]
         _esc = _qq.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        # search commodity_generic/brand_name via scans join is done client-side for now; store name search
-        query = query.join(Store, Store.id == Inspection.store_id).filter(
-            Store.name.ilike(f"%{_esc}%", escape="\\"))
+        # Shop name + commodity/brand/batch via LEFT OUTER join to scans.
+        query = (query.outerjoin(Store, Store.id == Inspection.store_id)
+                 .outerjoin(Scan, Scan.inspection_id == Inspection.id)
+                 .filter(or_(
+                     Store.name.ilike(f"%{_esc}%", escape="\\"),
+                     Scan.commodity_generic.ilike(f"%{_esc}%", escape="\\"),
+                     Scan.brand_name.ilike(f"%{_esc}%", escape="\\"),
+                     Scan.batch_number.ilike(f"%{_esc}%", escape="\\"),
+                 )))
+    if category:
+        # Exact category match (case-insensitive) on the scan's declared
+        # commodity_category. Joins scans once even when q already did.
+        _cat = (category or "").strip()[:60]
+        _cesc = _cat.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        if not q:
+            query = query.outerjoin(Scan, Scan.inspection_id == Inspection.id)
+        query = query.filter(Scan.commodity_category.ilike(_cesc, escape="\\"))
     rows = query.order_by(Inspection.inspection_date.desc(), Inspection.id.desc()).all()
-    return [_inspection_dict(i) for i in rows]
+    # Dedupe: the scans join fans out one row per scan.
+    _seen, _uniq = set(), []
+    for _r in rows:
+        if _r.id not in _seen:
+            _seen.add(_r.id)
+            _uniq.append(_r)
+    return [_inspection_dict(i) for i in _uniq]
 
 
 @router.get("/inspections/{inspection_id}")
@@ -272,8 +366,12 @@ def get_inspection(insp: Inspection = Depends(owned_inspection),
     d["scans"] = [
         {"id": s.id, "commodity_generic": s.commodity_generic,
          "brand_name": s.brand_name, "overall_result": s.overall_result,
+         "result": s.overall_result, "verdict": s.overall_result,
          "checks_assessed": s.checks_assessed, "checks_total": s.checks_total,
-         "duplicate_of": s.duplicate_of}
+         "checks": s.checks_total, "duplicate_of": s.duplicate_of,
+         "thumbnail_url": (
+             f"/scans/{s.id}/images/{sorted(getattr(s, 'images', []) or [], key=lambda i: getattr(i, 'id', 0))[0].id}/thumbnail"
+             if sorted(getattr(s, "images", []) or [], key=lambda i: getattr(i, "id", 0)) else None)}
         for s in insp.scans
     ]
     return d

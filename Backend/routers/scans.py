@@ -241,11 +241,24 @@ async def upload_image(
     # so throws away the capture and leaves no record that an unreadable
     # package was found, which silently biases the statistics toward the
     # photogenic subset of the field.
+    # Advisory panel-quad suggestion (classical detector, never acts on
+    # evidence). The client may offer it for on-screen adjustment before
+    # assess; None means "frame it manually".
+    _corners = None
+    try:
+        from image_processor import detect_panel_quad
+        _q = detect_panel_quad(bgr)
+        if _q is not None:
+            _corners = [[round(float(x), 1), round(float(y), 1)] for x, y in _q.tolist()]
+    except Exception:
+        _corners = None
+
     return {
         "image_id": img.id,
         "sha256": img.sha256,
         "usable": quality.usable,
         "quality_note": quality.reason,
+        "suggested_corners": _corners,
     }
 
 
@@ -423,12 +436,53 @@ def verify_evidence(scan: Scan = Depends(owned_scan), db: Session = Depends(get_
             "file_present": exists,
             "sha256_recorded": img.sha256,
             "sha256_matches": exists and verify_stored_image(path, img.sha256),
+            "thumbnail_url": f"/scans/{scan.id}/images/{img.id}/thumbnail",
         })
     return {
         "scan_id": scan.id,
         "images": results,
         "all_intact": bool(results) and all(r["sha256_matches"] for r in results),
     }
+
+
+@router.get("/{scan_id}/images/{image_id}/thumbnail")
+def image_thumbnail(scan_id: int, image_id: int,
+                    scan: Scan = Depends(owned_scan),
+                    user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """P1 fix: portal findings showed hashes only — judges could not eyeball.
+    Serves a downscaled JPEG copy (max 512px) of the stored evidence; the
+    original file is never resized. Auth via owned_scan (inspector sees own,
+    admin sees all). Purged images → 404."""
+    from fastapi.responses import Response
+    from pathlib import Path
+    import io
+    img = db.query(ScanImage).filter(
+        ScanImage.id == image_id, ScanImage.scan_id == scan.id).first()
+    if img is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Image not found")
+    p = Path(img.file_path)
+    if not p.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            detail="Image purged or missing")
+    try:
+        from audit import append_audit as _aa
+        _aa(db, inspection_id=scan.inspection_id, scan_id=scan.id,
+            user_id=user.id, action="evidence_viewed",
+            new_value=f"{img.panel}:{img.sha256[:16]}")
+    except Exception:
+        pass
+    try:
+        from PIL import Image
+        with Image.open(p) as im:
+            im = im.convert("RGB")
+            im.thumbnail((512, 512))
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=72)
+            return Response(content=buf.getvalue(), media_type="image/jpeg")
+    except Exception:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Image could not be rendered")
 
 
 class UpdateScanRequest(BaseModel):
@@ -502,10 +556,9 @@ def update_scan(body: UpdateScanRequest, scan: Scan = Depends(owned_scan), user:
     _keys = body.model_dump(exclude_unset=True)
     for k, v in _keys.items():
         try:
-            setattr(scan, k, v)
+            setattr(scan, k, v)  # all keys are columns (reference_pixel_size persisted since 0003)
         except AttributeError:
-            # Transient field (e.g. reference_pixel_size when the column is
-            # absent): keep on the instance for the next assess in this
+            # Unknown attr: keep on the instance for the next assess in this
             # process without failing the patch.
             object.__setattr__(scan, k, v)
     try:
@@ -536,13 +589,16 @@ def update_scan(body: UpdateScanRequest, scan: Scan = Depends(owned_scan), user:
 
 class ListingRequest(BaseModel):
     url: str = Field(..., description="https:// E-commerce listing URL")
+    platform_has_origin_filter: bool | None = Field(
+        default=None,
+        description="Officer-observed: marketplace offers country-of-origin filter (CHK16)")
 
 
 @router.post("/{scan_id}/listing")
 def attach_listing(body: ListingRequest, scan: Scan = Depends(owned_scan), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Fetch listing for CHK15/16 via SSRF-guarded fetcher. ocr_text stays for
-    OCR only; the listing URL is recorded in the audit trail (new_value). Raw
-    HTML is never appended to ocr_text to avoid polluting OCR evidence."""
+    """Fetch listing for CHK15/16 via SSRF-guarded fetcher. Persists the URL +
+    stripped listing text on the scan so build_context can assess Rule 6(10)
+    (previously the HTML was fetched then discarded → CHK15/16 dead)."""
     if scan.inspection_id:
         _li = db.get(Inspection, scan.inspection_id)
         if _li is not None and _li.status == "submitted":
@@ -557,6 +613,33 @@ def attach_listing(body: ListingRequest, scan: Scan = Depends(owned_scan), user:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     except Exception as e:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"Fetch failed: {type(e).__name__}")
+    # Strip tags → visible text (first 20k chars) for declaration parsing.
+    try:
+        import re as _re
+        _txt = _re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>", " ", html, flags=_re.I)
+        _txt = _re.sub(r"<[^>]+>", " ", _txt)
+        _txt = _re.sub(r"\s+", " ", _txt).strip()[:20000]
+    except Exception:
+        _txt = html[:20000]
+    try:
+        scan.listing_url = url[:500]
+    except Exception:
+        pass
+    try:
+        scan.listing_text = _txt
+    except Exception:
+        pass
+    # Optional platform flag from request body (checkbox in portal Capture).
+    try:
+        _pf = getattr(body, "platform_has_origin_filter", None)
+        if _pf is not None:
+            scan.platform_has_origin_filter = bool(_pf)
+    except Exception:
+        pass
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
     # Keep ocr_text for OCR only; do NOT append raw HTML. Record the URL +
     # a truncated marker in audit for traceability.
     marker = f"[LISTING {url[:200]} len={len(html)}]"
@@ -704,5 +787,82 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
             for line in ocr.lines
             if _label_for(line)
         }
+        # P0 fix: CHK07/CHK09/CHK08 were permanently not_assessed because these
+        # inputs were never built. Derive widths from OCR box x-extent (same
+        # scale), clear-space from neighbouring line gaps, contrast from panel.
+        try:
+            widths: dict[str, float] = {}
+            for line in ocr.lines:
+                label = _label_for(line)
+                if not label or label in widths:
+                    continue
+                xs = [p[0] for p in (line.box or []) if len(p) >= 2]
+                if len(xs) >= 2:
+                    widths[label] = (max(xs) - min(xs)) * scale.mm_per_pixel
+                elif line.text:
+                    # No box (plain-text fallback): width ≈ 0.6×height per char.
+                    widths[label] = len(line.text.strip()) * line.height_px * 0.6 * scale.mm_per_pixel
+            ctx.measured_widths_mm = widths
+        except Exception:
+            pass
+        try:
+            # Clear space: vertical gap between net-qty line and nearest lines
+            # above/below in pixel space → mm. Left/right approximated from
+            # horizontal margins of the net-qty box within the frame.
+            from image_processor import estimate_contrast_ratio
+            nq = [l for l in ocr.lines if _label_for(l) == "net_quantity"]
+            if nq:
+                import numpy as np
+                ref = max(nq, key=lambda l: len(l.text or ""))
+                ry = [p[1] for p in (ref.box or []) if len(p) >= 2]
+                rx = [p[0] for p in (ref.box or []) if len(p) >= 2]
+                if ry and rx:
+                    ryc, rxc = (min(ry) + max(ry)) / 2, (min(rx) + max(rx)) / 2
+                    above = [max([p[1] for p in l.box if len(p) >= 2])
+                             for l in ocr.lines if l is not ref and l.box and len(l.box[0]) >= 2
+                             and max([p[1] for p in l.box if len(p) >= 2]) < min(ry)]
+                    below = [min([p[1] for p in l.box if len(p) >= 2])
+                             for l in ocr.lines if l is not ref and l.box and len(l.box[0]) >= 2
+                             and min([p[1] for p in l.box if len(p) >= 2]) > max(ry)]
+                    h, w = bgr.shape[:2]
+                    cs: dict[str, float] = {}
+                    if above:
+                        cs["above"] = (min(ry) - max(above)) * scale.mm_per_pixel
+                    if below:
+                        cs["below"] = (min(below) - max(ry)) * scale.mm_per_pixel
+                    cs["left"] = min(rx) * scale.mm_per_pixel
+                    cs["right"] = (w - max(rx)) * scale.mm_per_pixel
+                    ctx.clear_space_mm = {k: max(0.0, float(v)) for k, v in cs.items()}
+            try:
+                ctx.contrast_ratio = estimate_contrast_ratio(bgr)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    # P0 fix: CHK15/CHK16 were permanently not_assessed because listing fields
+    # were fetched then discarded. Re-parse persisted listing text (stored by
+    # POST /scans/{id}/listing) into the same extract_fields shape the engine
+    # reads, so e-commerce scans actually assess Rule 6(10).
+    try:
+        listing_text = getattr(scan, "listing_text", None) or getattr(scan, "listing_url", None) and ""
+        listing_url = getattr(scan, "listing_url", None)
+        if listing_text:
+            from ocr_engine import OcrLine, OcrResult as _OR, extract_fields as _ef
+            _lr = _OR(lines=[OcrLine(text=listing_text[:20000], confidence=None,
+                                     box=[[0.0, 0.0]], height_px=0.0)],
+                      engine="listing", mean_confidence=None)
+            _lf = _ef(_lr)
+            ctx.listing_available = True
+            ctx.listing_fields = {k: (v.value or "") for k, v in _lf.items() if v.found}
+            # platform filter flag persisted on scan when officer answers it
+            pf = getattr(scan, "platform_has_origin_filter", None)
+            if pf is not None:
+                ctx.platform_has_origin_filter = bool(pf)
+        elif listing_url:
+            ctx.listing_available = True
+            ctx.listing_fields = {}
+    except Exception:
+        pass
     return ctx
 

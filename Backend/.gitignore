@@ -20,3 +20,6 @@ niyamnetra_venv/
 # OCR / model caches
 .paddleocr/
 *.onnx
+
+# catalog transcription backups (PUT /admin/rules/tables keeps .bak files)
+rules/*.bak-*.json

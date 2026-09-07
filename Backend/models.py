@@ -172,6 +172,10 @@ class Scan(Base):
     mm_per_pixel: Mapped[float | None] = mapped_column(Float)
     scale_source: Mapped[str | None] = mapped_column(String(32))  # declared|id1_card|coin_5inr|none
     mm_per_pixel_uncertainty: Mapped[float | None] = mapped_column(Float)
+    # Pixel length of the scale reference object (ID-1 long edge / 5-INR coin
+    # diameter) when scale_source is not "declared". Persisted so re-assess
+    # after restart reproduces the scale (was transient instance attr).
+    reference_pixel_size: Mapped[float | None] = mapped_column(Float)
 
     # --- rule provenance (C6) ---
     rules_as_at: Mapped[date] = mapped_column(Date)
@@ -184,6 +188,12 @@ class Scan(Base):
 
     ocr_confidence_mean: Mapped[float | None] = mapped_column(Float)
     ocr_text: Mapped[str | None] = mapped_column(Text)
+    # E-commerce listing (CHK15/CHK16): persisted by POST /scans/{id}/listing
+    # so build_context can assess Rule 6(10) without re-fetching. Nullable for
+    # pre-migration rows (getattr fallback in build_context handles absence).
+    listing_url: Mapped[str | None] = mapped_column(String(500))
+    listing_text: Mapped[str | None] = mapped_column(Text)
+    platform_has_origin_filter: Mapped[bool | None] = mapped_column(Boolean)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     inspection: Mapped[Inspection] = relationship(back_populates="scans")
@@ -346,4 +356,59 @@ class AuditLog(Base):
 
     __table_args__ = (
         Index("ix_audit_ts", "timestamp"),
+    )
+
+
+# --------------------------------------------- 8. revoked refresh JTIs
+class RevokedJti(Base):
+    """Single-use refresh rotation. Every consumed refresh jti lands here; a
+    presented jti already in this table is a replay. Re-presenting a consumed
+    jti is treated as token theft: all of the user's refresh tokens die via a
+    token_epoch bump (reuse detection, RFC 6819 §5.2.2.3). Rows are pruned past
+    their token's expiry (30d + grace) so the table stays small."""
+    __tablename__ = "revoked_jtis"
+
+    jti: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reason: Mapped[str] = mapped_column(String(16), default="consumed")  # consumed|reuse
+
+
+# --------------------------------------------- 9. login attempts (DB limiter)
+class LoginAttempt(Base):
+    """DB-backed login rate limiting that works across workers (the old
+    per-process dict did not). One row per attempt; the limiter counts rows in
+    the sliding window. Pruned opportunistically on each login."""
+    __tablename__ = "login_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rate_key: Mapped[str] = mapped_column(String(80), index=True)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        Index("ix_login_attempt_key_ts", "rate_key", "attempted_at"),
+    )
+
+
+# --------------------------------------------- 10. generated report records
+class ReportRecord(Base):
+    """Archive list of generated documents (the 'no archived-doc list' fix).
+
+    The file itself stays ephemeral (OUT_DIR, especially on Render); the row
+    records WHAT was generated, by whom, and its sha256 so a kept copy can be
+    verified later. Rebuilding the same period re-logs a new row — history,
+    not a cache."""
+    __tablename__ = "report_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    generated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # day|range|inspection
+    fmt: Mapped[str] = mapped_column(String(8))    # pdf|docx|xlsx|csv
+    label: Mapped[str] = mapped_column(String(160))  # date / range / inspection id
+    file_sha256: Mapped[str | None] = mapped_column(String(64))
+    byte_size: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        Index("ix_report_created", "created_at"),
     )

@@ -135,8 +135,8 @@ const TERMS = [
     icon: WifiOff,
     family: 'review',
     predicate: 'edited_offline IS TRUE',
-    listable: false,
-    note: 'Counted by the server but not returned by any endpoint: _inspection_dict omits edited_offline. This page cannot tell you which inspections these are.',
+    listable: true,
+    note: 'Listed by GET /admin/review-queue/items (offline_edits) — server-side, no client walk needed.',
   },
 ]
 
@@ -267,6 +267,12 @@ export default function ReviewQueue() {
   const queue = useResource(() => endpoints.admin.reviewQueue(), {
     fallback: reviewQueueFixture,
     label: 'review-queue',
+  })
+
+  /* Server-side listable rows (new): replaces the client walk when available. */
+  const serverItems = useResource(() => endpoints.admin.reviewQueueItems({ limit: 200 }), {
+    fallback: null,
+    label: 'review-queue-items',
   })
 
   /* The reconstruction. Explicit state rather than a hook, because it is a

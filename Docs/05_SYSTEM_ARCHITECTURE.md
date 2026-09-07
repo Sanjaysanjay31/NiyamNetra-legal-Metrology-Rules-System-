@@ -201,7 +201,7 @@ On conflict the local copy becomes a **review item**. It is not discarded. Versi
 
 Base URL is `http://localhost:8000` from the portal and `http://<LAN-IP>:8000` from the phone — never `localhost` from the phone, which means the phone itself.
 
-**Auth.** `POST /auth/login {employee_id, password}` → access token in the body, refresh token as an httpOnly cookie scoped to `/auth` (`SameSite=Strict` locally, `SameSite=None; Secure` in prod when the portal and API are cross-site — `config.refresh_cookie_cross_site`). `POST /auth/refresh` rotates, checking `token_epoch` and `install_id`. `POST /auth/logout` clears the cookie. `GET /auth/me`. Login is by **employee ID**, not email: an inspector has an employee number on their identity card, and it is the identifier that appears on the paperwork.
+**Auth.** `POST /auth/login {employee_id, password}` → access token in the body, refresh token as an httpOnly cookie scoped to `/auth` (`SameSite=Strict` locally, `SameSite=None; Secure` in prod when the portal and API are cross-site — `config.refresh_cookie_cross_site`). `POST /auth/refresh` rotates single-use, checking `token_epoch` and `install_id`: each refresh consumes its `jti` (`revoked_jtis`), and replaying a consumed `jti` kills every session for that user (reuse detection). `POST /auth/logout` clears the cookie. `GET /auth/me`. Login is by **employee ID**, not email: an inspector has an employee number on their identity card, and it is the identifier that appears on the paperwork.
 
 **Inspections.** `POST /inspections {store_id, transaction_type, gps_lat, gps_lng, notes}` (`store_id` only; `POST /stores` admin-only creates a store). `GET /inspections` — filtered by date, result and store, **scoped to the caller by the server**. `GET /inspections/{id}`. `POST /inspections/{id}/submit`.
 
@@ -240,7 +240,7 @@ curl -s localhost:8000/health     # checks_registered MUST read 19
 **Terminal 2 — portal**
 
 ```bash
-cd niyamnetra-portal
+cd Frontend_Portal
 npm install
 npm run dev                        # http://localhost:5173
 ```
@@ -248,7 +248,7 @@ npm run dev                        # http://localhost:5173
 **Terminal 3 — Expo**
 
 ```bash
-cd niyamnetra-app
+cd Frontend_App
 npx expo start                     # QR at exp://<LAN-IP>:8081
 # Set api/client.js baseURL to http://<LAN-IP>:8000
 # Windows: ipconfig -> Wireless LAN IPv4     macOS: ifconfig en0 | grep inet

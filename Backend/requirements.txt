@@ -37,4 +37,5 @@ qrcode[pil]==7.4.2
 # --- utility ---
 python-dotenv==1.0.1
 cachetools==5.3.3              # TTLCache; not functools.lru_cache
-httpx==0.27.0                  # also the test client
+httpx==0.27.0                  # also the test client + cloud OCR (Vision/OCR.space)
+supabase==2.9.1                # optional mirror (image_processor try/except); safe to keep
