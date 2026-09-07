@@ -15,8 +15,9 @@ function itemDate(it) {
 }
 
 function isViolation(it) {
-  const r = String(it?.result || it?.verdict || it?.status || '').toLowerCase();
-  return ['violation', 'fail', 'non_compliant', 'non-compliant'].includes(r);
+  const r = String(it?.result || it?.overall_result || it?.verdict || it?.status || '').toLowerCase();
+  if (['violation', 'fail', 'non_compliant', 'non-compliant'].includes(r)) return true;
+  return Number(it?.result_counts?.violation || 0) > 0 || Number(it?.violation_count || 0) > 0;
 }
 
 function findingsOf(it) {

@@ -1,22 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { useAuth } from '../auth/AuthContext';
 import { colors, spacing, typography, radius, shadows } from '../theme';
 import Input from '../components/Input';
 import PrimaryButton from '../components/PrimaryButton';
-import { BACKEND_TARGETS, normalizeBackendUrl } from '../api/config';
-import { switchBackend, getBackendTarget, getApiBaseUrl, getCookieWarning, getSavedCustomUrl } from '../api/client';
+import { API_BASE_URL } from '../api/config';
+import { getApiBaseUrl } from '../api/client';
 
-// Show the Local/LAN/Render/Custom switcher in development and in internal test
-// builds. Hidden in production — end users must never re-point the app —
-// UNLESS the API is unreachable, in which case a fallback switcher appears in
-// the error state so a wrong backend can never brick the login screen.
-const ALLOW_BACKEND_SWITCH = __DEV__;
-
-// Backend cycle order for single-tap switching.
-const TARGET_ORDER = ['local', 'lan', 'render', 'custom'];
-
-// §5.1 Login - Employee ID + password, install-bound token
 export default function LoginScreen() {
   const { login } = useAuth();
   const [employee_id, setId] = useState('');
@@ -24,248 +21,332 @@ export default function LoginScreen() {
   const [showPw, setShowPw] = useState(false);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [target, setTarget] = useState(getBackendTarget());
-  const [baseUrl, setBaseUrl] = useState(getApiBaseUrl());
-  const [apiUnreachable, setApiUnreachable] = useState(false);
-  // Web only: set when the page host and the API host differ, which silently
-  // breaks the SameSite refresh cookie. Nothing else in the UI would explain it.
-  const [cookieWarn, setCookieWarn] = useState(null);
-  // Typed address for the 'custom' target. Pre-filled with whatever was saved
-  // last, so it survives an app restart and does not have to be retyped.
-  const [customText, setCustomText] = useState('');
 
-  const showSwitcher = ALLOW_BACKEND_SWITCH || apiUnreachable;
-
-  // AuthContext restores the saved target asynchronously, so re-read it once
-  // mounted rather than trusting the value at module-load time.
-  useEffect(() => {
-    setTarget(getBackendTarget());
-    setBaseUrl(getApiBaseUrl());
-    setCookieWarn(getCookieWarning());
-    setCustomText(getSavedCustomUrl() || '');
-  }, []);
-
-  const pickBackend = async (name) => {
-    // Custom with no saved address has nothing to point at — switching would
-    // silently land on the LAN fallback and look like it worked. Refuse with
-    // an inline error so the officer types the address first.
-    if (name === 'custom' && !getSavedCustomUrl() && !normalizeBackendUrl(customText)) {
-      setErr('Custom backend needs an address first: type the laptop\'s IP below, tap Save, then switch.');
-      return;
-    }
-    const url = await switchBackend(name);
-    setTarget(name); setBaseUrl(url); setErr(null);
-    setCookieWarn(getCookieWarning());
-  };
-
-  // Save the typed address and point the app at it. Validated here so a typo
-  // gets an explanation instead of silently leaving the old URL in place.
-  const applyCustom = async () => {
-    if (!normalizeBackendUrl(customText)) {
-      setErr('That address cannot be used. Type the laptop\'s IP, e.g. 192.168.1.7 (port 8000 is added for you).');
-      return;
-    }
-    const url = await switchBackend('custom', customText);
-    setTarget('custom'); setBaseUrl(url); setErr(null);
-    setCookieWarn(getCookieWarning());
-  };
-
-  // Single-tap cycle: local → lan → render → local ...
-  const cycleBackend = async () => {
-    const idx = TARGET_ORDER.indexOf(target);
-    const next = TARGET_ORDER[(idx + 1) % TARGET_ORDER.length];
-    await pickBackend(next);
-  };
-
-  // What to actually go and check, per target. A bare "cannot reach the
-  // backend at <url>" sent people looking for app bugs, when on a phone it is
-  // almost always one of these three things.
-  const unreachableHint = (name) => {
-    if (name === 'local') {
-      return '127.0.0.1 means THIS device. From a phone it can never reach your laptop — switch to LAN.';
-    }
-    if (name === 'render') {
-      return 'A free Render service sleeps when idle; the first request can take ~1 min. Try again, or check RENDER_API_URL in api/config.js.';
-    }
-    if (name === 'custom') {
-      return 'Check this is the laptop\'s CURRENT IPv4 (run ipconfig — a router gives a new one after a reboot), that uvicorn ran with --host 0.0.0.0, and that TCP 8000 is allowed through the firewall.';
-    }
-    // lan — the bundle loaded from this same host on :8081, so the network is
-    // fine and it is port 8000 that is closed.
-    return 'The app itself loaded from this host, so the WiFi is fine — port 8000 is not. Run uvicorn with --host 0.0.0.0 (not the default 127.0.0.1) and allow TCP 8000 through the Windows firewall.';
+  const fillCredentials = (id, pw) => {
+    setId(id);
+    setPw(pw);
+    setErr(null);
   };
 
   const submit = async () => {
-    // Empty-field validation with an inline error — never send a request the
-    // server is guaranteed to reject, and never leave the button dead silent.
     if (!employee_id.trim() || !password) {
-      setErr('Enter your Employee ID and password to sign in.');
+      setErr('Please enter your Employee ID and password to sign in.');
       return;
     }
     setErr(null);
     setLoading(true);
     try {
       await login(employee_id.trim(), password);
-      setApiUnreachable(false);
     } catch (e) {
-      // Distinguish wrong credentials (401) from forbidden (403) from network
-      // failures — with switchable backends, a network failure used to look
-      // like a bad password. Note the API layer rethrows 403 as a flagged
-      // Error (code FORBIDDEN), so check both shapes.
       const status = e?.status ?? e?.response?.status;
       if (status === 401) {
-        setErr('Employee ID or password is incorrect');
+        setErr('Employee ID or password is incorrect. Please check your credentials.');
       } else if (status === 403 || e?.code === 'FORBIDDEN') {
-        setErr('Not permitted for this account. Contact your administrator.');
+        setErr('Access restricted for this account. Contact your enforcement administrator.');
       } else if (status === 429) {
-        setErr('Too many sign-in attempts. Wait a minute and try again.');
+        setErr('Too many sign-in attempts. Please wait a moment and try again.');
       } else {
-        setApiUnreachable(true);
-        setErr(`Cannot reach the backend at ${getApiBaseUrl()}\n\n${unreachableHint(target)}`);
+        const activeUrl = getApiBaseUrl() || API_BASE_URL;
+        setErr(
+          `Cannot connect to backend server at:\n${activeUrl}\n\n` +
+          `• Ensure your phone and laptop are on the SAME Wi-Fi network.\n` +
+          `• Ensure backend is running: uvicorn main:app --host 0.0.0.0 --port 8000\n` +
+          `• If laptop IP changed, update LAPTOP_WIFI_IP in api/config.js.`
+        );
       }
     } finally {
       setLoading(false);
     }
   };
 
-  const targetInfo = BACKEND_TARGETS[target];
-
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1, backgroundColor: colors.background }}
+      style={{ flex: 1, backgroundColor: colors.niyamBlue }}
     >
       <ScrollView
-        style={{ flex: 1, backgroundColor: colors.background }}
+        style={{ flex: 1 }}
         contentContainerStyle={{ flexGrow: 1 }}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Brand header */}
-        <View style={{ backgroundColor: colors.niyamBlue, paddingTop: spacing.xxxl, paddingBottom: spacing.xxl, alignItems: 'center', ...shadows.lg }}>
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, backgroundColor: colors.saffron }} />
-          {/* Logo */}
-          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.1)', borderWidth: 2, borderColor: colors.netraTeal, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.lg }}>
-            <View style={{ width: 28, height: 28, borderWidth: 2, borderColor: colors.white, borderRadius: 14, justifyContent: 'center', alignItems: 'center' }}>
-              <View style={{ width: 14, height: 18, borderWidth: 1.5, borderColor: colors.netraTeal, borderRadius: 2 }} />
-            </View>
-          </View>
-          <Text style={{ color: colors.white, fontSize: 24, fontWeight: '700', letterSpacing: 1 }}>NiyamNetra</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: spacing.xs }}>Legal Metrology Compliance</Text>
+        {/* Sovereign Tricolor Accent Stripe */}
+        <View style={{ height: 4, flexDirection: 'row', width: '100%' }}>
+          <View style={{ flex: 1, backgroundColor: '#FF9933' }} />
+          <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />
+          <View style={{ flex: 1, backgroundColor: '#138808' }} />
         </View>
 
-        {/* Form */}
-        <View style={{ padding: spacing.xxl }}>
-          <Text style={{ ...typography.h3, marginBottom: spacing.xs }}>Sign in</Text>
-          <Text style={{ ...typography.bodySecondary, marginBottom: spacing.xl }}>Use your Employee ID and password</Text>
-          <Input label="Employee ID" value={employee_id} onChangeText={setId} placeholder="e.g. LM-2026-0042" autoCapitalize="none" />
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <View style={{ flex: 1 }}>
-              <Input
-                label="Password"
-                value={password}
-                onChangeText={setPw}
-                placeholder="Enter your password"
-                secureTextEntry={!showPw}
-              />
+        {/* Official Department Header */}
+        <View
+          style={{
+            backgroundColor: colors.niyamBlue,
+            paddingTop: spacing.xxl + 8,
+            paddingBottom: spacing.xxxl + 8,
+            alignItems: 'center',
+            paddingHorizontal: spacing.lg,
+          }}
+        >
+          {/* Insignia Pill */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(255,255,255,0.12)',
+              paddingHorizontal: spacing.md,
+              paddingVertical: 5,
+              borderRadius: radius.full,
+              marginBottom: spacing.lg,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.2)',
+            }}
+          >
+            <View
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: 4,
+                backgroundColor: colors.saffron,
+                marginRight: 6,
+              }}
+            />
+            <Text
+              style={{
+                color: colors.white,
+                fontSize: 11,
+                fontWeight: '700',
+                letterSpacing: 0.8,
+                textTransform: 'uppercase',
+              }}
+            >
+              Ministry of Consumer Affairs · LM Division
+            </Text>
+          </View>
+
+          {/* Bespoke Netra Metrology Shield Emblem */}
+          <View
+            style={{
+              width: 76,
+              height: 76,
+              borderRadius: 38,
+              backgroundColor: 'rgba(14, 116, 144, 0.25)',
+              borderWidth: 2.5,
+              borderColor: colors.netraTeal,
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginBottom: spacing.md,
+              ...shadows.md,
+            }}
+          >
+            <View
+              style={{
+                width: 58,
+                height: 58,
+                borderRadius: 29,
+                borderWidth: 2,
+                borderColor: colors.saffron,
+                backgroundColor: 'rgba(15, 42, 68, 0.9)',
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            >
+              <View
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  borderWidth: 2,
+                  borderColor: colors.white,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                <View
+                  style={{
+                    width: 14,
+                    height: 14,
+                    borderRadius: 7,
+                    backgroundColor: colors.netraTeal,
+                    borderWidth: 1.5,
+                    borderColor: colors.saffron,
+                  }}
+                />
+              </View>
             </View>
+          </View>
+
+          <Text
+            style={{
+              color: colors.white,
+              fontSize: 28,
+              fontWeight: '800',
+              letterSpacing: 1.2,
+            }}
+          >
+            NiyamNetra
+          </Text>
+          <Text
+            style={{
+              color: 'rgba(255, 255, 255, 0.82)',
+              fontSize: 13,
+              marginTop: 4,
+              fontWeight: '500',
+              letterSpacing: 0.4,
+            }}
+          >
+            Legal Metrology Compliance Enforcement
+          </Text>
+        </View>
+
+        {/* Elevated Card Form Container */}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: colors.background,
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            paddingHorizontal: spacing.xl,
+            paddingTop: spacing.xxl,
+            paddingBottom: spacing.xxl,
+            ...shadows.lg,
+          }}
+        >
+          {/* Card Title */}
+          <View style={{ marginBottom: spacing.lg }}>
+            <Text style={{ ...typography.h2, color: colors.niyamBlue, fontSize: 20 }}>
+              Officer Sign In
+            </Text>
+            <Text style={{ ...typography.bodySecondary, marginTop: 3 }}>
+              Enter your official credentials to access the inspection console
+            </Text>
+          </View>
+
+          {/* Form Fields */}
+          <Input
+            label="Employee ID"
+            value={employee_id}
+            onChangeText={setId}
+            placeholder="e.g. LM-TG-1042"
+            autoCapitalize="none"
+          />
+
+          <View style={{ position: 'relative' }}>
+            <Input
+              label="Password"
+              value={password}
+              onChangeText={setPw}
+              placeholder="Enter your secure password"
+              secureTextEntry={!showPw}
+            />
             <Pressable
               onPress={() => setShowPw((s) => !s)}
               accessibilityRole="button"
               accessibilityLabel={showPw ? 'Hide password' : 'Show password'}
               style={{
-                marginLeft: spacing.sm,
-                marginTop: spacing.xl,
-                paddingHorizontal: spacing.md,
-                paddingVertical: spacing.sm + 2,
-                borderRadius: radius.md,
-                borderWidth: 1.5,
-                borderColor: colors.border,
-                minHeight: 44,
-                justifyContent: 'center',
+                position: 'absolute',
+                right: 12,
+                top: 36,
+                paddingHorizontal: 8,
+                paddingVertical: 4,
+                borderRadius: radius.sm,
+                backgroundColor: colors.borderLight,
               }}
             >
-              <Text style={{ color: colors.netraTeal, fontSize: 13, fontWeight: '600' }}>
+              <Text style={{ color: colors.niyamBlue, fontSize: 12, fontWeight: '700' }}>
                 {showPw ? 'Hide' : 'Show'}
               </Text>
             </Pressable>
           </View>
+
+          {/* Error Banner */}
           {err && (
-            <View style={{ backgroundColor: colors.errorBg, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md, borderColor: colors.violation.border, borderWidth: 1 }}>
-              <Text style={{ color: colors.error, fontSize: 13 }}>{err}</Text>
-              {apiUnreachable && !ALLOW_BACKEND_SWITCH && (
-                <Text style={{ color: colors.error, fontSize: 12, marginTop: spacing.xs }}>
-                  The backend switcher is shown below so you can point the app at the right server.
-                </Text>
-              )}
+            <View
+              style={{
+                backgroundColor: colors.errorBg,
+                borderRadius: radius.md,
+                padding: spacing.md,
+                marginBottom: spacing.md,
+                borderColor: colors.violation.border,
+                borderWidth: 1.5,
+              }}
+            >
+              <Text style={{ color: colors.error, fontSize: 13, lineHeight: 18, fontWeight: '500' }}>
+                {err}
+              </Text>
             </View>
           )}
-          <PrimaryButton title="Sign In" onPress={submit} loading={loading} style={{ marginTop: spacing.md }} />
 
-          {showSwitcher && (
-            <View style={{ marginTop: spacing.xl, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md }}>
-              <Text style={{ ...typography.label, marginBottom: spacing.xs }}>Backend</Text>
-              {/* Single tap-to-cycle switch — much easier than picking from 3 buttons */}
+          {/* Sign In Button */}
+          <PrimaryButton
+            title="Sign In to Console"
+            onPress={submit}
+            loading={loading}
+            style={{ marginTop: spacing.xs, minHeight: 50 }}
+          />
+
+          {/* Quick Demo Credentials Autofill */}
+          <View style={{ marginTop: spacing.xl, borderTopWidth: 1, borderTopColor: colors.borderLight, paddingTop: spacing.md }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', marginBottom: spacing.xs }}>
+              Demo Credentials (Tap to Fill)
+            </Text>
+            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
               <Pressable
-                onPress={cycleBackend}
+                onPress={() => fillCredentials('LM-TG-1042', 'NiyamNetra@2026')}
                 accessibilityRole="button"
-                accessibilityLabel={`Current backend: ${targetInfo?.label}. Tap to switch.`}
+                accessibilityLabel="Fill Inspector credentials"
                 style={{
+                  flex: 1,
                   flexDirection: 'row',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingVertical: spacing.sm,
-                  paddingHorizontal: spacing.md,
+                  justifyContent: 'center',
+                  backgroundColor: colors.white,
+                  borderWidth: 1.2,
+                  borderColor: colors.border,
                   borderRadius: radius.md,
-                  borderWidth: 1.5,
-                  borderColor: colors.niyamBlue,
-                  backgroundColor: colors.niyamBlue + '10',
+                  paddingVertical: 9,
+                  paddingHorizontal: 6,
+                  ...shadows.sm,
                 }}
               >
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: colors.niyamBlue }}>{targetInfo?.label}</Text>
-                  <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 1 }}>{targetInfo?.hint}</Text>
-                </View>
-                <Text style={{ fontSize: 12, color: colors.netraTeal, fontWeight: '600', marginLeft: spacing.sm }}>Switch →</Text>
-              </Pressable>
-              <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: spacing.xs }} numberOfLines={1}>{baseUrl}</Text>
-              {target === 'custom' && (
-                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: spacing.sm }}>
-                  <View style={{ flex: 1 }}>
-                    <Input
-                      value={customText}
-                      onChangeText={setCustomText}
-                      placeholder="192.168.1.7"
-                      keyboardType="numbers-and-punctuation"
-                      autoCapitalize="none"
-                      style={{ marginBottom: 0 }}
-                    />
-                  </View>
-                  <Pressable
-                    onPress={applyCustom}
-                    accessibilityRole="button"
-                    accessibilityLabel="Save backend address"
-                    style={{
-                      marginLeft: spacing.sm,
-                      paddingHorizontal: spacing.md,
-                      paddingVertical: spacing.sm + 4,
-                      borderRadius: radius.md,
-                      backgroundColor: colors.netraTeal,
-                    }}
-                  >
-                    <Text style={{ color: colors.white, fontSize: 13, fontWeight: '700' }}>Save</Text>
-                  </Pressable>
-                </View>
-              )}
-              {cookieWarn && (
-                <Text style={{ fontSize: 10, color: colors.warning, marginTop: spacing.xs, lineHeight: 14 }}>
-                  Session will not persist across reloads: this page and the API are on different hosts.
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.niyamBlue }}>
+                  👤 Inspector (LM-TG-1042)
                 </Text>
-              )}
+              </Pressable>
+              <Pressable
+                onPress={() => fillCredentials('LM-ADM-001', 'NiyamNetra@2026')}
+                accessibilityRole="button"
+                accessibilityLabel="Fill Admin credentials"
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: colors.white,
+                  borderWidth: 1.2,
+                  borderColor: colors.border,
+                  borderRadius: radius.md,
+                  paddingVertical: 9,
+                  paddingHorizontal: 6,
+                  ...shadows.sm,
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.netraTeal }}>
+                  🛡️ Admin (LM-ADM-001)
+                </Text>
+              </Pressable>
             </View>
-          )}
+          </View>
 
-          <Text style={{ ...typography.caption, textAlign: 'center', marginTop: spacing.xl, lineHeight: 16 }}>
-            Assesses LM (PC) Rules 2011 only. Not a statutory notice.
+          {/* Statutory Footer */}
+          <Text
+            style={{
+              ...typography.caption,
+              textAlign: 'center',
+              marginTop: spacing.xl,
+              lineHeight: 16,
+              color: colors.textMuted,
+            }}
+          >
+            Assesses Legal Metrology (Packaged Commodities) Rules 2011 only. Not a statutory notice.
           </Text>
         </View>
       </ScrollView>

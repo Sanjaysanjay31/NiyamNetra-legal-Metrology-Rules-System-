@@ -55,12 +55,17 @@ class ErrorBoundary extends React.Component {
 function Splash() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.niyamBlue, justifyContent: 'center', alignItems: 'center' }}>
-      <View style={{ width: 64, height: 64, borderRadius: 32, borderWidth: 2, borderColor: colors.netraTeal, justifyContent: 'center', alignItems: 'center', marginBottom: 20 }}>
-        <View style={{ width: 14, height: 18, borderWidth: 1.5, borderColor: colors.white, borderRadius: 2 }} />
+      <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(14, 116, 144, 0.25)', borderWidth: 2.5, borderColor: colors.netraTeal, justifyContent: 'center', alignItems: 'center', marginBottom: 20 }}>
+        <View style={{ width: 54, height: 54, borderRadius: 27, borderWidth: 2, borderColor: colors.saffron, backgroundColor: 'rgba(15, 42, 68, 0.9)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: colors.white, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: colors.netraTeal, borderWidth: 1.5, borderColor: colors.saffron }} />
+          </View>
+        </View>
       </View>
-      <Text style={{ color: colors.white, fontSize: 20, fontWeight: '700', letterSpacing: 1 }}>NiyamNetra</Text>
-      <ActivityIndicator color={colors.netraTeal} style={{ marginTop: 20 }} />
-      <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 12 }}>Restoring session…</Text>
+      <Text style={{ color: colors.white, fontSize: 24, fontWeight: '800', letterSpacing: 1.2 }}>NiyamNetra</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, marginTop: 4 }}>Legal Metrology Enforcement</Text>
+      <ActivityIndicator color={colors.saffron} style={{ marginTop: 24 }} />
+      <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 10 }}>Initializing secure environment…</Text>
     </View>
   );
 }
