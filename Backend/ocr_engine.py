@@ -14,10 +14,30 @@ import numpy as np
 from config import settings
 
 
-@lru_cache(maxsize=1)
-def get_paddle():
-    """Loaded once. Model init costs seconds; per-request init costs the demo.
+SUPPORTED_INDIC_LANGS = {
+    "en": "en",
+    "english": "en",
+    "hi": "hi",
+    "hindi": "hi",
+    "devanagari": "devanagari",
+    "te": "te",
+    "telugu": "te",
+    "ta": "ta",
+    "tamil": "ta",
+    "kn": "kannada",
+    "kannada": "kannada",
+    "bn": "bn",
+    "bengali": "bn",
+    "mr": "mr",
+    "marathi": "mr",
+}
 
+
+@lru_cache(maxsize=8)
+def get_paddle(lang: str = "en"):
+    """Loaded once per language. Model init costs seconds; per-request init costs the demo.
+
+    Supports English ('en') and Indic language models ('hi', 'devanagari', 'te', 'ta', 'bn', etc.).
     Disabled on 512MB deploys via DISABLE_PADDLE=1 or OCR_PROVIDER=google/
     ocrspace — raises immediately so run_ocr skips to cloud without importing
     the 1.5GB stack.
@@ -26,9 +46,10 @@ def get_paddle():
         raise RuntimeError("PaddleOCR disabled (DISABLE_PADDLE=1 for 512MB deploy)")
     if getattr(settings, "OCR_PROVIDER", "auto") in ("google", "ocrspace"):
         raise RuntimeError("PaddleOCR skipped (OCR_PROVIDER cloud-only)")
+    norm_lang = SUPPORTED_INDIC_LANGS.get(str(lang).lower(), getattr(settings, "OCR_PADDLE_LANG", "en"))
     from paddleocr import PaddleOCR
     return PaddleOCR(
-        lang=getattr(settings, "OCR_PADDLE_LANG", "en"),
+        lang=norm_lang,
         use_angle_cls=True,      # rotated text on cylindrical panels is the norm
         det_db_box_thresh=0.5,
         drop_score=0.30,         # keep low-confidence lines; we grade them ourselves
@@ -108,8 +129,8 @@ class OcrResult:
         return "\n".join(l.text for l in self.lines)
 
 
-def run_ocr(bgr: np.ndarray) -> OcrResult:
-    """Cloud-first cascade for 512MB Render free tier.
+def run_ocr(bgr: np.ndarray, lang: str | None = None) -> OcrResult:
+    """Cloud-first cascade for 512MB Render free tier, with Indic multilingual support.
 
     Order (OCR_PROVIDER=auto):
       1. Google Cloud Vision DOCUMENT_TEXT_DETECTION (if GOOGLE_VISION_API_KEY)
@@ -117,12 +138,10 @@ def run_ocr(bgr: np.ndarray) -> OcrResult:
       2. OCR.space (if OCR_SPACE_API_KEY) — free, no card, only httpx+cv2.
       3. Tesseract local (if binary present) — small, works in Docker.
       4. PaddleOCR local (if installed + not DISABLE_PADDLE) — best offline,
-         but ~1.5GB, NEVER on Render free.
+         supports Indic models ('en', 'hi', 'te', 'ta', 'bn', etc.).
       5. engine="none" with honest failure_reason → checks not_assessed.
 
     OCR_PROVIDER forces one engine: google | ocrspace | tesseract | paddle.
-    The cloud stages run on the ORIGINAL photo (cloud engines read raw photos
-    better than our deskew/CLAHE output tuned for Paddle/Tesseract).
     """
     provider = (getattr(settings, "OCR_PROVIDER", "auto") or "auto").lower()
 
@@ -137,7 +156,7 @@ def run_ocr(bgr: np.ndarray) -> OcrResult:
                 preprocess_for_ocr(bgr), "Tesseract forced via OCR_PROVIDER.",
                 original=bgr)
         if provider == "paddle":
-            return _paddle_ocr(bgr)
+            return _paddle_ocr(bgr, lang=lang)
         return None
 
     forced = _cloud_first()
@@ -163,11 +182,9 @@ def run_ocr(bgr: np.ndarray) -> OcrResult:
 
     prepped = preprocess_for_ocr(bgr)
     r = _tesseract_fallback(prepped, _cloud_err, original=bgr)
-    # _tesseract_fallback already chains to OCR.space→none on failure, but on
-    # a slim deploy without keys it returns none directly; try paddle last.
     if r.engine != "none":
         return r
-    p = _paddle_ocr(bgr)
+    p = _paddle_ocr(bgr, lang=lang)
     if p.engine != "none":
         return p
     # Honest terminal reason naming both cloud keys so the operator knows
@@ -180,11 +197,12 @@ def run_ocr(bgr: np.ndarray) -> OcrResult:
     return OcrResult(engine="none", failure_reason=why)
 
 
-def _paddle_ocr(bgr: np.ndarray) -> OcrResult:
-    """PaddleOCR stage (offline, heavy). Never crashes the request."""
+def _paddle_ocr(bgr: np.ndarray, lang: str | None = None) -> OcrResult:
+    """PaddleOCR stage (offline, heavy) with Indic multilingual support. Never crashes the request."""
     prepped = preprocess_for_ocr(bgr)
+    target_lang = lang or getattr(settings, "OCR_PADDLE_LANG", "en")
     try:
-        raw = get_paddle().ocr(prepped, cls=True)
+        raw = get_paddle(target_lang).ocr(prepped, cls=True)
     except Exception as e:                     # missing, OOM, disabled, corrupt
         return OcrResult(
             engine="none",
@@ -471,23 +489,23 @@ DECLARED_FIELDS = (
 # Rule 6(1)(e) — MRP is inclusive of all taxes. The wording varies; the
 # obligation does not.
 MRP_PATTERNS = [
-    r"(?:M\.?R\.?P\.?|Maximum\s+Retail\s+Price)[^\d]{0,20}(\d+(?:[.,]\d{1,2})?)",
-    r"(?:Rs\.?|INR|₹)\s?(\d+(?:[.,]\d{1,2})?)",
+    r"(?:M\.?R\.?P\.?|Maximum\s+Retail\s+Price|एम\.?आर\.?पी\.?|अधिकतम\s+खुदरा\s+मूल्य|मूल्य|ధర|விலை)[^\d]{0,20}(\d+(?:[.,]\d{1,2})?)",
+    r"(?:Rs\.?|INR|₹|रु\.?|రూ\.?)\s?(\d+(?:[.,]\d{1,2})?)",
 ]
 NET_QTY_PATTERN = (
-    r"(?:Net\s*(?:Qty|Quantity|Wt|Weight|Vol|Volume)|Contents)"
+    r"(?:Net\s*(?:Qty|Quantity|Wt|Weight|Vol|Volume)|Contents|शुद्ध\s*(?:मात्रा|वज़न)|मात्रा|పరిమాణం|அளவு)"
     r"[^\d]{0,15}(\d+(?:[.,]\d+)?)\s*"
-    r"(kg|g|gm|grams?|mg|l|litre|liters?|ltr|ml|m|cm|mm|pcs?|N|U)\b"
+    r"(kg|g|gm|grams?|mg|l|litre|liters?|ltr|ml|m|cm|mm|pcs?|N|U|किग्रा|ग्राम|मिली|लीटर)\b"
 )
-INCL_TAXES = r"incl(?:usive)?\.?\s+of\s+all\s+taxes"
-COUNTRY_PATTERN = r"(?:Country\s+of\s+Origin|Made\s+in|Origin)\s*[:\-]?\s*([A-Za-z ]{3,40})"
+INCL_TAXES = r"(?:incl(?:usive)?\.?\s+of\s+all\s+taxes|सभी\s+कर(?:ों)?\s+सहित|అన్ని\s+పన్నులతో\s+కలిపి)"
+COUNTRY_PATTERN = r"(?:Country\s+of\s+Origin|Made\s+in|Origin|मूल\s*देश|ఉత్పత్తి\s*దేశం|பிறப்பிடம்)\s*[:\-]?\s*([A-Za-z \u0900-\u097F\u0C00-\u0C7F\u0B80-\u0BFF]{3,40})"
 BEST_BEFORE_PATTERN = (
-    r"(?:Best\s+Before|Use\s+By|Expiry|Exp\.?)\s*[:\-]?\s*"
+    r"(?:Best\s+Before|Use\s+By|Expiry|Exp\.?|उपयोग\s*की\s*अंतिम\s*तिथि|समाप्ति)\s*[:\-]?\s*"
     r"(\d{1,2}\s*(?:month|months|mth)s?|\d{1,2}[/\-]\d{2,4}|\d{1,2}\s+\w+\s+\d{2,4})"
 )
 CARE_PATTERN = (
-    r"(?:Customer|Consumer)\s+(?:Care|Service|Complaints?)"
-    r"[\s\S]{0,120}?((?:\+?91[\-\s]?)?[6-9]\d{9}|[\w.\-]+@[\w.\-]+\.\w{2,})"
+    r"(?:Customer|Consumer|ग्राहक|उपभोक्ता|వినియోగదారు)\s+(?:Care|Service|Complaints?|सेवा|సహాయం)"
+    r"[\s\S]{0,120}?((?:1800[\-\s]?\d{3}[\-\s]?\d{3,4}|1800\d{6,7})|(?:\+?91[\-\s]?)?[6-9]\d{9}|[\w.\-]+@[\w.\-]+\.\w{2,})"
 )
 # P0 fix: manufacturer/packer/importer + commodity + date were never extracted,
 # so CHK01 always reported them missing. Patterns below are intentionally broad

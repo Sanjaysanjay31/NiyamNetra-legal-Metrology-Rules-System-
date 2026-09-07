@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { API_BASE_URL, BACKEND_TARGETS, getCustomUrl, loadCustomUrl, loadSavedTarget, saveCustomUrl, saveTarget, targetOf, warnIfCookieHostMismatch } from './config';
+import { ACTIVE_BACKEND, API_BASE_URL, BACKEND_TARGETS, getCustomUrl, loadCustomUrl, loadSavedTarget, saveCustomUrl, saveTarget, targetOf, warnIfCookieHostMismatch } from './config';
 
 let accessToken = null;
 export const setAccessToken = (t) => { accessToken = t; };
@@ -72,16 +72,16 @@ export const getBackendTarget = () => targetOf(api.defaults.baseURL);
  *  validated and persisted before the switch, and rejected (no-op) if it
  *  cannot be turned into a URL. */
 export async function switchBackend(name, url) {
-  const t = BACKEND_TARGETS[name];
+  const targetKey = name === 'render' ? 'render' : 'lan';
+  const t = BACKEND_TARGETS[targetKey];
   if (!t) return getApiBaseUrl();
-  if (name === 'custom' && url !== undefined) {
-    const saved = await saveCustomUrl(url);
-    if (!saved) return getApiBaseUrl();      // unusable input, stay put
+  if (url !== undefined && url !== null) {
+    await saveCustomUrl(url);
   }
   const next = setApiBaseUrl(t.resolve());
-  await saveTarget(name);
+  await saveTarget(targetKey);
   cookieWarning = warnIfCookieHostMismatch(next);
-  if (__DEV__) console.log('[NiyamNetra] backend →', name, next);
+  if (__DEV__) console.log('[NiyamNetra] backend →', targetKey, next);
   return next;
 }
 
@@ -92,11 +92,8 @@ export async function switchBackend(name, url) {
  */
 export async function applySavedBackend() {
   try {
-    // Custom URL first: the 'custom' target's resolve() reads this cache, so
-    // hydrating it after the switch would resolve to the LAN fallback instead.
-    await loadCustomUrl();
-    const saved = await loadSavedTarget();
-    if (saved && BACKEND_TARGETS[saved]) setApiBaseUrl(BACKEND_TARGETS[saved].resolve());
+    const target = ACTIVE_BACKEND || 'lan';
+    if (target && BACKEND_TARGETS[target]) setApiBaseUrl(BACKEND_TARGETS[target].resolve());
   } catch { /* keep the resolved default */ }
   cookieWarning = warnIfCookieHostMismatch(getApiBaseUrl());
   return getApiBaseUrl();

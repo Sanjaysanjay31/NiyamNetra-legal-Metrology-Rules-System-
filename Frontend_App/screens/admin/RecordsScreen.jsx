@@ -16,6 +16,8 @@ function assessOf(i) {
   const r = String(i?.result || i?.overall_result || i?.verdict || '').toLowerCase();
   if (['compliant', 'success', 'pass'].includes(r)) return 'compliant';
   if (['violation', 'fail', 'non_compliant', 'non-compliant'].includes(r)) return 'violation';
+  if (Number(i?.result_counts?.violation || 0) > 0) return 'violation';
+  if (Number(i?.result_counts?.compliant || 0) > 0) return 'compliant';
   return 'not_assessed';
 }
 

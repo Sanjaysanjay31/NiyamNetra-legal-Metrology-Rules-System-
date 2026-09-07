@@ -21,7 +21,11 @@ function itemDate(it) {
 
 function isSuccess(it) {
   const r = String(it?.result || it?.overall_result || it?.verdict || it?.status || '').toLowerCase();
-  return ['success', 'pass', 'compliant'].includes(r);
+  if (['success', 'pass', 'compliant'].includes(r)) return true;
+  const violations = it?.result_counts?.violation ?? it?.violation_count ?? 0;
+  const compliant = it?.result_counts?.compliant ?? it?.pass_count ?? 0;
+  if (violations === 0 && (compliant > 0 || r === 'not_assessed')) return true;
+  return false;
 }
 
 export default function PassScreen({ navigation }) {

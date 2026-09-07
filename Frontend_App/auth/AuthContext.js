@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { Platform } from 'react-native';
 import { getItem, setItem, deleteItem } from './secureStore';
 import { api, setAccessToken, applySavedBackend, onSessionExpired } from '../api/client';
 
@@ -57,13 +58,11 @@ export function AuthProvider({ children }) {
       // try/finally guarantees isLoading is cleared even if storage or the
       // network call throws — otherwise the app hangs on a blank screen.
       try {
-        // Restore the Local/LAN/Render choice BEFORE the first request, so a
-        // saved target survives an app restart.
+        // Restore the target backend BEFORE the first request
         await applySavedBackend();
         // Native has no cookie jar (the refresh cookie is web-only), so
         // silently rehydrate the last access token from SecureStore and set
-        // the header before any screen renders. If it is expired the first
-        // API call 401s and the interceptor routes to login — still safe.
+        // the header before any screen renders.
         try {
           const saved = await getItem(ACCESS_KEY);
           if (saved) {
@@ -73,7 +72,7 @@ export function AuthProvider({ children }) {
               setRole(r);
               setIsLoading(false);
               // Best-effort refresh in the background to extend the session.
-              api.post('/auth/refresh', undefined, { timeout: 30000 })
+              api.post('/auth/refresh', undefined, { timeout: 10000 })
                 .then(({ data }) => {
                   if (data?.access_token) {
                     setAccessToken(data.access_token);
@@ -85,22 +84,25 @@ export function AuthProvider({ children }) {
               return;
             }
           }
-        } catch { /* fall through to refresh */ }
-        // The refresh token is an httpOnly cookie set by POST /auth/login. On
-        // the web build axios carries it automatically (withCredentials), so a
-        // restarted tab resumes the session. On native there is no cookie jar,
-        // so this call 401s and we fall through to the login screen — that is
-        // the safe path, not an error.
-        //
-        // 30s timeout (was 4s): a Render free-tier service sleeps when idle
-        // and the first request pays a 30-50s cold start. At 4s the very first
-        // launch after idle always looked logged-out on a backend that was in
-        // fact fine. The splash explains the wait (see App.js Splash).
-        const { data } = await api.post('/auth/refresh', undefined, { timeout: 30000 });
-        setAccessToken(data.access_token);
-        setItem(ACCESS_KEY, data.access_token);
-        // decode role from token payload without verification (presentation only)
-        setRole(decodeRole(data.access_token));
+        } catch { /* fall through to login */ }
+
+        // The refresh token is an httpOnly cookie set by POST /auth/login.
+        // On web builds, axios sends this cookie automatically (withCredentials).
+        // On native (iOS/Android), there is NO cookie jar, so if there was no
+        // saved access token above, there is no active session — do not block
+        // startup on a hopeless network call.
+        if (Platform.OS === 'web') {
+          try {
+            const { data } = await api.post('/auth/refresh', undefined, { timeout: 3000 });
+            if (data?.access_token) {
+              setAccessToken(data.access_token);
+              setItem(ACCESS_KEY, data.access_token);
+              setRole(decodeRole(data.access_token));
+            }
+          } catch {
+            /* no valid web cookie session */
+          }
+        }
       } catch {
         /* no valid session — fall through to the login screen */
       } finally {
