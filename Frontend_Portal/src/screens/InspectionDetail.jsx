@@ -43,7 +43,6 @@ import { format, parseISO } from 'date-fns'
 import {
   AlertTriangle,
   ArrowLeft,
-  Camera,
   CheckCircle2,
   ClipboardList,
   Clock,
@@ -318,9 +317,9 @@ export default function InspectionDetail() {
   const mine = d != null && user != null && d.user_id === user.id
   /* Submitting is the author's act. owned_inspection lets an admin through, but an
      administrator signing off somebody else's visit is not a power this interface
-     should offer — the record would name the wrong person as having closed it. */
+     should offer — the record would name the wrong person as having closed it.
+     Packages are never added from the portal: capture belongs to the field app. */
   const canSubmit = isDraft && mine
-  const canAddPackage = isDraft && mine
 
   const tally = useMemo(() => {
     const out = { compliant: 0, violation: 0, not_assessed: 0, out_of_scope: 0, unassessed: 0 }
@@ -420,16 +419,6 @@ export default function InspectionDetail() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {(detail.demo || shops.demo) && <DemoChip />}
-            {canAddPackage && (
-              <Button
-                icon={Camera}
-                variant="secondary"
-                size="sm"
-                onClick={() => navigate(`/inspector/inspections/${d.id}/capture`)}
-              >
-                Add a package
-              </Button>
-            )}
             {canSubmit && (
               <Button icon={Send} variant="primary" size="sm" onClick={() => setSubmitOpen(true)}>
                 Submit inspection
@@ -530,22 +519,7 @@ export default function InspectionDetail() {
             <EmptyState
               icon={Package}
               title="No packages recorded"
-              body={
-                canAddPackage
-                  ? 'Capture the declaration panel of a package to have it assessed against the nineteen checks.'
-                  : 'This inspection was recorded without any package being captured.'
-              }
-              action={
-                canAddPackage ? (
-                  <Button
-                    size="sm"
-                    icon={Camera}
-                    onClick={() => navigate(`/inspector/inspections/${d.id}/capture`)}
-                  >
-                    Capture a package
-                  </Button>
-                ) : undefined
-              }
+              body="This inspection was recorded without any package being captured. Packages are captured with the field app, which is the only place a photograph can enter the system."
             />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">

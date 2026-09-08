@@ -1,52 +1,42 @@
 /**
- * My inspections — the officer's own visits, newest first.
+ * Inspection history — every completed visit on the officer's record.
  *
- * The scoping is the server's, not this screen's. GET /inspections adds
- * `Inspection.user_id == user.id` for any non-admin caller, so an inspector
- * cannot widen this list to a colleague's work by editing a parameter, and this
- * screen sends no user filter at all. That is worth saying plainly on the page:
- * an officer should know the list is theirs by construction, not by a checkbox
- * they might accidentally clear.
+ * The list endpoint carries no filter parameters and no verdict per visit, so
+ * the filtering happens in this browser over the full scoped list, and the
+ * count above the table says so. Filters: text search (shop, product, ID),
+ * a date window, status, product, shop and the rule breached — the last one
+ * reads the per-package findings, so a visit matches when any of its packages
+ * breached the chosen rule.
  *
- * The layout is a grouped card list rather than the admin table. An inspector
- * reads this on a phone, standing up, looking for one of two things: the draft
- * they left half-finished, or the visit they submitted this morning. Cards
- * grouped by date answer both at a glance; a six-column table on a 390px screen
- * answers neither.
- *
- * Drafts are surfaced first and separately, because a draft is not part of the
- * record. Nothing in it has reached a report, and it will sit there indefinitely
- * until it is either submitted or abandoned — so the screen counts them at the
- * top and links each one straight to capture rather than to a read-only detail
- * page.
- *
- * Filters are exactly the endpoint's: status, a date window, and `q`, which
- * matches the shop name only. Sorting and paging do not exist on the endpoint,
- * so nothing here pretends to offer them; the list is the whole filtered set and
- * says so.
+ * This is a review surface. There is no new-inspection action here and no
+ * capture anywhere in the portal; the field app creates records, the portal
+ * reads them.
  */
 
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO, subDays } from 'date-fns'
 import {
-  Camera,
-  ChevronRight,
-  ClipboardList,
-  MapPin,
+  AlertTriangle,
+  CheckCircle,
+  ChevronDown,
+  Clock,
+  HelpCircle,
   PenLine,
-  PlusCircle,
   RotateCcw,
   Search,
-  X,
+  XCircle,
 } from 'lucide-react'
-import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
-import { useDebounced, useDocumentTitle, useResource } from '../lib/hooks'
-import { inspections as inspectionsFixture, storesById } from '../mock/fixtures'
+import {
+  inspectionLabel,
+  INSPECTION_STATUS,
+  STATUS_META,
+  useInspectorData,
+} from '../lib/inspector'
+import { useDebounced, useDocumentTitle } from '../lib/hooks'
 import {
   Button,
-  Callout,
   Card,
   DemoChip,
   EmptyState,
@@ -54,20 +44,31 @@ import {
   Input,
   PageHeader,
   Pill,
-  Skeleton,
+  Select,
+  Table,
+  Td,
+  Th,
+  Tr,
   cx,
 } from '../ui'
 
-/* The two values models.py permits on Inspection.status, plus "do not filter". */
-const STATUS_TABS = [
-  { value: '', label: 'All' },
-  { value: 'draft', label: 'Unfinished' },
-  { value: 'submitted', label: 'Submitted' },
+const STATUS_ICONS = {
+  compliant: CheckCircle,
+  non_compliant: AlertTriangle,
+  needs_review: Clock,
+  out_of_scope: HelpCircle,
+  draft: PenLine,
+}
+
+const STATUS_OPTIONS = [
+  { value: '', label: 'All statuses' },
+  { value: INSPECTION_STATUS.COMPLIANT, label: 'Compliant' },
+  { value: INSPECTION_STATUS.NON_COMPLIANT, label: 'Non-Compliant' },
+  { value: INSPECTION_STATUS.NEEDS_REVIEW, label: 'Needs Review' },
+  { value: INSPECTION_STATUS.OUT_OF_SCOPE, label: 'Out of scope' },
+  { value: INSPECTION_STATUS.DRAFT, label: 'Draft' },
 ]
 
-/* Date presets write real dates into the two inputs rather than holding a mode,
-   so what is sent to the server is always exactly what the two fields show.
-   The inputs themselves accept any date. */
 const PRESETS = [
   { id: '7', label: 'Last 7 days', days: 7 },
   { id: '30', label: 'Last 30 days', days: 30 },
@@ -75,479 +76,334 @@ const PRESETS = [
   { id: 'all', label: 'All dates', days: null },
 ]
 
-const TRANSACTION_KEY = {
-  retail_sale: 'inspection.retail_sale',
-  wholesale: 'inspection.wholesale',
-  institutional: 'inspection.institutional',
-  export: 'inspection.export',
-}
-
 const iso = (d) => format(d, 'yyyy-MM-dd')
 
-function prettyDay(isoDate) {
-  if (!isoDate) return 'Undated'
+function StatusPill({ status }) {
+  const meta = STATUS_META[status] ?? STATUS_META.draft
+  const Icon = STATUS_ICONS[status] ?? HelpCircle
+  return (
+    <Pill family={meta.family} icon={Icon}>
+      {meta.label}
+    </Pill>
+  )
+}
+
+function prettyDay(value) {
+  if (!value) return '—'
   try {
-    const d = parseISO(isoDate)
-    const today = iso(new Date())
-    const yesterday = iso(subDays(new Date(), 1))
-    if (isoDate === today) return `Today · ${format(d, 'd MMM')}`
-    if (isoDate === yesterday) return `Yesterday · ${format(d, 'd MMM')}`
-    return format(d, 'EEEE, d MMMM yyyy')
+    return format(parseISO(value), 'd MMM yyyy')
   } catch {
-    return String(isoDate)
+    return String(value)
   }
 }
 
 export default function InspectorInspections() {
   const { t } = useI18n()
-  useDocumentTitle(t('nav.inspections'))
   const navigate = useNavigate()
+  useDocumentTitle(t('nav.inspections'))
+  const { rows, violationRows, loading, demo } = useInspectorData()
 
-  const today = iso(new Date())
+  const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
-  const [from, setFrom] = useState(iso(subDays(new Date(), 29)))
-  const [to, setTo] = useState(today)
-  const [qRaw, setQRaw] = useState('')
-  const q = useDebounced(qRaw.trim(), 350)
+  const [product, setProduct] = useState('')
+  const [shop, setShop] = useState('')
+  const [rule, setRule] = useState('')
+  const [preset, setPreset] = useState('all')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
 
-  /* Only what the officer actually set travels. `status=` would filter for the
-     empty string and match nothing, which is a different answer from "any". */
-  const params = useMemo(() => {
-    const p = {}
-    if (status) p.status = status
-    if (from) p.date_from = from
-    if (to) p.date_to = to
-    if (q) p.q = q
-    return p
-  }, [status, from, to, q])
-  const key = JSON.stringify(params)
+  const debouncedQuery = useDebounced(query, 250)
 
-  const list = useResource(() => endpoints.inspections.list(params), {
-    deps: [key],
-    fallback: inspectionsFixture,
-    label: t('nav.inspections'),
-  })
-  const shops = useResource(() => endpoints.inspections.stores(), {
-    fallback: Object.values(storesById),
-    label: t('inspection.store'),
-  })
-
-  /* Names live on /stores; the list carries store_id. If that second request
-     fails the rows still render, with the number in place of the name. */
-  const rows = useMemo(() => {
-    const shopById = new Map((shops.data ?? []).map((s) => [s.id, s]))
-    return (list.data ?? []).map((i) => {
-      const shop = shopById.get(i.store_id)
-      return {
-        id: i.id,
-        date: i.inspection_date ?? null,
-        shopName: shop?.name ?? `Shop #${i.store_id}`,
-        shopCity: shop?.city ?? null,
-        status: i.status ?? null,
-        scans: i.scan_count ?? 0,
-        transaction: i.transaction_type ?? null,
-        inScope: i.in_scope,
-        outOfScopeReason: i.out_of_scope_reason ?? null,
-        geofence: i.geofence_status ?? null,
-        geofenceDistance: i.geofence_distance_m ?? null,
-        mockLocation: i.mock_location === true,
-        signature: i.signature_status ?? null,
-      }
-    })
-  }, [list.data, shops.data])
-
-  const drafts = useMemo(() => rows.filter((r) => r.status === 'draft'), [rows])
-
-  /* Grouped by inspection_date. The endpoint already orders by date then id
-     descending, so insertion order is the order to display. */
-  const groups = useMemo(() => {
-    const byDay = new Map()
-    for (const r of rows) {
-      const k = r.date ?? ''
-      if (!byDay.has(k)) byDay.set(k, [])
-      byDay.get(k).push(r)
-    }
-    return [...byDay.entries()]
+  /* Distinct filter option lists, built from the rows themselves. */
+  const shopOptions = useMemo(
+    () =>
+      [...new Map(rows.map((r) => [r.shopName, r])).values()].sort((a, b) =>
+        a.shopName.localeCompare(b.shopName)
+      ),
+    [rows]
+  )
+  const productOptions = useMemo(() => {
+    const names = new Set()
+    for (const r of rows) for (const p of r.products) names.add(p)
+    return [...names].sort((a, b) => a.localeCompare(b))
   }, [rows])
+  const ruleOptions = useMemo(() => {
+    const seen = new Map()
+    for (const v of violationRows) seen.set(v.check_id, v.title)
+    return [...seen.entries()].map(([id, title]) => ({ id, title }))
+  }, [violationRows])
 
-  const packages = rows.reduce((n, r) => n + r.scans, 0)
-  const filtered = Boolean(status || q) || from !== '' || to !== ''
-  const demo = list.demo || shops.demo
+  /* The date window. A preset writes a window directly; a manual date input
+     always wins over the preset, and what the inputs show is what filters. */
+  const presetDays = preset === 'all' || preset === 'custom' ? null : Number(preset)
+  const presetFrom = presetDays ? iso(subDays(new Date(), presetDays - 1)) : ''
+  const presetTo = presetDays ? iso(new Date()) : ''
+  const effFrom = from || presetFrom
+  const effTo = to || presetTo
 
-  function applyPreset(p) {
-    if (p.days == null) {
-      setFrom('')
-      setTo('')
-      return
-    }
-    setFrom(iso(subDays(new Date(), p.days - 1)))
-    setTo(iso(new Date()))
-  }
+  /* The rule filter reads findings, so it matches through the violation rows:
+     a visit appears when one of its packages breached the chosen rule. */
+  const ruleInspections = useMemo(() => {
+    if (!rule) return null
+    return new Set(violationRows.filter((v) => v.check_id === rule).map((v) => v.inspection_id))
+  }, [rule, violationRows])
 
-  function reset() {
+  const filtered = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase()
+    return rows.filter((r) => {
+      if (status && r.status !== status) return false
+      if (shop && r.shopName !== shop) return false
+      if (product && !r.products.includes(product)) return false
+      if (ruleInspections && !ruleInspections.has(r.id)) return false
+      if (effFrom && r.inspection_date && r.inspection_date < effFrom) return false
+      if (effTo && r.inspection_date && r.inspection_date > effTo) return false
+      if (q) {
+        const hay = [inspectionLabel(r.id), r.shopName, r.shopCity, r.products.join(' '), r.status]
+          .join(' ')
+          .toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      return true
+    })
+  }, [rows, debouncedQuery, status, shop, product, ruleInspections, effFrom, effTo])
+
+  const activeFilters = [query, status, product, shop, rule, effFrom || effTo].filter(Boolean).length
+
+  const clearAll = () => {
+    setQuery('')
     setStatus('')
-    setQRaw('')
-    setFrom(iso(subDays(new Date(), 29)))
-    setTo(today)
+    setProduct('')
+    setShop('')
+    setRule('')
+    setPreset('all')
+    setFrom('')
+    setTo('')
   }
 
   return (
-    <div className="mx-auto max-w-[880px] px-4 py-6 sm:px-6 sm:py-8">
+    <div className="flex flex-col gap-6">
       <PageHeader
-        eyebrow={t('nav.home')}
-        title={t('nav.inspections')}
-        subtitle="Every visit recorded on your own account. The server scopes this list to you — there is no setting here that could widen it."
-        actions={
-          <div className="flex items-center gap-2">
-            {demo && <DemoChip />}
-            <Button icon={PlusCircle} onClick={() => navigate('/inspector/inspections/new')}>
-              {t('nav.newInspection')}
-            </Button>
-          </div>
-        }
+        eyebrow={t('nav.inspections')}
+        title="Inspection history"
+        subtitle="Every visit on your record — search it, filter it, and open the full inspection with its evidence and findings."
+        actions={demo ? <DemoChip /> : undefined}
       />
 
-      {/* ---- Unfinished work, first and unmissable. ---- */}
-      {drafts.length > 0 && (
-        <Callout
-          family="review"
-          title={`${drafts.length} ${drafts.length === 1 ? 'inspection is' : 'inspections are'} still unfinished`}
-          icon={PenLine}
-          className="mt-6"
-        >
-          <p>
-            A draft is not part of the record. Nothing in it reaches a report, and no finding it
-            holds counts, until it is submitted.
-          </p>
-          <ul className="mt-3 flex flex-col gap-2">
-            {drafts.map((d) => (
-              <li key={d.id} className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-small">
-                  <span className="nn-mono font-medium">#{d.id}</span> · {d.shopName} ·{' '}
-                  {d.scans === 0 ? 'no packages yet' : `${d.scans} ${d.scans === 1 ? 'package' : 'packages'}`}
-                </span>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={Camera}
-                  onClick={() => navigate(`/inspector/inspections/${d.id}/capture`)}
-                >
-                  Continue
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </Callout>
-      )}
-
-      {/* ---- The endpoint's three filters, and nothing invented. ---- */}
-      <Card className="mt-6 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div
-            className="flex flex-wrap items-center gap-1.5"
-            role="group"
-            aria-label={t('inspection.status')}
-          >
-            {STATUS_TABS.map((s) => (
-              <button
-                key={s.value}
-                type="button"
-                onClick={() => setStatus(s.value)}
-                aria-pressed={status === s.value}
-                className={cx(
-                  'nn-badge min-h-touch px-3.5 transition-colors duration-fast ease-settle',
-                  status === s.value
-                    ? 'border-accent bg-accent-soft font-semibold text-accent-text'
-                    : 'border-control bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink'
-                )}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={RotateCcw}
-            onClick={reset}
-            disabled={!filtered}
-            disabledReason="Nothing is filtered."
-          >
-            {t('common.clear')}
-          </Button>
-        </div>
-
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Shop name contains"
-            hint="Matches the shop name only. Commodity, brand and batch live on the package and are not searchable here."
-          >
+      {/* ------------------------------------------------------ filters -- */}
+      <Card className="p-5">
+        <div className="grid gap-x-5 gap-y-4 md:grid-cols-2 xl:grid-cols-3">
+          <Field label="Search" hint="Shop, city, product or inspection ID.">
             {(props) => (
-              <div className="relative">
-                <Input
-                  {...props}
-                  icon={Search}
-                  value={qRaw}
-                  onChange={(e) => setQRaw(e.target.value)}
-                  placeholder="e.g. Provision"
-                  className={qRaw ? 'pr-11' : undefined}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                {qRaw && (
-                  <button
-                    type="button"
-                    onClick={() => setQRaw('')}
-                    aria-label="Clear the shop name filter"
-                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-sm text-ink-3 hover:text-ink-2"
-                  >
-                    <X size={16} strokeWidth={2} aria-hidden="true" />
-                  </button>
-                )}
-              </div>
+              <Input
+                {...props}
+                type="search"
+                icon={Search}
+                placeholder="e.g. Shivneri, rice, INS-771"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
             )}
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="From">
-              {(props) => (
-                <Input
-                  {...props}
-                  type="date"
-                  value={from}
-                  max={to || today}
-                  onChange={(e) => setFrom(e.target.value)}
-                />
-              )}
-            </Field>
-            <Field label="To">
-              {(props) => (
-                <Input
-                  {...props}
-                  type="date"
-                  value={to}
-                  min={from || undefined}
-                  max={today}
-                  onChange={(e) => setTo(e.target.value)}
-                />
-              )}
-            </Field>
-          </div>
+          <Field label="Status">
+            {(props) => (
+              <Select {...props} value={status} onChange={(e) => setStatus(e.target.value)}>
+                {STATUS_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
+          <Field label="Rule violated" hint="A visit matches when any package breached the rule.">
+            {(props) => (
+              <Select {...props} value={rule} onChange={(e) => setRule(e.target.value)}>
+                <option value="">Any rule</option>
+                {ruleOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.id} — {o.title}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
+          <Field label="Shop">
+            {(props) => (
+              <Select {...props} value={shop} onChange={(e) => setShop(e.target.value)}>
+                <option value="">All shops</option>
+                {shopOptions.map((r) => (
+                  <option key={r.id} value={r.shopName}>
+                    {r.shopName}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
+          <Field label="Product">
+            {(props) => (
+              <Select {...props} value={product} onChange={(e) => setProduct(e.target.value)}>
+                <option value="">All products</option>
+                {productOptions.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
+          <Field label="Date range" hint="From and to, inclusive. The presets fill both ends.">
+            {() => (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    aria-label="From date"
+                    value={effFrom}
+                    onChange={(e) => {
+                      setFrom(e.target.value)
+                      setPreset('custom')
+                    }}
+                  />
+                  <span className="text-ink-3" aria-hidden="true">–</span>
+                  <Input
+                    type="date"
+                    aria-label="To date"
+                    value={effTo}
+                    onChange={(e) => {
+                      setTo(e.target.value)
+                      setPreset('custom')
+                    }}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setPreset(String(p.id))
+                        setFrom('')
+                        setTo('')
+                      }}
+                      className={cx(
+                        'rounded-pill border px-2.5 py-1 text-caption font-medium transition-colors duration-fast ease-settle',
+                        preset === String(p.id)
+                          ? 'border-accent bg-accent-soft text-accent-text'
+                          : 'border-divider bg-surface-2 text-ink-2 hover:text-ink'
+                      )}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Field>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-1.5" role="group" aria-label="Date presets">
-          {PRESETS.map((p) => {
-            const active =
-              p.days == null
-                ? from === '' && to === ''
-                : from === iso(subDays(new Date(), p.days - 1)) && to === today
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => applyPreset(p)}
-                aria-pressed={active}
-                className={cx(
-                  'nn-badge min-h-touch px-3 transition-colors duration-fast ease-settle',
-                  active
-                    ? 'border-accent bg-accent-soft font-semibold text-accent-text'
-                    : 'border-control bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink'
-                )}
-              >
-                {p.label}
-              </button>
-            )
-          })}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-caption text-ink-3">
+            {loading
+              ? 'Loading the record…'
+              : `Showing ${filtered.length} of ${rows.length} inspections · filtering happens on this device — the list endpoint takes no filter parameters.`}
+          </p>
+          {activeFilters > 0 && (
+            <Button size="sm" variant="ghost" icon={RotateCcw} onClick={clearAll}>
+              Clear {activeFilters === 1 ? 'filter' : `${activeFilters} filters`}
+            </Button>
+          )}
         </div>
       </Card>
 
-      {/* ---- The result. ---- */}
-      <div className="mt-6 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-        <p className="text-small text-ink-2">
-          <span className="tabular-nums font-medium text-ink">{rows.length}</span>{' '}
-          {rows.length === 1 ? 'inspection' : 'inspections'} ·{' '}
-          <span className="tabular-nums font-medium text-ink">{packages}</span>{' '}
-          {packages === 1 ? 'package' : 'packages'}
-        </p>
-        <p className="nn-mono text-caption text-ink-3">
-          {from || to ? `${from || 'earliest'} → ${to || 'today'}` : 'all dates'}
-        </p>
-      </div>
-
-      {shops.error && (
-        <Callout family="review" title="Shop names could not be loaded" className="mt-4">
-          The inspection list arrived but /stores did not, so rows below show the shop number instead
-          of its name.
-        </Callout>
-      )}
-
-      {list.loading ? (
-        <Card className="mt-4 p-5">
-          <Skeleton lines={6} />
-        </Card>
-      ) : list.error ? (
-        <Callout
-          family="violation"
-          title="Your inspections could not be loaded"
-          className="mt-4"
-          actions={
-            <Button size="sm" onClick={list.reload}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {list.error.message}
-        </Callout>
-      ) : rows.length === 0 ? (
-        <Card className="mt-4">
+      {/* -------------------------------------------------------- table -- */}
+      <Card className="overflow-x-auto p-5">
+        {loading ? (
+          <p className="text-small text-ink-2">Loading…</p>
+        ) : filtered.length === 0 ? (
           <EmptyState
-            icon={ClipboardList}
-            title={filtered ? 'Nothing matches these filters' : 'You have not recorded an inspection yet'}
-            body={
-              filtered
-                ? 'Widen the date window, clear the shop name, or set the status back to All.'
-                : 'Start one from a shop you are standing in, and it will appear here from the moment it is created.'
-            }
-            action={
-              filtered ? (
-                <Button size="sm" icon={RotateCcw} onClick={reset}>
-                  {t('common.clear')}
-                </Button>
-              ) : (
-                <Button size="sm" icon={PlusCircle} onClick={() => navigate('/inspector/inspections/new')}>
-                  {t('nav.newInspection')}
-                </Button>
-              )
-            }
+            title="No inspections match"
+            body="Nothing on the record matches these filters. Clear one or two — the date window and the rule filter are the usual culprits."
+            action={activeFilters > 0 ? <Button size="sm" onClick={clearAll}>Clear filters</Button> : undefined}
           />
-        </Card>
-      ) : (
-        <div className="mt-4 flex flex-col gap-6">
-          {groups.map(([day, items]) => (
-            <section key={day || 'undated'} aria-label={prettyDay(day)}>
-              <h2 className="nn-eyebrow px-1">{prettyDay(day)}</h2>
-              <div className="mt-2 flex flex-col gap-2">
-                {items.map((r) => (
-                  <VisitCard key={r.id} row={r} onOpen={navigate} t={t} />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
+        ) : (
+          <Table caption="Inspection history, newest first">
+            <thead>
+              <tr>
+                <Th>Inspection ID</Th>
+                <Th>Shop</Th>
+                <Th>Product</Th>
+                <Th>Date</Th>
+                <Th>Status</Th>
+                <Th align="right">Violations</Th>
+                <Th align="right">Action</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <Tr key={r.id} onClick={() => navigate(`/inspector/inspections/${r.id}`)}>
+                  <Td>
+                    <span className="nn-mono text-small font-semibold text-accent-text">
+                      {inspectionLabel(r.id)}
+                    </span>
+                  </Td>
+                  <Td>
+                    <span className="text-small font-medium text-ink">{r.shopName}</span>
+                    {r.shopCity && <span className="block text-caption text-ink-3">{r.shopCity}</span>}
+                  </Td>
+                  <Td>
+                    {r.productLabel ? (
+                      <span className="text-small text-ink">
+                        {r.productLabel}
+                        {r.productCount > 1 && (
+                          <span className="text-caption text-ink-3"> +{r.productCount - 1} more</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-caption text-ink-3">—</span>
+                    )}
+                  </Td>
+                  <Td className="text-small text-ink-2">{prettyDay(r.inspection_date)}</Td>
+                  <Td>
+                    <StatusPill status={r.status} />
+                  </Td>
+                  <Td align="right">
+                    {r.violations > 0 ? (
+                      <span className="nn-mono inline-flex items-center rounded-pill bg-violation-fill px-2 py-0.5 text-caption font-bold text-violation-text">
+                        {r.violations}
+                      </span>
+                    ) : (
+                      <span className="text-caption text-ink-3">—</span>
+                    )}
+                  </Td>
+                  <Td align="right">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        navigate(`/inspector/inspections/${r.id}`)
+                      }}
+                    >
+                      View
+                    </Button>
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
 
-      {/* ---- The honest boundary. ---- */}
-      <Card className="mt-6 p-5 sm:p-6">
-        <h2 className="text-h2 text-ink">What this list cannot do</h2>
-        <p className="mt-1 max-w-prose text-caption text-ink-2">
-          Named rather than faked, so a missing feature never reads as a broken one.
-        </p>
-        <ul className="mt-4 flex flex-col gap-3">
-          {[
-            [
-              'It cannot show another officer’s work',
-              'GET /inspections filters on your own user id for any non-admin caller. That happens on the server, so it is not a preference this screen could change.',
-            ],
-            [
-              'It cannot be sorted, or paged',
-              'The endpoint takes neither parameter and returns the whole filtered set in date order. The date window above is what keeps that response small.',
-            ],
-            [
-              'It cannot search a commodity, brand or batch',
-              'Those belong to a package, not a visit. The q parameter matches the shop name only — the router says so in its own comment.',
-            ],
-            [
-              'It cannot show a result per visit',
-              'A verdict belongs to a package. The package count here is a count, deliberately not a score; open a visit to see how each package was assessed.',
-            ],
-          ].map(([title, body]) => (
-            <li key={title} className="border-l-2 border-divider pl-3">
-              <p className="text-small font-semibold text-ink">{title}</p>
-              <p className="mt-0.5 max-w-prose text-caption text-ink-2">{body}</p>
-            </li>
-          ))}
-        </ul>
+        {filtered.length > 0 && (
+          <p className="mt-4 flex items-center justify-end gap-1 text-caption text-ink-3">
+            Sorted newest first <ChevronDown size={13} strokeWidth={2} aria-hidden="true" />
+          </p>
+        )}
       </Card>
     </div>
-  )
-}
-
-/**
- * One visit. A draft goes to capture, because the only useful thing to do with an
- * unfinished inspection is finish it; a submitted one goes to its detail page,
- * which is read-only by design.
- */
-function VisitCard({ row: r, onOpen, t }) {
-  const draft = r.status === 'draft'
-  const to = draft ? `/inspector/inspections/${r.id}/capture` : `/inspector/inspections/${r.id}`
-  const transactionKey = TRANSACTION_KEY[r.transaction]
-
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(to)}
-      className={cx(
-        'nn-card-interactive w-full min-h-touch p-4 text-left',
-        'flex flex-wrap items-start justify-between gap-x-4 gap-y-2'
-      )}
-    >
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="nn-mono text-caption text-ink-3">#{r.id}</span>
-          <span className="text-body font-medium text-ink">{r.shopName}</span>
-          {draft ? (
-            <Pill family="na" icon={PenLine}>
-              {t('inspection.draft')}
-            </Pill>
-          ) : (
-            <Pill>{t('inspection.submitted')}</Pill>
-          )}
-          {r.inScope === false && <Pill family="na">{t('result.out_of_scope')}</Pill>}
-        </span>
-
-        <span className="mt-1 block text-small text-ink-2">
-          {r.shopCity && <span>{r.shopCity} · </span>}
-          {transactionKey ? t(transactionKey) : r.transaction || 'Transaction not recorded'} ·{' '}
-          <span className="tabular-nums">{r.scans}</span>{' '}
-          {r.scans === 1 ? 'package' : 'packages'}
-        </span>
-
-        {r.outOfScopeReason && (
-          <span className="mt-1 block max-w-prose text-caption leading-5 text-ink-3">
-            {r.outOfScopeReason}
-          </span>
-        )}
-
-        {r.geofence === 'outside' && (
-          <span className="mt-1 flex items-center gap-1 text-caption text-review-text">
-            <MapPin size={12} strokeWidth={2} aria-hidden="true" />
-            {r.geofenceDistance == null
-              ? 'Recorded outside the shop geofence'
-              : `Recorded ${Math.round(r.geofenceDistance)} m from the shop`}
-          </span>
-        )}
-        {r.geofence === 'unknown' && (
-          <span className="mt-1 block text-caption text-ink-3">
-            {t('inspection.locationUnavailable')}
-          </span>
-        )}
-        {r.mockLocation && (
-          <span className="mt-1 block text-caption text-review-text">
-            {t('inspection.mockLocation')}
-          </span>
-        )}
-        {!draft && r.signature === 'refused' && (
-          <span className="mt-1 block text-caption text-ink-3">{t('inspection.refused')}</span>
-        )}
-        {!draft && r.signature === 'unavailable' && (
-          <span className="mt-1 block text-caption text-ink-3">{t('inspection.unavailable')}</span>
-        )}
-      </span>
-
-      <span className="flex shrink-0 items-center gap-1 self-center text-small font-medium text-accent-text">
-        {draft ? 'Continue' : 'Open'}
-        <ChevronRight size={16} strokeWidth={2} aria-hidden="true" />
-      </span>
-    </button>
   )
 }

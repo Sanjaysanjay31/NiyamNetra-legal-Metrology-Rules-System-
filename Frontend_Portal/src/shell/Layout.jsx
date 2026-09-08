@@ -22,21 +22,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
+  Activity,
+  AlertTriangle,
   BookOpen,
   ChevronLeft,
   ClipboardList,
-  Activity,
   FileText,
+  HelpCircle,
   Home,
   LayoutDashboard,
   ListChecks,
   LogOut,
   Menu,
   Palette,
-  PlusCircle,
+  Scale,
   Settings as SettingsIcon,
   ShieldCheck,
   TrendingUp,
+  UserRound,
   Users,
   X,
 } from 'lucide-react'
@@ -60,7 +63,7 @@ function navFor(role, t) {
         items: [
           { to: '/admin', label: t('nav.overview'), icon: LayoutDashboard, end: true },
           { to: '/admin/inspections', label: t('nav.inspections'), icon: ClipboardList },
-    { to: '/admin/analytics', label: t('nav.analytics'), icon: TrendingUp },
+          { to: '/admin/analytics', label: t('nav.analytics'), icon: TrendingUp },
           { to: '/admin/review-queue', label: t('nav.reviewQueue'), icon: ListChecks, badge: 'review' },
           { to: '/admin/reports', label: t('nav.reports'), icon: FileText },
         ],
@@ -79,11 +82,12 @@ function navFor(role, t) {
     {
       heading: null,
       items: [
-        { to: '/inspector', label: t('nav.home'), icon: Home, end: true },
-        { to: '/inspector/inspections/new', label: t('nav.newInspection'), icon: PlusCircle },
-        { to: '/inspector/inspections', label: t('nav.inspections'), icon: ClipboardList },
-        { to: '/inspector/today', label: t('nav.today'), icon: FileText },
-    { to: '/inspector/performance', label: t('nav.performance'), icon: Activity },
+        { to: '/inspector', label: 'Home', icon: Home, end: true },
+        { to: '/inspector/inspections', label: 'Inspections', icon: ClipboardList },
+        { to: '/inspector/reports', label: 'Reports', icon: FileText },
+        { to: '/inspector/violations', label: 'Violations', icon: AlertTriangle },
+        { to: '/inspector/performance', label: 'My Performance', icon: TrendingUp },
+        { to: '/inspector/profile', label: 'Profile', icon: UserRound },
       ],
     },
   ]
@@ -334,13 +338,15 @@ function UserMenu() {
     navigate('/login', { replace: true })
   }
 
+  const displayName = user?.full_name || 'Inspector One'
+  const displayId = user?.employee_id || 'LM-TG-1042'
   const initials =
-    (user?.full_name ?? '?')
+    displayName
       .split(/\s+/)
       .slice(0, 2)
       .map((s) => s[0])
       .join('')
-      .toUpperCase() || '?'
+      .toUpperCase() || 'IO'
 
   return (
     <div className="relative">
@@ -348,18 +354,18 @@ function UserMenu() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-label={user?.full_name ?? t('nav.settings')}
+        aria-label={displayName}
         className="flex min-h-touch items-center gap-2.5 rounded-pill py-1 pl-1 pr-2.5 transition-colors duration-fast hover:bg-surface-2"
       >
-        <span className="nn-mono grid h-9 w-9 shrink-0 place-items-center rounded-pill bg-brand text-[13px] font-bold text-ink-inverse">
+        <span className="nn-mono grid h-9 w-9 shrink-0 place-items-center rounded-pill bg-[#0B1524] text-[13px] font-bold text-white shadow-sm">
           {initials}
         </span>
         <span className="hidden min-w-0 text-left sm:block">
           <span className="block truncate text-small font-semibold leading-4 text-ink">
-            {user?.full_name}
+            {displayName}
           </span>
           <span className="nn-mono block truncate text-[11px] leading-4 text-ink-3">
-            {user?.employee_id}
+            {displayId}
           </span>
         </span>
       </button>
@@ -368,12 +374,18 @@ function UserMenu() {
         <p id="user-title" className="nn-eyebrow">
           Signed in as
         </p>
-        <p className="mt-1 text-small font-semibold text-ink">{user?.full_name}</p>
-        <p className="nn-mono text-caption text-ink-3">{user?.employee_id}</p>
-        {user?.jurisdiction && (
-          <p className="mt-1 text-caption text-ink-2">{user.jurisdiction}</p>
-        )}
+        <p className="mt-1 text-small font-semibold text-ink">{displayName}</p>
+        <p className="nn-mono text-caption text-ink-3">{displayId}</p>
+        <p className="mt-1 text-caption text-ink-2">{user?.jurisdiction ?? 'Hyderabad North'}</p>
         <div className="nn-rule-line my-3" />
+        <Link
+          to="/inspector/profile"
+          onClick={() => setOpen(false)}
+          className="flex min-h-touch items-center gap-2.5 rounded-sm px-2 text-small font-medium text-ink-2 hover:bg-surface-2 hover:text-ink"
+        >
+          <UserRound size={17} strokeWidth={1.8} aria-hidden="true" />
+          {t('nav.profile')}
+        </Link>
         <Link
           to="/settings"
           onClick={() => setOpen(false)}
@@ -481,6 +493,7 @@ function Header({ onOpenDrawer, reviewCount }) {
         </Link>
       )}
 
+      <IconButton icon={HelpCircle} label="Help & Documentation" onClick={() => {}} />
       <AppearanceMenu />
       <UserMenu />
     </header>

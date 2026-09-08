@@ -26,19 +26,20 @@ import AdminDashboard from './screens/AdminDashboard'
 import AdminInspections from './screens/AdminInspections'
 import AdminReports from './screens/AdminReports'
 import Audit from './screens/Audit'
-import Capture from './screens/Capture'
 import InspectionDetail from './screens/InspectionDetail'
+import InspectionRecord from './screens/InspectionRecord'
 import Inspectors from './screens/Inspectors'
 import InspectorHome from './screens/InspectorHome'
 import InspectorInspections from './screens/InspectorInspections'
 import InspectorPerformance from './screens/InspectorPerformance'
-import NewInspection from './screens/NewInspection'
+import InspectorProfile from './screens/InspectorProfile'
+import InspectorReports from './screens/InspectorReports'
+import InspectorViolations from './screens/InspectorViolations'
 import NotFound from './screens/NotFound'
 import ReviewQueue from './screens/ReviewQueue'
 import Rules from './screens/Rules'
 import ScanFindings from './screens/ScanFindings'
 import Settings from './screens/Settings'
-import TodaysReport from './screens/TodaysReport'
 
 /** Send an authenticated officer to their own section; anyone else to login. */
 function RootRedirect() {
@@ -104,14 +105,17 @@ export default function App() {
         <Route path="/admin/audit" element={<AdminRoute><Audit /></AdminRoute>} />
 
         {/* --------------------------------------------------- inspector ---- */}
+        {/* The portal is the review surface, not the capture device. Scanning,
+            photography, GPS capture and new inspections belong to the mobile
+            app; every inspector route below only reads, reviews, manages and
+            analyses what the app already recorded. */}
         <Route path="/inspector" element={<InspectorHome />} />
         <Route path="/inspector/inspections" element={<InspectorInspections />} />
-        <Route path="/inspector/inspections/new" element={<NewInspection />} />
-        <Route path="/inspector/inspections/:id" element={<InspectionDetail />} />
-        <Route path="/inspector/inspections/:id/capture" element={<Capture />} />
-        <Route path="/inspector/scans/:id" element={<ScanFindings />} />
-        <Route path="/inspector/today" element={<TodaysReport />} />
+        <Route path="/inspector/inspections/:id" element={<InspectionRecord />} />
+        <Route path="/inspector/reports" element={<InspectorReports />} />
+        <Route path="/inspector/violations" element={<InspectorViolations />} />
         <Route path="/inspector/performance" element={<InspectorPerformance />} />
+        <Route path="/inspector/profile" element={<InspectorProfile />} />
 
         {/* ------------------------------------------------------ shared ---- */}
         <Route path="/settings" element={<Settings />} />
