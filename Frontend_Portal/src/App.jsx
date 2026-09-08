@@ -25,6 +25,10 @@ import AdminAnalytics from './screens/AdminAnalytics'
 import AdminDashboard from './screens/AdminDashboard'
 import AdminInspections from './screens/AdminInspections'
 import AdminReports from './screens/AdminReports'
+import AdminScans from './screens/AdminScans'
+import AdminStores from './screens/AdminStores'
+import AdminViolations from './screens/AdminViolations'
+import RepeatOffenders from './screens/RepeatOffenders'
 import Audit from './screens/Audit'
 import Capture from './screens/Capture'
 import InspectionDetail from './screens/InspectionDetail'
@@ -36,6 +40,7 @@ import NewInspection from './screens/NewInspection'
 import NotFound from './screens/NotFound'
 import ReviewQueue from './screens/ReviewQueue'
 import Rules from './screens/Rules'
+import RuleVersions from './screens/RuleVersions'
 import ScanFindings from './screens/ScanFindings'
 import Settings from './screens/Settings'
 import TodaysReport from './screens/TodaysReport'
@@ -96,11 +101,16 @@ export default function App() {
         <Route path="/admin/analytics" element={<AdminRoute><AdminAnalytics /></AdminRoute>} />
         <Route path="/admin/inspections" element={<AdminRoute><AdminInspections /></AdminRoute>} />
         <Route path="/admin/inspections/:id" element={<AdminRoute><InspectionDetail /></AdminRoute>} />
+        <Route path="/admin/stores" element={<AdminRoute><AdminStores /></AdminRoute>} />
+        <Route path="/admin/scans" element={<AdminRoute><AdminScans /></AdminRoute>} />
+        <Route path="/admin/violations" element={<AdminRoute><AdminViolations /></AdminRoute>} />
+        <Route path="/admin/repeat-offenders" element={<AdminRoute><RepeatOffenders /></AdminRoute>} />
         <Route path="/admin/scans/:id" element={<AdminRoute><ScanFindings /></AdminRoute>} />
         <Route path="/admin/review-queue" element={<AdminRoute><ReviewQueue /></AdminRoute>} />
         <Route path="/admin/inspectors" element={<AdminRoute><Inspectors /></AdminRoute>} />
         <Route path="/admin/reports" element={<AdminRoute><AdminReports /></AdminRoute>} />
         <Route path="/admin/rules" element={<AdminRoute><Rules /></AdminRoute>} />
+        <Route path="/admin/rule-versions" element={<AdminRoute><RuleVersions /></AdminRoute>} />
         <Route path="/admin/audit" element={<AdminRoute><Audit /></AdminRoute>} />
 
         {/* --------------------------------------------------- inspector ---- */}

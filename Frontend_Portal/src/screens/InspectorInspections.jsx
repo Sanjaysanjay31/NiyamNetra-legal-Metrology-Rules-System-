@@ -192,7 +192,7 @@ export default function InspectorInspections() {
   }
 
   return (
-    <div className="mx-auto max-w-[880px] px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto max-w-[880px]">
       <PageHeader
         eyebrow={t('nav.home')}
         title={t('nav.inspections')}

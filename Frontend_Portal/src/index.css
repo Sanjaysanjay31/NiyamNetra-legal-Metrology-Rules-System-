@@ -1,12 +1,12 @@
 /* ===========================================================================
-   NiyamNetra portal - the only global stylesheet.
+   NiyamNetra portal — the only global stylesheet.
    ---------------------------------------------------------------------------
    Screens do not get their own CSS files. Everything a screen needs lives in
    that screen's single .jsx file, expressed as Tailwind utilities over the
-   tokens below. What sits here is the small set of rules that cannot live in a
-   component: the base layer, the focus ring, the reduced-motion contract, and
-   a handful of composite classes that would otherwise be re-typed on hundreds
-   of elements and drift apart.
+   tokens in theme/tokens.css. What sits here is the small set of rules that
+   cannot live in a component: the base layer, the focus ring, the
+   reduced-motion contract, and a handful of composite classes that would
+   otherwise be re-typed on hundreds of elements and drift apart.
    =========================================================================== */
 
 @import './theme/tokens.css';
@@ -39,10 +39,6 @@
     font-feature-settings: 'cv05' 1, 'ss03' 1; /* single-storey l, rounded quotes */
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    /* The theme flip should feel like a light changing, not a page reload -
-       but only the canvas animates. Animating every element is a jank factory. */
-    transition: background-color 240ms cubic-bezier(0.2, 0, 0.2, 1),
-      color 240ms cubic-bezier(0.2, 0, 0.2, 1);
   }
 
   /* Numerals in tables, counts and measured values must align vertically and
@@ -66,9 +62,9 @@
     text-wrap: pretty;
   }
 
-  /* 08 SS6: the focus ring is 3px at 2px offset and is never removed. It is
-     defined once, here, so no component can drop it. :focus-visible rather
-     than :focus, so a mouse click on a card does not draw a ring. */
+  /* The focus ring is 3px at 2px offset and is never removed. It is defined
+     once, here, so no component can drop it. :focus-visible rather than
+     :focus, so a mouse click on a card does not draw a ring. */
   :focus-visible {
     outline: 3px solid var(--nn-accent-ring);
     outline-offset: 2px;
@@ -78,17 +74,12 @@
     outline: none;
   }
 
-  /* Dark canvases need the ring to read against them too. */
-  [data-theme='dark'] :focus-visible {
-    outline-color: var(--nn-accent-ring);
-  }
-
   ::selection {
     background: var(--nn-accent);
     color: var(--nn-accent-on);
   }
 
-  /* Scrollbars, so a dark theme does not ship a bright grey gutter. */
+  /* Quiet scrollbars so the chrome never competes with the content. */
   * {
     scrollbar-color: var(--nn-control) transparent;
     scrollbar-width: thin;
@@ -107,9 +98,9 @@
     border-radius: 9999px;
   }
 
-  /* 08 SS7. prefers-reduced-motion is honoured globally rather than per
-     component, because one missed component is the whole promise broken.
-     0.01ms, not 0: transitionend and animationend listeners must still fire. */
+  /* prefers-reduced-motion is honoured globally rather than per component,
+     because one missed component is the whole promise broken. 0.01ms, not 0:
+     transition events must still fire or state that waits on them stalls. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -123,29 +114,27 @@
 }
 
 @layer components {
-  /* --- the mono voice ---------------------------------------------------- */
-  /* JetBrains Mono is not decoration here. It marks every string the system
-     read or computed rather than composed: CHK ids, denominators, hashes,
-     measured quantities, rule citations. The eye learns "monospace = evidence".
-     08 SS2.2 assigns mono to identifiers and extracted values; this promotes
-     that to the interface's structural voice. */
+  /* --- typography --------------------------------------------------------- */
+  /* The mono eyebrow: every label that names a *system* fact rather than a
+     human one is set in JetBrains Mono, small, letterspaced. Monospace means
+     the machine read this, it did not compose it. */
   .nn-eyebrow {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 11px;
-    line-height: 14px;
-    font-weight: 500;
-    letter-spacing: 0.1em;
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--nn-text-3);
   }
 
+  /* Identifiers, hashes, extracted values. */
   .nn-mono {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: 'zero' 1; /* slashed zero: 0 vs O in a batch code */
   }
 
-  /* A hairline above an eyebrow, used to open a section. Decorative. */
+  /* A hairline that opens with a short navy lead — the quietest possible
+     section marker in a document-styled interface. */
   .nn-rule-line {
     height: 1px;
     background: linear-gradient(
@@ -216,13 +205,9 @@
     border-color: var(--nn-text-3);
   }
   .nn-field:focus {
-    border-color: var(--nn-accent);
-    box-shadow: 0 0 0 4px var(--nn-ring-halo);
     outline: none;
-  }
-  .nn-field:focus-visible {
-    outline: 3px solid var(--nn-accent-ring);
-    outline-offset: 2px;
+    border-color: var(--nn-accent-ring);
+    box-shadow: 0 0 0 4px var(--nn-ring-halo);
   }
   .nn-field:disabled {
     background: var(--nn-surface-sunken);
@@ -230,8 +215,8 @@
     cursor: not-allowed;
   }
   /* An invalid field keeps its geometry and changes only its border colour.
-     08 SS7 forbids shake: an involuntary movement next to a legal declaration
-     reads as the system objecting, which is not what a format error means. */
+     No shake: an involuntary movement next to a legal declaration reads as
+     the system objecting, which is not what a format error means. */
   .nn-field[aria-invalid='true'] {
     border-color: var(--nn-violation-graphic);
   }
@@ -239,9 +224,56 @@
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--nn-violation-graphic) 18%, transparent);
   }
 
+  /* Native <input> and <select> share the same treatment as .nn-field so a
+     page that has to reach for the bare element (no wrapper component) still
+     matches the rest of the form. */
+  .nn-input,
+  .nn-select {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    background: var(--nn-surface);
+    color: var(--nn-text);
+    border: 1px solid var(--nn-control);
+    border-radius: var(--nn-r-sm);
+    font-size: 16px;
+    line-height: 24px;
+    transition: border-color 120ms cubic-bezier(0.2, 0, 0.2, 1),
+      box-shadow 120ms cubic-bezier(0.2, 0, 0.2, 1);
+  }
+  .nn-input::placeholder {
+    color: var(--nn-text-3);
+  }
+  .nn-input:hover:not(:disabled),
+  .nn-select:hover:not(:disabled) {
+    border-color: var(--nn-text-3);
+  }
+  .nn-input:focus,
+  .nn-select:focus {
+    outline: none;
+    border-color: var(--nn-accent-ring);
+    box-shadow: 0 0 0 4px var(--nn-ring-halo);
+  }
+  .nn-input:disabled,
+  .nn-select:disabled {
+    background: var(--nn-surface-sunken);
+    color: var(--nn-text-3);
+    cursor: not-allowed;
+  }
+  .nn-select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 36px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--nn-text-3) 50%),
+      linear-gradient(135deg, var(--nn-text-3) 50%, transparent 50%);
+    background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+  }
+
   /* --- badges ------------------------------------------------------------ */
   /* The shape is shared; the family supplies fill, outline and text. Never
-     used without an icon and a word alongside - 08 SS2.4. */
+     used without an icon and a word alongside. */
   .nn-badge {
     display: inline-flex;
     align-items: center;
@@ -331,4 +363,347 @@
 @keyframes fade-rise {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
+}
+
+/* Admin control-room presentation. The class is opt-in on the seven redesigned
+   screens so the inspector workflow and the untouched portal routes retain
+   their existing spacing and surfaces. */
+.nn-admin-page {
+  --nn-admin-panel: #ffffff;
+  --nn-admin-line: #d9e1ea;
+  --nn-admin-shadow: 0 2px 8px rgba(15, 42, 68, 0.06);
+}
+
+.nn-admin-page .nn-card {
+  border-color: var(--nn-admin-line);
+  border-radius: 8px;
+  box-shadow: var(--nn-admin-shadow);
+}
+
+.nn-admin-page .nn-card > .nn-rule-line,
+.nn-admin-page .nn-rule-line {
+  background: linear-gradient(90deg, var(--nn-teal) 0, var(--nn-teal) 28px, var(--nn-divider) 28px, var(--nn-divider) 100%);
+}
+
+.nn-admin-page > header {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--nn-admin-line);
+}
+
+.nn-admin-page > header h1 {
+  letter-spacing: -0.02em;
+}
+
+.nn-admin-page .nn-card table thead th {
+  background: #f1f5f9;
+}
+
+.nn-admin-page .nn-card table tbody tr {
+  transition: background-color 140ms ease;
+}
+
+.nn-admin-page .nn-card table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.nn-admin-dashboard > section[aria-label='Activity indicators'],
+.nn-admin-dashboard > section[aria-label='Outcome indicators'] {
+  gap: 12px;
+}
+
+.nn-admin-dashboard {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: 20px;
+  row-gap: 20px;
+}
+
+.nn-admin-dashboard > header,
+.nn-admin-dashboard > .nn-dashboard-charts,
+.nn-admin-dashboard > .nn-dashboard-today,
+.nn-admin-dashboard > .nn-dashboard-repeat,
+.nn-admin-dashboard > .nn-dashboard-recent,
+.nn-admin-dashboard > section[aria-label='Key indicators'],
+.nn-admin-dashboard > section[aria-label='Activity indicators'],
+.nn-admin-dashboard > section[aria-label='Outcome indicators'],
+.nn-admin-dashboard > p,
+.nn-admin-dashboard > .mb-6 {
+  grid-column: 1 / -1;
+}
+
+/* The reference gives the dashboard a quick-read composition: three activity
+   cards, three outcome cards, then the trend and category evidence. */
+.nn-admin-dashboard > section[aria-label='Activity indicators'] {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.nn-admin-dashboard > section[aria-label='Outcome indicators'] {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.nn-admin-dashboard > section[aria-label='Activity indicators'] {
+  order: 3;
+}
+
+.nn-admin-dashboard > p {
+  order: 4;
+}
+
+.nn-admin-dashboard > section[aria-label='Outcome indicators'] {
+  order: 5;
+}
+
+.nn-admin-dashboard > .nn-dashboard-charts {
+  order: 6;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.nn-admin-dashboard > .nn-dashboard-today {
+  order: 7;
+  grid-column: 1 / -1;
+}
+
+.nn-admin-dashboard > .nn-dashboard-recent {
+  order: 8;
+  grid-column: 1 / -1;
+}
+
+.nn-admin-dashboard > .nn-dashboard-repeat {
+  order: 9;
+  grid-column: 1 / -1;
+}
+
+.nn-admin-dashboard > .nn-admin-dashboard-recent,
+.nn-admin-dashboard > section:last-child:not(.nn-dashboard-repeat):not(.nn-dashboard-charts):not(.nn-dashboard-today) {
+  order: 10;
+}
+
+.nn-admin-dashboard > .nn-dashboard-recent .nn-card {
+  height: calc(100% - 28px);
+}
+
+@media (max-width: 1279px) {
+  .nn-admin-dashboard > .nn-dashboard-charts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .nn-admin-dashboard > .nn-dashboard-today,
+  .nn-admin-dashboard > .nn-dashboard-recent {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 767px) {
+  .nn-admin-dashboard {
+    display: block;
+  }
+
+  .nn-admin-dashboard > * {
+    margin-top: 20px;
+  }
+
+  .nn-admin-dashboard > header {
+    margin-top: 0;
+  }
+
+  .nn-admin-dashboard > .nn-dashboard-charts {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}
+
+.nn-admin-dashboard > section[aria-label='Activity indicators'] .nn-card,
+.nn-admin-dashboard > section[aria-label='Outcome indicators'] .nn-card {
+  min-height: 142px;
+  border-top: 3px solid var(--nn-navy);
+}
+
+.nn-admin-dashboard > section[aria-label='Key indicators'] .nn-card:nth-child(4) {
+  border-top-color: var(--nn-pass-graphic);
+}
+
+.nn-admin-dashboard > section[aria-label='Key indicators'] .nn-card:nth-child(5),
+.nn-admin-dashboard > section[aria-label='Key indicators'] .nn-card:nth-child(7) {
+  border-top-color: var(--nn-violation-graphic);
+}
+
+.nn-admin-dashboard > section[aria-label='Key indicators'] .nn-card:nth-child(6) {
+  border-top-color: var(--nn-review-graphic);
+}
+
+.nn-inspections-page > header {
+  margin-bottom: 18px;
+}
+
+.nn-inspections-page .nn-inspection-filters {
+  background: #fbfcfe;
+  padding: 16px;
+}
+
+.nn-inspections-page .nn-inspection-filters > div:first-child,
+.nn-inspections-page .nn-inspection-filters > div:nth-child(2) {
+  gap: 12px;
+}
+
+.nn-inspections-page .nn-inspection-filters > div:nth-child(2) {
+  margin-top: 12px;
+}
+
+.nn-inspections-page .nn-inspection-primary-filters {
+  align-items: end;
+}
+
+.nn-inspections-page .nn-inspection-primary-filters > div {
+  min-width: 0;
+}
+
+.nn-inspections-page .nn-inspection-primary-filters label {
+  font-size: 12px;
+  color: var(--nn-text-2);
+}
+
+.nn-inspections-page .nn-inspection-primary-filters .nn-field {
+  min-height: 40px;
+  font-size: 13px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.nn-inspections-page .nn-inspection-results > div:first-child {
+  min-height: 48px;
+  background: #fbfcfe;
+  border-bottom: 1px solid var(--nn-admin-line);
+}
+
+.nn-inspections-page .nn-inspection-results {
+  box-shadow: 0 2px 10px rgba(15, 42, 68, 0.08);
+}
+
+.nn-inspections-page .nn-inspection-results table {
+  min-width: 980px;
+}
+
+.nn-inspections-page .nn-inspection-results tbody td {
+  padding-top: 13px;
+  padding-bottom: 13px;
+}
+
+.nn-admin-reports-page > header,
+.nn-violations-page > header,
+.nn-admin-detail-page > header {
+  margin-bottom: 18px;
+}
+
+.nn-admin-reports-page .nn-card,
+.nn-violations-page .nn-card {
+  background: #ffffff;
+}
+
+.nn-admin-reports-page .nn-card table,
+.nn-violations-page .nn-card table {
+  min-width: 720px;
+}
+
+.nn-admin-reports-page .nn-card .nn-card {
+  background: #f8fafc;
+  box-shadow: none;
+}
+
+.nn-violations-page > section[aria-label='Violations summary'] {
+  gap: 12px;
+}
+
+.nn-violations-page > section[aria-label='Violations summary'] .nn-card {
+  min-height: 136px;
+  border-top: 3px solid var(--nn-violation-graphic);
+}
+
+.nn-violations-page > section[aria-label='Violations summary'] .nn-card:nth-child(2) {
+  border-top-color: var(--nn-teal);
+}
+
+.nn-violations-page > section[aria-label='Violations summary'] .nn-card:nth-child(3) {
+  border-top-color: var(--nn-review-graphic);
+}
+
+.nn-inspection-information > .nn-card {
+  border-top: 3px solid var(--nn-teal);
+}
+
+.nn-inspection-products {
+  align-items: stretch;
+}
+
+.nn-inspection-products > div {
+  min-width: 0;
+}
+
+.nn-inspection-products > div > .nn-card:first-child {
+  border-top: 3px solid var(--nn-navy);
+}
+
+.nn-inspection-products > div > .nn-card:last-child {
+  border-top: 3px solid var(--nn-teal);
+}
+
+.nn-inspection-support .nn-card {
+  min-height: 100%;
+}
+
+@media (min-width: 1280px) {
+  .nn-violations-page > section:nth-of-type(2) {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  }
+}
+
+@media (min-width: 1280px) {
+  .nn-inspections-page .nn-inspection-filters > div:first-child {
+    grid-template-columns: 1.25fr 1.1fr 0.8fr 0.8fr;
+  }
+
+  .nn-inspections-page .nn-inspection-filters > div:nth-child(2) {
+    grid-template-columns: 0.8fr 0.8fr 0.8fr 2.2fr;
+  }
+}
+
+@media (min-width: 1024px) {
+  .nn-admin-dashboard > section[aria-label='Key indicators'] {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+
+  .nn-admin-dashboard > section[aria-label='Key indicators'] > :nth-child(-n + 3) {
+    grid-column: span 4;
+  }
+
+  .nn-admin-dashboard > section[aria-label='Key indicators'] > :nth-child(n + 4) {
+    grid-column: span 3;
+  }
+}
+
+.nn-admin-list-page > .nn-card,
+.nn-admin-detail-page > .nn-card,
+.nn-admin-rules-page > .nn-card {
+  overflow: hidden;
+}
+
+@media (min-width: 1280px) {
+  .nn-admin-dashboard,
+  .nn-admin-detail-page,
+  .nn-admin-list-page {
+    max-width: 1440px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .nn-admin-page > header {
+    padding-bottom: 12px;
+  }
+
+  .nn-admin-page .nn-card {
+    border-radius: 6px;
+  }
 }

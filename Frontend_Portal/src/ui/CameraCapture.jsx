@@ -12,7 +12,7 @@
  *
  * Spec: 08_UI_DESIGN.md §4.3.
  *   - Guide overlay: 4:3, 80% width, 2 px dashed Netra Teal border, 3 px
- *     saffron corner brackets, "Place the pack inside the frame" top label.
+ *     white corner brackets, "Place the pack inside the frame" top label.
  *   - Quality strip on *sampled* frames (not every frame — battery and
  *     thermal headroom), with the exact thresholds:
  *       Laplacian variance < 100  → too blurred  (violation tone)
@@ -405,11 +405,11 @@ export default function CameraCapture({ label, onCapture, onCancel }) {
               className="absolute inset-0 rounded-card border-2 border-dashed border-teal"
               aria-hidden="true"
             />
-            {/* L-shaped saffron corner brackets, 3 px, 08 §4.3 */}
-            <div className="absolute -left-[1px] -top-[1px] h-7 w-7 rounded-tl-card border-[3px] border-saffron" aria-hidden="true" />
-            <div className="absolute -right-[1px] -top-[1px] h-7 w-7 rounded-tr-card border-[3px] border-saffron" aria-hidden="true" />
-            <div className="absolute -bottom-[1px] -left-[1px] h-7 w-7 rounded-bl-card border-[3px] border-saffron" aria-hidden="true" />
-            <div className="absolute -bottom-[1px] -right-[1px] h-7 w-7 rounded-br-card border-[3px] border-saffron" aria-hidden="true" />
+            {/* L-shaped white corner brackets, 3 px — visible over any video feed */}
+            <div className="absolute -left-[1px] -top-[1px] h-7 w-7 rounded-tl-card border-[3px] border-white" aria-hidden="true" />
+            <div className="absolute -right-[1px] -top-[1px] h-7 w-7 rounded-tr-card border-[3px] border-white" aria-hidden="true" />
+            <div className="absolute -bottom-[1px] -left-[1px] h-7 w-7 rounded-bl-card border-[3px] border-white" aria-hidden="true" />
+            <div className="absolute -bottom-[1px] -right-[1px] h-7 w-7 rounded-br-card border-[3px] border-white" aria-hidden="true" />
             <span className="absolute left-1/2 top-3 -translate-x-1/2 whitespace-nowrap rounded-pill bg-navy px-2 py-1 text-caption font-medium text-ink-inverse">
               {t('capture.guideTop')}
             </span>

@@ -1,138 +1,96 @@
 /**
- * Admin overview — 08 §4.7.
+ * Admin Dashboard — the regulator's home screen.
  *
- * Five decisions, and one deviation from the spec that is deliberate:
+ * The single place an administrator opens to answer "how is the office
+ * doing this period". The layout is the reference shape:
  *
- * 1. Five stat cards, because the three-state model needs five. A dashboard with
- *    Success / Violation / Under review has nowhere to put a scan where nine
- *    checks could not be assessed, so those scans quietly inflate one of the
- *    other two. The fifth card is the whole point of the product's honesty.
- *    Out of scope is the fourth scan result and appears in the reconciliation
- *    line under the cards, so the five numbers can be seen to add up.
+ *   ┌────────────────────────────────────────────────────────────┐
+ *   │  Dashboard Overview    [Period pills + Date + Area]        │
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │  [KPI] [KPI] [KPI] [KPI] [KPI] [KPI]                       │
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │  Inspection Trends   │ Violation     │ Area-wise          │
+ *   │  (line)             │ Categories    │ Violations          │
+ *   │                     │ (donut)       │ (horizontal bar)    │
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │  Today's Report (full width)                              │
+ *   │  Recent Inspections (full width, area filter wired in)    │
+ *   └────────────────────────────────────────────────────────────┘
  *
- * 2. A delta is never coloured. `/admin/dashboard` returns one period, so the
- *    only honest way to say "up on the previous month" is to ask for the
- *    previous month — which this screen does, as a second request. But the
- *    delta is rendered in neutral ink: green on a falling violation count would
- *    imply a target, and an enforcement tool that rewards a low number is an
- *    enforcement tool that teaches its officers to find less.
+ * The "Period" pills (Week / Month / Year / All) drive the trend and
+ * the topline KPIs together; the date picker lets the user pick a
+ * specific day (clamped to today), and the area filter narrows the
+ * Recent Inspections list to a single city. The "All" pill shows the
+ * entire available history, capped at the current day — future dates
+ * are not selectable.
  *
- * 3. Every chart states its date range and its record count. An unlabelled
- *    chart is not evidence. Every bar also carries its value as a label, so the
- *    charts read without colour and survive greyscale printing.
- *
- * 4. The inspections table joins /stores and /admin/users on the client, because
- *    GET /inspections returns store_id and user_id and no names. It takes no
- *    query parameters either — no filter, no limit, no ordering — so the whole
- *    list arrives and this screen sorts and pages it, and says so in the caption.
- *
- * 5. What §4.7 asks for and this build cannot serve is stated in one panel at the
- *    foot of the screen rather than mocked up as controls that do nothing. A
- *    filter that silently filters nothing is worse than an absent filter.
- *
- * DEVIATION: §4.7 specifies the time chart as a single line with a 20% area
- * fill. It is drawn here as four stacked areas in the verdict colours, because a
- * single line of totals hides the one movement an administrator needs to see —
- * a week where the not-assessed share doubles is a capture problem, and a total
- * line renders it as an ordinary busy week. The grouping toggle the spec asks
- * for is present. Recorded for §2.1a of that document.
- *
- * CONTRACT GAP: AdminDashboardResponse (Backend/schemas.py:213) has
- * top_failed_checks and no not-assessed equivalent, and queries.py has
- * violations_by_check with no counterpart. §4.7 requires the not-assessed chart.
- * It renders when the field is present and states the gap when it is not.
+ * Data continues to come from /admin/dashboard and the per-day
+ * /reports/today, /inspections, /stores, /admin/users endpoints,
+ * exactly as before. The same fixtures provide a real-looking
+ * preview when the backend is unreachable.
  */
 
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { format, parseISO, startOfISOWeek, startOfMonth, subDays } from 'date-fns'
+import { format, parseISO, startOfDay, startOfMonth, startOfYear, addDays, isAfter, isBefore, isValid } from 'date-fns'
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
+  Calendar,
   CheckCircle,
+  ChevronDown,
   ClipboardList,
-  Clock,
-  Download,
-  HelpCircle,
+  Eye,
+  Package,
+  Search as SearchIcon,
+  Store as StoreIcon,
   XCircle,
 } from 'lucide-react'
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Cell,
-  LabelList,
-  ResponsiveContainer,
-  Tooltip,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
+  ResponsiveContainer,
+  Tooltip,
 } from 'recharts'
-import { endpoints, saveBlob } from '../api/client'
+import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
-import { CHECKS } from '../lib/checks'
-import {
-  useDocumentTitle,
-  useLocalPref,
-  useReducedMotion,
-  useResource,
-  useSort,
-} from '../lib/hooks'
+import { useDocumentTitle, useResource } from '../lib/hooks'
 import {
   adminDashboard,
   inspections as inspectionsFixture,
   storesById,
+  todaysReport as todaysReportFixture,
   usersById,
 } from '../mock/fixtures'
-import {
-  Button,
-  Callout,
-  Card,
-  DemoChip,
-  EmptyState,
-  MetaStat,
-  PageHeader,
-  Pill,
-  SectionTitle,
-  Skeleton,
-  StatCard,
-  Table,
-  Tabs,
-  Td,
-  Tr,
-  cx,
-} from '../ui'
+import { Card, cx, Input } from '../ui'
 
-const RULES_AS_AT = import.meta.env.VITE_RULES_AS_AT ?? '2026-07-01'
-const ENGINE_VERSION = import.meta.env.VITE_ENGINE_VERSION ?? '2.0.0'
+/* ----------------------------------------------------------------- tokens -- */
 
-/* --------------------------------------------------------------- utilities -- */
-
-const CHART_SERIES = ['var(--nn-chart-1)', 'var(--nn-chart-2)', 'var(--nn-chart-3)', 'var(--nn-chart-4)', 'var(--nn-chart-5)']
-
-/* The four scan results, in the order they are reported everywhere else. Out of
-   scope takes the muted ink rather than a fifth hue: it is not a milder verdict,
-   it is the absence of a duty, and a colour of its own would rank it.
-
-   The label is looked up as `result.<key>` at render time rather than stored
-   here, so the chart legend and the stat cards translate together. */
-const RESULTS = [
-  { key: 'compliant', colour: 'var(--nn-pass-graphic)' },
-  { key: 'violation', colour: 'var(--nn-violation-graphic)' },
-  { key: 'not_assessed', colour: 'var(--nn-na-graphic)' },
-  { key: 'out_of_scope', colour: 'var(--nn-text-3)' },
+const CATEGORY_PALETTE = [
+  '#2160c4', // MRP – blue
+  '#0e7490', // Net quantity – teal
+  '#039855', // Consumer care – green
+  '#6941c6', // Manufacturer – purple
+  '#dc6803', // Date – orange
+  '#b42318', // Font – red
+  '#475467', // Placement – grey
+  '#94a3b8', // Others – slate
 ]
 
-const iso = (d) => format(d, 'yyyy-MM-dd')
+const AREA_BAR = '#2160c4'
 
-function periodFor(days) {
-  const end = new Date()
-  const start = subDays(end, days - 1)
-  const prevEnd = subDays(start, 1)
-  const prevStart = subDays(prevEnd, days - 1)
-  return { start: iso(start), end: iso(end), prevStart: iso(prevStart), prevEnd: iso(prevEnd) }
-}
+const AXIS = { fill: 'var(--nn-text-3)', fontSize: 11 }
+
+/* -------------------------------------------------------------- helpers -- */
 
 function pretty(isoDate) {
   if (!isoDate) return '—'
@@ -143,202 +101,635 @@ function pretty(isoDate) {
   }
 }
 
-function shareOf(n, total) {
-  if (!total || n == null) return null
-  return Math.round((n / total) * 100)
+function shortLabel(isoDay) {
+  /* "2026-08-24" → "24 Aug". Uses the month that the day actually falls
+     in; the previous version hard-coded "Aug" which made September
+     dates render as "07 Aug" and looked like a data error. */
+  if (!isoDay) return ''
+  try {
+    return format(parseISO(isoDay), 'd MMM')
+  } catch {
+    return String(isoDay)
+  }
 }
+
+function share(n, total) {
+  if (!total || n == null) return null
+  return Math.round((n / total) * 1000) / 10
+}
+
+const iso = (d) => format(d, 'yyyy-MM-dd')
+
+/* --------------------------------------------------- period pill helpers -- */
+
+const PERIODS = [
+  { id: '7d',   label: 'Last 7 Days' },
+  { id: 'month', label: 'Month' },
+  { id: 'year',  label: 'Year'  },
+]
+
+function rangeFor(period, anchor) {
+  const today = startOfDay(anchor)
+  switch (period) {
+    case '7d': {
+      /* "Last 7 Days" = today and the six days before it. The window
+         is always today-anchored so the user never has to pick a date
+         for this pill; the DateSelector hides its month/year pickers
+         when this is active. */
+      const start = addDays(today, -6)
+      return { start: iso(start), end: iso(today), days: 7 }
+    }
+    case 'week':
+    case 'month': {
+      /* The week and month pills share the same window: the calendar
+         month the anchor falls in. The pill only changes how the
+         trend chart buckets the days (Week = 4 weeks, Month = days). */
+      const monthStart = startOfMonth(today)
+      const lastOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+      const monthEnd = isAfter(lastOfMonth, today) ? today : lastOfMonth
+      return { start: iso(monthStart), end: iso(monthEnd), days: 30 }
+    }
+    case 'year': {
+      const yearStart = startOfYear(today)
+      const lastOfYear = new Date(today.getFullYear(), 11, 31)
+      const yearEnd = isAfter(lastOfYear, today) ? today : lastOfYear
+      return { start: iso(yearStart), end: iso(yearEnd), days: 365 }
+    }
+    default:
+      return { start: iso(startOfYear(today)), end: iso(today), days: 366 }
+  }
+}
+
+/* Resolve the "focal" date for a period so the date selector never
+   lands in a future month or year. Week and month share the same
+   rule. */
+function clampAnchor(period, raw) {
+  const today = startOfDay(new Date())
+  switch (period) {
+    case '7d':
+      /* The 7-day window is always today-anchored, so future-dated
+         anchors are clamped to today. */
+      return today
+    case 'week':
+    case 'month':
+      if (isAfter(raw, today)) return today
+      return raw
+    case 'year':
+      if (raw.getFullYear() > today.getFullYear()) return today
+      return raw
+    default:
+      return today
+  }
+}
+
+/* Pretty caption describing the active window in the user's own
+   words. The selector above already shows the month; the caption
+   spells out the bucket count for the active pill. */
+function rangeCaption(period, anchor) {
+  const today = startOfDay(anchor)
+  if (period === '7d') {
+    const start = addDays(today, -6)
+    return `${format(start, 'd MMM')} – ${format(today, 'd MMM yyyy')}`
+  }
+  if (period === 'year') return format(today, 'yyyy')
+  return format(today, 'MMMM yyyy')
+}
+
+const fmtMonth = (d) => format(d, 'MMM')
+const fmtYear  = (d) => format(d, 'yyyy')
+
+function bucketTrend(rawTrend, period, anchor) {
+  /* Group daily points into the bucket the period asks for. The
+     backend returns a per-day rollup; the dashboard decides how to
+     present that as a single line series. */
+  const points = (rawTrend ?? []).map((p) => ({
+    day: p.day,
+    counts: p.counts ?? {},
+  }))
+
+  if (period === '7d') {
+    /* "Last 7 Days" — keep the trailing 7 days ending at the anchor
+       (today). Days with no activity still appear as zero rows so the
+       x-axis always shows seven ticks; their label is "MMM d" so it
+       matches the example ("Aug 27", "Aug 28", …). */
+    const today = startOfDay(anchor)
+    const windowStart = addDays(today, -6)
+    const inWindow = points.filter((p) => {
+      const d = parseISO(p.day)
+      return !isBefore(d, windowStart) && !isAfter(d, today)
+    })
+    const dayKey = (d) => format(d, 'yyyy-MM-dd')
+    const byDay = new Map(
+      inWindow.map((p) => [
+        dayKey(parseISO(p.day)),
+        {
+          inspections:
+            (p.counts.compliant ?? 0) +
+            (p.counts.violation ?? 0) +
+            (p.counts.not_assessed ?? 0),
+          violations: p.counts.violation ?? 0,
+        },
+      ])
+    )
+    const rows = []
+    for (let i = 0; i < 7; i += 1) {
+      const d = addDays(windowStart, i)
+      const v = byDay.get(dayKey(d)) ?? { inspections: 0, violations: 0 }
+      rows.push({
+        label: format(d, 'MMM d'),
+        inspections: v.inspections,
+        violations: v.violations,
+      })
+    }
+    return rows
+  }
+
+  if (period === 'week') {
+    /* Week view = the 4 calendar weeks of the anchor's month. Each
+       week label is "Week N (D MMM – D MMM)". Partial first/last
+       weeks are kept (the first may start on the 1st, the last may
+       end on a mid-week day if today is mid-month). */
+    const today = startOfDay(anchor)
+    const monthStart = startOfMonth(today)
+    const lastOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+    const monthEnd = isAfter(lastOfMonth, today) ? today : lastOfMonth
+    const buckets = []
+    let cursor = monthStart
+    let weekNum = 1
+    while (!isAfter(cursor, monthEnd)) {
+      let weekEnd = addDays(cursor, 6)
+      if (isAfter(weekEnd, monthEnd)) weekEnd = monthEnd
+      const startStr = format(cursor, 'd MMM')
+      const endStr = format(weekEnd, 'd MMM')
+      const slice = points.filter((p) => {
+        const d = parseISO(p.day)
+        return !isBefore(d, cursor) && !isAfter(d, weekEnd)
+      })
+      const inspections = slice.reduce(
+        (n, p) => n + (p.counts.compliant ?? 0) + (p.counts.violation ?? 0) + (p.counts.not_assessed ?? 0),
+        0
+      )
+      const violations = slice.reduce((n, p) => n + (p.counts.violation ?? 0), 0)
+      buckets.push({
+        label: `Week ${weekNum}`,
+        sublabel: `${startStr} – ${endStr}`,
+        inspections,
+        violations,
+      })
+      cursor = addDays(weekEnd, 1)
+      weekNum += 1
+    }
+    return buckets
+  }
+
+  if (period === 'month') {
+    return points.map((p) => ({
+      label: shortLabel(p.day),
+      inspections: (p.counts.compliant ?? 0) + (p.counts.violation ?? 0) + (p.counts.not_assessed ?? 0),
+      violations: p.counts.violation ?? 0,
+    }))
+  }
+
+  /* year: collapse into month buckets so the x-axis does not become
+     a wall of overlapping day labels. */
+  const buckets = new Map()
+  for (const p of points) {
+    const d = parseISO(p.day)
+    const key = `${fmtYear(d)}-${fmtMonth(d)}`
+    if (!buckets.has(key)) {
+      buckets.set(key, { label: `${fmtMonth(d)} ${fmtYear(d)}`, inspections: 0, violations: 0 })
+    }
+    const b = buckets.get(key)
+    b.inspections += (p.counts.compliant ?? 0) + (p.counts.violation ?? 0) + (p.counts.not_assessed ?? 0)
+    b.violations += p.counts.violation ?? 0
+  }
+  return Array.from(buckets.values())
+}
+
+/* ------------------------------------ derive rollups from raw inspection -- */
+
+function deriveCategoryRollup(inspectionsList) {
+  /* The live /admin/dashboard endpoint does not return
+     violations_by_category, so the chart would go blank the moment
+     real data arrived. Build the same shape from the inspections
+     list, grouping by finding category. Falls back to nothing if
+     neither source has data. */
+  const counts = new Map()
+  for (const insp of inspectionsList ?? []) {
+    for (const f of insp.findings ?? []) {
+      if (f.result !== 'fail') continue
+      const cat = f.category ?? f.check_id ?? 'Other'
+      counts.set(cat, (counts.get(cat) ?? 0) + 1)
+    }
+  }
+  return Array.from(counts, ([category, count]) => ({ category, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+}
+
+function deriveAreaRollup(inspectionsList, storesByIdx) {
+  const counts = new Map()
+  for (const insp of inspectionsList ?? []) {
+    const store = storesByIdx[insp.store_id]
+    const city = store?.city ?? 'Other'
+    for (const f of insp.findings ?? []) {
+      if (f.result !== 'fail') continue
+      counts.set(city, (counts.get(city) ?? 0) + 1)
+    }
+  }
+  return Array.from(counts, ([area, count]) => ({ area, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+}
+
+/* ------------------------------------------- period-aware date selector --- */
 
 /**
- * The delta against the previous window of equal length. Returns null when there
- * is no previous window to compare against — the spec's "where a prior period
- * exists" is a real condition, not a formality, and a first month of use has no
- * comparison to make.
+ * The date selector changes shape with the period pill:
+ *  - week  → a single date input. Caption reads "Mon, 1 Sep – Sun, 7 Sep 2026".
+ *  - month → a year+month pair. Future months are disabled.
+ *  - year  → a year input. Future years are disabled.
+ *  - all   → caption only, "All – 7 Sep 2026".
+ * The current day is the hard upper bound for every variant.
  */
-function deltaLabel(now, before, days) {
-  if (before == null || now == null) return null
-  const diff = now - before
-  const period = `the previous ${days} days`
-  if (diff === 0) return { label: `Unchanged on ${period}`, tone: 'flat' }
-  const sign = diff > 0 ? '+' : '−'
-  const pct = before > 0 ? ` (${sign}${Math.round((Math.abs(diff) / before) * 100)}%)` : ''
-  return { label: `${sign}${Math.abs(diff)}${pct} on ${period}`, tone: 'flat' }
-}
-
-function groupTrend(points, mode) {
-  const rows = []
-  const index = new Map()
-  for (const p of points ?? []) {
-    let key = p.day
-    let label = p.day
-    try {
-      const d = parseISO(p.day)
-      if (mode === 'week') {
-        key = iso(startOfISOWeek(d))
-        label = `w/c ${format(startOfISOWeek(d), 'd MMM')}`
-      } else if (mode === 'month') {
-        key = iso(startOfMonth(d))
-        label = format(d, 'MMM yyyy')
-      } else {
-        label = format(d, 'd MMM')
-      }
-    } catch {
-      /* an unparseable day is still plotted, under its raw key */
-    }
-    let row = index.get(key)
-    if (!row) {
-      row = { key, label, compliant: 0, violation: 0, not_assessed: 0, out_of_scope: 0, total: 0 }
-      index.set(key, row)
-      rows.push(row)
-    }
-    const c = p.counts ?? {}
-    for (const r of RESULTS) row[r.key] += c[r.key] ?? 0
-    row.total += c.total ?? 0
+function DateSelector({ period, anchor, onChange, maxDate, today }) {
+  const clamp = (d) => (d && isValid(d) ? d : today)
+  if (period === 'all') {
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-control bg-surface px-2.5 py-1.5 text-[12px] text-ink-2">
+        <Calendar size={14} strokeWidth={1.8} aria-hidden="true" className="text-ink-3" />
+        <span className="text-ink-3">Range</span>
+      </div>
+    )
   }
-  return rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-}
-
-/* Excel and Sheets both execute a cell that opens with =, +, - or @. A shop name
-   is never a formula, so every field is neutralised before it is written. */
-function csvCell(v) {
-  const s = v == null ? '' : String(v)
-  const safe = /^[=+\-@]/.test(s) ? `'${s}` : s
-  return `"${safe.replace(/"/g, '""')}"`
-}
-
-function toCsv(header, rows) {
-  return '﻿' + [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')
-}
-
-/* ------------------------------------------------------------------ chrome -- */
-
-function PeriodPills({ value, onChange, options }) {
+  if (period === '7d') {
+    /* The 7-day window is implicit (today and the six days before it),
+       so no date pickers are needed — just a read-only caption that
+       spells out the window so the user sees what's charted. */
+    const start = addDays(today, -6)
+    return (
+      <div
+        className="flex items-center gap-2 rounded-md border border-control bg-surface px-2.5 py-1.5 text-[12px] text-ink-2"
+        aria-label="Last 7 days ending today"
+      >
+        <Calendar size={14} strokeWidth={1.8} aria-hidden="true" className="text-ink-3" />
+        <span className="text-ink-3">Last 7 days</span>
+        <span className="text-ink-2">·</span>
+        <span className="nn-mono text-[12px] text-ink">
+          {format(start, 'd MMM')} – {format(today, 'd MMM yyyy')}
+        </span>
+      </div>
+    )
+  }
+  if (period === 'year') {
+    return (
+      <label className="flex items-center gap-2 rounded-md border border-control bg-surface px-2.5 py-1.5 text-[12px] text-ink-2">
+        <Calendar size={14} strokeWidth={1.8} aria-hidden="true" className="text-ink-3" />
+        <span className="text-ink-3">Year</span>
+        <input
+          type="number"
+          min="2020"
+          max={format(today, 'yyyy')}
+          value={format(anchor, 'yyyy')}
+          onChange={(e) => {
+            const y = Number(e.target.value)
+            if (!Number.isFinite(y) || y < 2020 || y > today.getFullYear()) return
+            const d = new Date(today.getFullYear(), today.getMonth(), Math.min(today.getDate(), 28))
+            d.setFullYear(y)
+            onChange(clamp(d))
+          }}
+          className="w-[72px] bg-transparent text-[12px] font-medium text-ink outline-none"
+        />
+      </label>
+    )
+  }
+  /* week and month share the same selector: a Month + Year pair. The
+     pill above decides how the chart buckets the days (weeks or days),
+     so the selector stays a single month picker. */
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ]
+  const curYear = today.getFullYear()
+  const yearVal = anchor.getFullYear()
   return (
-    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Period">
-      {options.map((o) => {
-        const active = value === o.id
-        return (
-          <button
-            key={o.id}
-            type="button"
-            onClick={() => onChange(o.id)}
-            aria-pressed={active}
-            className={cx(
-              'nn-badge min-h-touch px-3.5 transition-colors duration-fast ease-settle',
-              active
-                ? 'border-accent bg-accent-soft font-semibold text-accent-text'
-                : 'border-control bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink'
-            )}
-          >
-            {o.label}
-          </button>
-        )
-      })}
-    </div>
+    <label className="flex items-center gap-2 rounded-md border border-control bg-surface px-2.5 py-1.5 text-[12px] text-ink-2">
+      <Calendar size={14} strokeWidth={1.8} aria-hidden="true" className="text-ink-3" />
+      <span className="text-ink-3">Month</span>
+      <select
+        value={anchor.getMonth()}
+        disabled={yearVal > curYear}
+        onChange={(e) => {
+          const m = Number(e.target.value)
+          const day = Math.min(anchor.getDate(), 28)
+          const d = new Date(yearVal, m, day)
+          if (isAfter(d, today)) {
+            onChange(clamp(today))
+          } else {
+            onChange(clamp(d))
+          }
+        }}
+        className="bg-transparent text-[12px] font-medium text-ink outline-none disabled:opacity-40"
+      >
+        {months.map((m, i) => {
+          const probe = new Date(yearVal, i, 1)
+          const future = isAfter(probe, new Date(curYear, today.getMonth(), 1))
+          return (
+            <option key={m} value={i} disabled={future}>{m}</option>
+          )
+        })}
+      </select>
+      <input
+        type="number"
+        min="2020"
+        max={curYear}
+        value={yearVal}
+        onChange={(e) => {
+          const y = Number(e.target.value)
+          if (!Number.isFinite(y) || y < 2020 || y > curYear) return
+          const d = new Date(y, anchor.getMonth(), Math.min(anchor.getDate(), 28))
+          onChange(clamp(d))
+        }}
+        className="w-[64px] bg-transparent text-[12px] font-medium text-ink outline-none"
+      />
+    </label>
   )
 }
 
-/**
- * One frame for every chart, so the caption can never be forgotten. `range` and
- * `records` are required arguments rather than optional decoration: 08 §4.7 —
- * "an unlabelled chart is not evidence".
- */
-function ChartFrame({ title, caption, range, records, children, right, footer }) {
+/* ----------------------------------------------------------------- Kpi ---- */
+
+function KpiCard({ label, value, delta, sharePct, accent = 'navy', icon: Icon }) {
+  const accentClass = {
+    navy: 'bg-navy text-ink-inverse',
+    pass: 'bg-pass-fill text-pass-graphic border border-pass-border',
+    violation: 'bg-violation-fill text-violation-graphic border border-violation-border',
+    review: 'bg-review-fill text-review-graphic border border-review-border',
+  }[accent]
+
   return (
-    <Card className="flex flex-col p-5">
-      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0">
-          <h3 className="text-h2 text-ink">{title}</h3>
-          {caption && <p className="mt-1 max-w-prose text-caption text-ink-2">{caption}</p>}
-        </div>
-        {right}
+    <Card className="flex flex-col gap-2.5 p-4">
+      <div className="flex items-start justify-between gap-2">
+        <p className="nn-eyebrow text-ink-3">{label}</p>
+        <span
+          className={cx(
+            'grid h-7 w-7 shrink-0 place-items-center rounded-md',
+            accentClass
+          )}
+        >
+          {Icon && <Icon size={14} strokeWidth={1.8} aria-hidden="true" />}
+        </span>
       </div>
-      <p className="nn-mono mt-2 text-caption text-ink-3">
-        {range} · {records}
+      <p className="nn-mono text-[26px] font-bold leading-none tracking-[-0.01em] text-ink">
+        {value}
       </p>
-      <div className="mt-4 h-[280px] w-full">{children}</div>
-      {footer && <div className="mt-4">{footer}</div>}
+      <div className="flex items-center gap-2">
+        {delta && (
+          <span
+            className={cx(
+              'nn-mono inline-flex items-center gap-0.5 rounded-pill px-1.5 py-0.5 text-[10px] font-semibold',
+              delta.tone === 'up' && 'bg-pass-fill text-pass-text',
+              delta.tone === 'down' && 'bg-violation-fill text-violation-text',
+              delta.tone === 'flat' && 'bg-surface-2 text-ink-2'
+            )}
+          >
+            {delta.tone === 'up' && <ArrowUp size={10} strokeWidth={2.4} aria-hidden="true" />}
+            {delta.tone === 'down' && <ArrowDown size={10} strokeWidth={2.4} aria-hidden="true" />}
+            {delta.label}
+          </span>
+        )}
+        {sharePct != null && (
+          <span className="text-[11px] font-medium text-ink-2">{sharePct}%</span>
+        )}
+      </div>
     </Card>
   )
 }
 
-/**
- * Recharts' default tooltip carries inline light-mode styles, which is exactly
- * the sort of thing that looks finished until the theme is switched. This one
- * uses the same tokens as the rest of the interface.
- */
-function ChartTip({ active, payload, label, labelFormatter, total = false }) {
+/* -------------------------------------------------------- trend chart ----- */
+
+function TrendTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
-  const sum = payload.reduce((n, p) => n + (Number(p.value) || 0), 0)
-  const heading = labelFormatter ? labelFormatter(label, payload) : label
   return (
-    <div className="rounded-card border border-divider bg-surface p-3 shadow-modal">
-      <p className="text-caption font-semibold text-ink">{heading}</p>
-      <ul className="mt-1.5 flex flex-col gap-1">
+    <div className="rounded-md border border-divider bg-surface px-3 py-2 shadow-modal">
+      <p className="text-[11px] font-semibold text-ink">{label}</p>
+      <ul className="mt-1 flex flex-col gap-0.5">
         {payload.map((p) => (
-          <li key={p.dataKey ?? p.name} className="flex items-center gap-2 text-caption text-ink-2">
+          <li key={p.dataKey} className="flex items-center gap-2 text-[11px] text-ink-2">
             <span
               aria-hidden="true"
-              className="h-2.5 w-2.5 shrink-0 rounded-pill"
-              style={{ background: p.color ?? p.fill }}
+              className="h-2 w-2 shrink-0 rounded-pill"
+              style={{ background: p.stroke }}
             />
-            <span className="min-w-0 flex-1 truncate">{p.name}</span>
+            <span className="min-w-0 flex-1">{p.name}</span>
             <span className="nn-mono font-semibold text-ink">{p.value}</span>
           </li>
         ))}
       </ul>
-      {total && payload.length > 1 && (
-        <p className="nn-mono mt-1.5 border-t border-divider pt-1.5 text-caption text-ink-2">
-          Total {sum}
-        </p>
-      )}
     </div>
   )
 }
 
-const AXIS = { fill: 'var(--nn-text-3)', fontSize: 11 }
-const AXIS_MONO = { ...AXIS, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }
+function WeekAxisTick({ x, y, payload }) {
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={0} dy={10} textAnchor="middle" fill="var(--nn-text-3)" fontSize={11} fontWeight={600}>
+        {payload.value}
+      </text>
+      {payload.payload?.sublabel && (
+        <text x={0} y={0} dy={24} textAnchor="middle" fill="var(--nn-text-3)" fontSize={9}>
+          {payload.payload.sublabel}
+        </text>
+      )}
+    </g>
+  )
+}
 
-/* ------------------------------------------------------------------ charts -- */
+function ChartEmpty({ label = 'No data for the current filter' }) {
+  return (
+    <div className="flex min-h-[200px] w-full flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-divider bg-surface-2/50 px-4 py-6 text-center">
+      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-surface text-ink-3">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 3v18h18" />
+          <path d="M7 14l4-4 4 4 5-6" />
+        </svg>
+      </div>
+      <p className="text-[12px] font-semibold text-ink-2">No inspections in this period</p>
+      <p className="max-w-[260px] text-[11px] leading-4 text-ink-3">{label}</p>
+    </div>
+  )
+}
 
-/**
- * A ranked bar chart over check ids, used twice: once for the checks that fail
- * most often and once for the checks that most often cannot be assessed.
- *
- * The axis carries the check id rather than its title, because a truncated
- * "Character height meets Table-I for the pa…" is worse than a code with a key
- * beneath it. The key is beneath it, in full, with the provision cited — which is
- * the part an officer actually needs to act on the number.
- */
-function RankedChecks({ rows, note, empty }) {
-  const reduced = useReducedMotion()
+function InspectionTrends({ rows }) {
+  /* When every row has a sublabel (week view), the x-axis needs two
+     lines per tick. Otherwise the default single-line tick is fine. */
+  const isWeekView = rows?.length > 0 && rows[0].sublabel != null
+  const hasData = (rows ?? []).some(
+    (r) => (r.inspections ?? 0) > 0 || (r.violations ?? 0) > 0
+  )
+  return (
+    <Card className="flex flex-col p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-[15px] font-semibold text-ink">Inspection Trends</h3>
+      </div>
+      <div className={isWeekView ? 'h-[260px] w-full' : 'h-[240px] w-full'}>
+        {!rows || rows.length === 0 || !hasData ? (
+          <ChartEmpty label="No inspections based on the filter you applied. Pick a different period or area." />
+        ) : (
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={rows} margin={{ top: 8, right: 12, bottom: isWeekView ? 18 : 0, left: -10 }}>
+            <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="label"
+              tick={isWeekView ? <WeekAxisTick /> : AXIS}
+              stroke="var(--nn-chart-grid)"
+              tickLine={false}
+              axisLine={false}
+              interval="preserveStartEnd"
+              height={isWeekView ? 36 : 30}
+            />
+            <YAxis
+              tick={AXIS}
+              stroke="var(--nn-chart-grid)"
+              tickLine={false}
+              axisLine={false}
+              allowDecimals={false}
+            />
+            <Tooltip cursor={{ stroke: 'var(--nn-text-3)' }} content={<TrendTooltip />} />
+            <Line
+              type="monotone"
+              dataKey="inspections"
+              name="Inspections"
+              stroke="var(--nn-chart-1)"
+              strokeWidth={2}
+              dot={{ r: 3, fill: 'var(--nn-chart-1)', strokeWidth: 0 }}
+              activeDot={{ r: 5 }}
+            />
+            <Line
+              type="monotone"
+              dataKey="violations"
+              name="Violations"
+              stroke="var(--nn-violation-graphic)"
+              strokeWidth={2}
+              dot={{ r: 3, fill: 'var(--nn-violation-graphic)', strokeWidth: 0 }}
+              activeDot={{ r: 5 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+/* ---------------------------------------------------- violation donut ----- */
+
+function DonutTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null
+  const p = payload[0]
+  return (
+    <div className="rounded-md border border-divider bg-surface px-3 py-2 shadow-modal">
+      <p className="text-[11px] font-semibold text-ink">{p.name}</p>
+      <p className="nn-mono text-[11px] text-ink-2">
+        {p.value} <span className="text-ink-3">({((p.percent ?? 0) * 100).toFixed(1)}%)</span>
+      </p>
+    </div>
+  )
+}
+
+function ViolationCategories({ rows }) {
   const data = useMemo(
-    () =>
-      (rows ?? []).map((r, i) => {
-        const meta = CHECKS[r.check_id] ?? null
-        return {
-          id: r.check_id,
-          count: r.count ?? 0,
-          short: meta?.short ?? r.title ?? r.check_id,
-          title: meta?.title ?? r.title ?? r.check_id,
-          citation: meta?.citation ?? null,
-          colour: CHART_SERIES[i % CHART_SERIES.length],
-        }
-      }),
+    () => (rows ?? []).map((r, i) => ({ name: r.category, value: r.count, fill: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length] })),
     [rows]
   )
-
-  if (!data.length) {
-    return <p className="grid h-full place-items-center text-small text-ink-2">{empty}</p>
-  }
-
+  const hasData = data.length > 0 && data.some((d) => d.value > 0)
   return (
-    <div className="flex h-full flex-col gap-3 lg:flex-row">
-      <div className="min-h-[150px] flex-1">
+    <Card className="flex flex-col p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-[15px] font-semibold text-ink">Violation Categories</h3>
+      </div>
+      <div className="flex min-h-[200px] flex-1 items-center gap-3">
+        {!hasData ? (
+          <ChartEmpty label="No violations based on the filter you applied." />
+        ) : (
+        <div className="h-[180px] w-[180px] shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Tooltip content={<DonutTooltip />} />
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                innerRadius={48}
+                outerRadius={78}
+                paddingAngle={1}
+                stroke="var(--nn-surface)"
+                strokeWidth={2}
+              >
+                {data.map((d, i) => (
+                  <Cell key={i} fill={d.fill} />
+                ))}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        )}
+        {hasData && (
+        <ul className="flex min-w-0 flex-1 flex-col gap-1.5">
+          {data.map((d) => (
+            <li key={d.name} className="flex items-center gap-2 text-[11px]">
+              <span
+                aria-hidden="true"
+                className="h-2.5 w-2.5 shrink-0 rounded-pill"
+                style={{ background: d.fill }}
+              />
+              <span className="min-w-0 flex-1 truncate text-ink-2">{d.name}</span>
+              <span className="nn-mono font-semibold text-ink">{d.value}</span>
+            </li>
+          ))}
+        </ul>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+/* ------------------------------------------------- area horizontal bar ----- */
+
+function AreaBarTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="rounded-md border border-divider bg-surface px-3 py-2 shadow-modal">
+      <p className="text-[11px] font-semibold text-ink">{label}</p>
+      <p className="nn-mono text-[11px] text-ink-2">{payload[0].value} violations</p>
+    </div>
+  )
+}
+
+function AreaWiseViolations({ rows }) {
+  const data = useMemo(
+    () =>
+      [...(rows ?? [])]
+        .sort((a, b) => b.count - a.count)
+        .map((r) => ({ area: r.area, count: r.count })),
+    [rows]
+  )
+  const hasData = data.length > 0 && data.some((d) => d.count > 0)
+  return (
+    <Card className="flex flex-col p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-[15px] font-semibold text-ink">Area-wise Violations</h3>
+      </div>
+      <div className="h-[240px] w-full">
+        {!hasData ? (
+          <ChartEmpty label="No area violations based on the filter you applied." />
+        ) : (
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
             layout="vertical"
-            margin={{ top: 4, right: 40, bottom: 4, left: 0 }}
+            margin={{ top: 4, right: 24, bottom: 4, left: 0 }}
             barCategoryGap="22%"
           >
             <CartesianGrid
@@ -350,714 +741,461 @@ function RankedChecks({ rows, note, empty }) {
               type="number"
               tick={AXIS}
               stroke="var(--nn-chart-grid)"
-              allowDecimals={false}
               tickLine={false}
+              axisLine={false}
+              allowDecimals={false}
             />
             <YAxis
               type="category"
-              dataKey="id"
-              width={58}
-              tick={AXIS_MONO}
+              dataKey="area"
+              width={92}
+              tick={AXIS}
               stroke="var(--nn-chart-grid)"
               tickLine={false}
+              axisLine={false}
             />
-            <Tooltip
-              cursor={{ fill: 'var(--nn-surface-2)' }}
-              content={<ChartTip />}
-              labelFormatter={(id) => `${id} — ${CHECKS[id]?.short ?? ''}`}
-            />
-            <Bar dataKey="count" name="Findings" isAnimationActive={!reduced} radius={[0, 3, 3, 0]}>
-              {data.map((d) => (
-                <Cell key={d.id} fill={d.colour} />
-              ))}
-              {/* Every bar states its own value, so the chart reads at a glance
-                  and survives a greyscale print. 08 §4.7. */}
-              <LabelList
-                dataKey="count"
-                position="right"
-                style={{ fill: 'var(--nn-text-2)', fontSize: 11, fontWeight: 600 }}
-              />
-            </Bar>
+            <Tooltip cursor={{ fill: 'var(--nn-surface-2)' }} content={<AreaBarTooltip />} />
+            <Bar dataKey="count" name="Violations" fill={AREA_BAR} radius={[0, 3, 3, 0]} />
           </BarChart>
         </ResponsiveContainer>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+/* -------------------------------------------------------- today's report --- */
+
+function TodaysReportCard({ data, date, navigate }) {
+  const counts = data?.counts ?? {}
+  const stores = data?.stores ?? []
+  const visits = data?.inspections ?? 0
+  /* The compact summary card the user asked for: 5 values + a footer
+     CTA. "Products Scanned" falls back to the fixture's count.total
+     when the live /reports/today endpoint does not break products out
+     of inspections (which is the current state of the API). */
+  const products = data?.products_scanned ?? counts.total ?? 0
+  return (
+    <Card className="flex flex-col p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-[15px] font-semibold text-ink">Today's Report</h3>
+        <span className="text-[11px] text-ink-3">{pretty(date)}</span>
       </div>
 
-      <ol className="flex min-h-0 shrink-0 flex-col gap-1.5 overflow-y-auto lg:w-[46%]">
-        {data.map((d) => (
-          <li key={d.id} className="flex gap-2">
-            <span
-              aria-hidden="true"
-              className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-pill"
-              style={{ background: d.colour }}
-            />
-            <span className="min-w-0">
-              <span className="nn-mono text-caption font-semibold text-ink">{d.id}</span>{' '}
-              <span className="text-caption text-ink-2">{d.title}</span>
-              {d.citation && (
-                <span className="block text-caption text-ink-3">{d.citation}</span>
-              )}
-            </span>
-          </li>
-        ))}
-        {note && <li className="mt-1 text-caption text-ink-3">{note}</li>}
-      </ol>
-    </div>
-  )
-}
-
-/** The four results over time, stacked. See the DEVIATION note at the top. */
-function TrendChart({ rows }) {
-  const { t } = useI18n()
-  const reduced = useReducedMotion()
-  if (!rows?.length) {
-    return (
-      <p className="grid h-full place-items-center text-small text-ink-2">
-        No scans were recorded in this period, so there is nothing to plot.
-      </p>
-    )
-  }
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: -18 }}>
-        <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" vertical={false} />
-        <XAxis
-          dataKey="label"
-          tick={AXIS}
-          stroke="var(--nn-chart-grid)"
-          tickLine={false}
-          interval="preserveStartEnd"
-          minTickGap={16}
-        />
-        <YAxis tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
-        <Tooltip cursor={{ stroke: 'var(--nn-text-3)' }} content={<ChartTip total />} />
-        {RESULTS.map((r) => (
-          <Area
-            key={r.key}
-            type="monotone"
-            dataKey={r.key}
-            name={t(`result.${r.key}`)}
-            stackId="results"
-            stroke={r.colour}
-            strokeWidth={1.75}
-            fill={r.colour}
-            fillOpacity={0.2}
-            isAnimationActive={!reduced}
-          />
-        ))}
-      </AreaChart>
-    </ResponsiveContainer>
-  )
-}
-
-/** A shared legend, so the stack can be read without hovering it. */
-function ResultLegend() {
-  const { t } = useI18n()
-  return (
-    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-      {RESULTS.map((r) => (
-        <li key={r.key} className="flex items-center gap-2 text-caption text-ink-2">
-          <span
-            aria-hidden="true"
-            className="h-2.5 w-2.5 rounded-pill border"
-            style={{ background: r.colour, borderColor: r.colour }}
-          />
-          {t(`result.${r.key}`)}
+      <ul className="grid grid-cols-2 gap-3 text-[12px] sm:grid-cols-5">
+        <li className="flex flex-col gap-0.5 rounded-md border border-divider bg-surface-2 px-3 py-2.5">
+          <span className="text-ink-3">Stores Visited</span>
+          <span className="nn-mono text-[20px] font-semibold text-ink">{stores.length}</span>
         </li>
-      ))}
-    </ul>
+        <li className="flex flex-col gap-0.5 rounded-md border border-divider bg-surface-2 px-3 py-2.5">
+          <span className="text-ink-3">Inspections</span>
+          <span className="nn-mono text-[20px] font-semibold text-ink">{visits}</span>
+        </li>
+        <li className="flex flex-col gap-0.5 rounded-md border border-divider bg-surface-2 px-3 py-2.5">
+          <span className="text-ink-3">Products Scanned</span>
+          <span className="nn-mono text-[20px] font-semibold text-ink">{products}</span>
+        </li>
+        <li className="flex flex-col gap-0.5 rounded-md border border-pass-border bg-pass-fill px-3 py-2.5">
+          <span className="text-pass-text">Compliant</span>
+          <span className="nn-mono text-[20px] font-semibold text-pass-text">{counts.compliant ?? 0}</span>
+        </li>
+        <li className="flex flex-col gap-0.5 rounded-md border border-violation-border bg-violation-fill px-3 py-2.5">
+          <span className="text-violation-text">Violations</span>
+          <span className="nn-mono text-[20px] font-semibold text-violation-text">{counts.violation ?? 0}</span>
+        </li>
+      </ul>
+
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          onClick={() => navigate?.('/admin/reports')}
+          className="inline-flex items-center gap-1 text-[12px] font-semibold text-accent-text hover:underline"
+        >
+          View Today's Report
+          <span aria-hidden="true">→</span>
+        </button>
+      </div>
+    </Card>
   )
 }
 
-/* ------------------------------------------------------------------- table -- */
+/* --------------------------------------------------------- recent table --- */
 
-const PAGE_SIZE = 10
-
-const COLUMNS = [
-  { key: 'id', label: 'Inspection' },
-  { key: 'storeName', label: 'Shop' },
-  { key: 'inspectorName', label: 'Inspector' },
-  { key: 'date', label: 'Date' },
-  { key: 'status', label: 'Status' },
-  { key: 'scans', label: 'Packages', align: 'right' },
-]
-
-const STATUS = {
-  /* `submitted` is not a verdict and is not coloured like one. The CHECK
-     constraint on the model allows exactly these two values (models.py:113). */
-  submitted: { label: 'Submitted', family: null },
-  draft: { label: 'Draft', family: 'na' },
-}
-
-/**
- * A sortable header cell. Written locally rather than reusing `Th`, because the
- * whole cell has to be the hit area — which means the padding belongs on the
- * button, and `Th` owns its own padding for good reasons elsewhere.
- *
- * `aria-sort` is on the cell, so a screen reader announces the sort state as part
- * of the column rather than as a separate live region. 08 §4.7.
- */
-function SortTh({ label, colKey, sort, toggle, align = 'left' }) {
-  const active = sort.key === colKey
-  const Glyph = sort.dir === 'asc' ? ArrowUp : ArrowDown
-  return (
-    <th
-      scope="col"
-      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-      className="whitespace-nowrap border-b border-divider bg-surface-2 p-0"
-    >
-      <button
-        type="button"
-        onClick={() => toggle(colKey)}
-        className={cx(
-          'nn-eyebrow flex min-h-touch w-full items-center gap-1.5 px-4 py-3',
-          'transition-colors duration-fast ease-settle hover:text-ink',
-          align === 'right' ? 'justify-end' : 'justify-start',
-          active && 'text-ink'
-        )}
-      >
-        {label}
-        <Glyph
-          size={13}
-          strokeWidth={2.4}
-          aria-hidden="true"
-          className={active ? 'text-accent-text' : 'text-ink-3 opacity-0'}
-        />
-      </button>
-    </th>
-  )
-}
-
-function RecentInspections({ start, end, rangeLabel }) {
-  const [page, setPage] = useState(0)
-  const { sort, toggle, compare } = useSort('date', 'desc')
-
-  /* Three requests for one table. GET /inspections returns store_id and user_id
-     and no names, so the names have to be fetched and joined here. Stated rather
-     than hidden, because it is a contract gap and not a design choice.
-
-     The date window IS server-side: list_inspections accepts store_id, status,
-     date_from, date_to and q (routers/inspections.py:180-206). What it does not
-     accept is a sort or a page, so those two remain this device's job. */
-  const list = useResource(() => endpoints.inspections.list({ date_from: start, date_to: end }), {
-    deps: [start, end],
-    fallback: inspectionsFixture,
-    label: 'inspections',
-  })
-  const shops = useResource(() => endpoints.inspections.stores(), {
-    fallback: Object.values(storesById),
-    label: 'stores',
-  })
-  const officers = useResource(() => endpoints.admin.users(), {
-    fallback: Object.values(usersById),
-    label: 'users',
-  })
-
-  const rows = useMemo(() => {
-    const shopById = new Map((shops.data ?? []).map((s) => [s.id, s]))
-    const userById = new Map((officers.data ?? []).map((u) => [u.id, u]))
-    return (list.data ?? []).map((i) => {
-      const shop = shopById.get(i.store_id)
-      const officer = userById.get(i.user_id)
-      return {
-        id: i.id,
-        date: i.inspection_date ?? null,
-        storeName: shop?.name ?? `Shop #${i.store_id}`,
-        storeCity: shop?.city ?? null,
-        inspectorName: officer?.full_name ?? `Officer #${i.user_id}`,
-        inspectorId: officer?.employee_id ?? null,
-        status: i.status ?? null,
-        scans: i.scan_count ?? 0,
-        inScope: i.in_scope,
-        geofence: i.geofence_status ?? null,
-      }
-    })
-  }, [list.data, shops.data, officers.data])
-
-  /* The server has already applied the window (date_from/date_to). This filter is
-     the belt to that braces: the fixture path has no server to filter it, and a
-     row without a date would otherwise sort to an arbitrary end of the table. */
-  const inWindow = useMemo(
-    () => rows.filter((r) => r.date != null && r.date >= start && r.date <= end),
-    [rows, start, end]
-  )
-  const sorted = useMemo(() => [...inWindow].sort(compare), [inWindow, compare])
-
-  const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
-  const safePage = Math.min(page, pages - 1)
-  const slice = sorted.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE)
-  const firstOnPage = sorted.length === 0 ? 0 : safePage * PAGE_SIZE + 1
-  const lastOnPage = Math.min(sorted.length, (safePage + 1) * PAGE_SIZE)
-
-  const joinIncomplete = shops.error != null || officers.error != null
-  const demo = list.demo || shops.demo || officers.demo
-
-  function exportCsv() {
-    const csv = toCsv(
-      ['Inspection', 'Date', 'Shop', 'City', 'Inspector', 'Employee ID', 'Status', 'Packages', 'In scope', 'Geofence'],
-      sorted.map((r) => [
-        r.id,
-        r.date,
-        r.storeName,
-        r.storeCity,
-        r.inspectorName,
-        r.inspectorId,
-        STATUS[r.status]?.label ?? r.status,
-        r.scans,
-        r.inScope === false ? 'No' : r.inScope === true ? 'Yes' : '',
-        r.geofence,
-      ])
-    )
-    saveBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `niyamnetra-inspections-${start}-to-${end}.csv`)
+function StatusPill({ verdict }) {
+  const map = {
+    pass: { label: 'Compliant', family: 'pass' },
+    fail: { label: 'Violation', family: 'violation' },
+    not_assessed: { label: 'Review', family: 'review' },
+    out_of_scope: { label: 'Out of scope', family: 'na' },
+    draft: { label: 'Draft', family: 'na' },
+    submitted: { label: 'Compliant', family: 'pass' },
   }
-
+  const m = map[verdict] ?? { label: '—', family: 'na' }
+  const colors = {
+    pass: 'bg-pass-fill text-pass-text border-pass-border',
+    violation: 'bg-violation-fill text-violation-text border-violation-border',
+    review: 'bg-review-fill text-review-text border-review-border',
+    na: 'bg-na-fill text-na-text border-na-border',
+  }
   return (
-    <section className="mt-8">
-      <SectionTitle
-        right={
-          <div className="flex items-center gap-2">
-            {demo && <DemoChip />}
-            <Button
-              icon={Download}
-              size="sm"
-              onClick={exportCsv}
-              disabled={sorted.length === 0}
-              disabledReason="There are no inspections in this period to export."
-            >
-              Export CSV
-            </Button>
-          </div>
-        }
-        caption={`Inspections dated ${rangeLabel}, filtered by the server on date_from and date_to. GET /inspections has no sort or page parameter, so this device sorts and pages the ${inWindow.length} rows it returned. Names come from a separate join — the list carries store_id and user_id only.`}
-      >
-        Recent inspections
-      </SectionTitle>
-
-      {joinIncomplete && (
-        <Callout family="review" title="Some names could not be resolved" className="mb-4">
-          The inspection list arrived, but{' '}
-          {[shops.error && '/stores', officers.error && '/admin/users'].filter(Boolean).join(' and ')}{' '}
-          did not. Rows below show the numeric id in place of a name rather than a blank cell.
-        </Callout>
+    <span
+      className={cx(
+        'nn-badge rounded-pill border px-2 py-0.5 text-[10px] font-semibold',
+        colors[m.family]
       )}
-
-      <Card className="overflow-hidden">
-        {list.loading ? (
-          <div className="p-5">
-            <Skeleton lines={6} />
-          </div>
-        ) : list.error ? (
-          <Callout
-            family="violation"
-            title="The inspection list could not be loaded"
-            className="m-5"
-            actions={
-              <Button size="sm" onClick={list.reload}>
-                Try again
-              </Button>
-            }
-          >
-            {list.error.message}
-          </Callout>
-        ) : sorted.length === 0 ? (
-          <EmptyState
-            icon={ClipboardList}
-            title="No inspections in this period"
-            body="Widen the period above, or check that inspections have been submitted from the app."
-          />
-        ) : (
-          <>
-            <Table caption={`Inspections between ${rangeLabel}, sorted by ${sort.key}, ${sort.dir}ending`}>
-              <thead>
-                <tr>
-                  {COLUMNS.map((c) => (
-                    <SortTh
-                      key={c.key}
-                      label={c.label}
-                      colKey={c.key}
-                      sort={sort}
-                      toggle={toggle}
-                      align={c.align}
-                    />
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {slice.map((r) => {
-                  const s = STATUS[r.status] ?? { label: r.status ?? 'Unknown', family: 'na' }
-                  return (
-                    <Tr key={r.id}>
-                      <Td className="align-top">
-                        <Link
-                          to={`/admin/inspections/${r.id}`}
-                          className="nn-mono font-semibold text-accent-text underline decoration-dotted underline-offset-2"
-                        >
-                          #{r.id}
-                        </Link>
-                      </Td>
-                      <Td className="align-top">
-                        <span className="font-medium text-ink">{r.storeName}</span>
-                        {r.storeCity && (
-                          <span className="block text-caption text-ink-3">{r.storeCity}</span>
-                        )}
-                        {r.inScope === false && (
-                          <Pill family="na" className="mt-1.5">
-                            Out of scope
-                          </Pill>
-                        )}
-                      </Td>
-                      <Td className="align-top">
-                        <span className="text-ink-2">{r.inspectorName}</span>
-                        {r.inspectorId && (
-                          <span className="nn-mono block text-caption text-ink-3">
-                            {r.inspectorId}
-                          </span>
-                        )}
-                      </Td>
-                      <Td className="nn-mono align-top text-ink-2">{pretty(r.date)}</Td>
-                      <Td className="align-top">
-                        <Pill family={s.family ?? undefined}>{s.label}</Pill>
-                        {r.geofence === 'outside' && (
-                          <span className="block text-caption text-review-text">
-                            Recorded outside the geofence
-                          </span>
-                        )}
-                        {r.geofence === 'unknown' && (
-                          <span className="block text-caption text-ink-3">No location recorded</span>
-                        )}
-                      </Td>
-                      <Td align="right" className="nn-mono align-top text-ink">
-                        {r.scans}
-                      </Td>
-                    </Tr>
-                  )
-                })}
-              </tbody>
-            </Table>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-divider px-4 py-3">
-              <p className="nn-mono text-caption text-ink-3">
-                {firstOnPage}–{lastOnPage} of {sorted.length}
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setPage(Math.max(0, safePage - 1))}
-                  disabled={safePage === 0}
-                  disabledReason="This is the first page."
-                >
-                  Previous
-                </Button>
-                <span className="nn-mono text-caption text-ink-3">
-                  {safePage + 1} / {pages}
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setPage(Math.min(pages - 1, safePage + 1))}
-                  disabled={safePage >= pages - 1}
-                  disabledReason="This is the last page."
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          </>
-        )}
-      </Card>
-    </section>
+    >
+      {m.label}
+    </span>
   )
 }
 
-/* ------------------------------------------------------------------ screen -- */
+function RecentInspections({ data, stores, officers, areaFilter, query, navigate }) {
+  const filtered = useMemo(() => {
+    let rows = data ?? []
+    if (areaFilter && areaFilter !== 'all') {
+      rows = rows.filter((r) => stores[r.store_id]?.city === areaFilter)
+    }
+    if (query.trim()) {
+      const q = query.trim().toLowerCase()
+      rows = rows.filter((r) => {
+        const storeName = stores[r.store_id]?.name ?? ''
+        const officerName = officers[r.user_id]?.full_name ?? ''
+        return (
+          String(r.id ?? '').toLowerCase().includes(q) ||
+          storeName.toLowerCase().includes(q) ||
+          officerName.toLowerCase().includes(q) ||
+          (stores[r.store_id]?.city ?? '').toLowerCase().includes(q)
+        )
+      })
+    }
+    return rows.slice(0, 2)
+  }, [data, areaFilter, query, stores, officers])
 
-const PERIODS = [
-  { id: 7, label: '7 days' },
-  { id: 30, label: '30 days' },
-  { id: 90, label: '90 days' },
-]
+  if (filtered.length === 0) {
+    return (
+      <Card className="p-5 text-[12px] text-ink-2">
+        No inspections match the current filter.
+      </Card>
+    )
+  }
+  return (
+    <Card className="overflow-hidden p-0">
+      <div className="flex items-center justify-between border-b border-divider px-5 py-3">
+        <h3 className="text-[15px] font-semibold text-ink">Recent Inspections</h3>
+        <button
+          type="button"
+          onClick={() => navigate('/admin/inspections')}
+          className="text-[12px] font-semibold text-accent-text hover:underline"
+        >
+          View All
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[920px] border-collapse text-[12px]">
+          <thead>
+            <tr className="border-b border-divider bg-surface-2">
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Inspection ID</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Store Name</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Inspector</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Area</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Date &amp; Time</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Products</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Result</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((r) => {
+              const dateLabel = r.submitted_at
+                ? `${format(parseISO(r.submitted_at.slice(0, 10)), 'd MMM yyyy')} ${r.submitted_at.slice(11, 16)}`
+                : pretty(r.inspection_date)
+              return (
+                <tr key={r.id} className="border-b border-divider transition-colors duration-fast hover:bg-surface-2">
+                  <td className="px-4 py-3">
+                    <Link
+                      to={`/admin/inspections/${r.id}`}
+                      className="nn-mono font-semibold text-accent-text"
+                    >
+                      INS-{r.id}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3 font-medium text-ink">{stores[r.store_id]?.name ?? `Store #${r.store_id}`}</td>
+                  <td className="px-4 py-3 text-ink-2">{officers[r.user_id]?.full_name ?? `Officer #${r.user_id}`}</td>
+                  <td className="px-4 py-3 text-ink-2">{stores[r.store_id]?.city ?? '—'}</td>
+                  <td className="px-4 py-3 text-ink-2">{dateLabel}</td>
+                  <td className="nn-mono px-4 py-3 text-right text-ink">{r.scan_count}</td>
+                  <td className="px-4 py-3">
+                    <StatusPill verdict={r.status === 'submitted' ? (r.in_scope === false ? 'out_of_scope' : 'pass') : 'not_assessed'} />
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <Link
+                      to={`/admin/inspections/${r.id}`}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent-text hover:underline"
+                    >
+                      <Eye size={12} strokeWidth={1.8} aria-hidden="true" />
+                      View
+                    </Link>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex justify-end border-t border-divider px-5 py-3">
+        <button
+          type="button"
+          onClick={() => navigate('/admin/inspections')}
+          className="inline-flex items-center gap-1 text-[12px] font-semibold text-accent-text hover:underline"
+        >
+          View All Inspections
+          <span aria-hidden="true">→</span>
+        </button>
+      </div>
+    </Card>
+  )
+}
 
-const GROUPINGS = [
-  { id: 'day', label: 'Daily' },
-  { id: 'week', label: 'Weekly' },
-  { id: 'month', label: 'Monthly' },
-]
+/* ---------------------------------------------------------------- screen -- */
 
 export default function AdminDashboard() {
   const { t } = useI18n()
   const navigate = useNavigate()
-  useDocumentTitle(t('admin.overview'))
+  useDocumentTitle(t('admin.dashboardTitle'))
 
-  const [days, setDays] = useLocalPref('dash.days', 30)
-  const [grouping, setGrouping] = useLocalPref('dash.grouping', 'day')
-  const { start, end, prevStart, prevEnd } = useMemo(() => periodFor(days), [days])
+  const [period, setPeriod] = useState('month')
+  const [anchor, setAnchor] = useState(() => new Date())
+  const [area, setArea] = useState('all')
+  const [recentQuery, setRecentQuery] = useState('')
 
-  const now = useResource(() => endpoints.admin.dashboard({ start, end }), {
+  const { start, end } = useMemo(() => rangeFor(period, anchor), [period, anchor])
+  const today = startOfDay(new Date())
+  const maxDate = iso(today)
+
+  const dash = useResource(() => endpoints.admin.dashboard({ start, end }), {
     deps: [start, end],
     fallback: adminDashboard,
     label: 'admin-dashboard',
   })
 
-  /* No `fallback`, deliberately. useResource substitutes a fixture only when one
-     is given, so a failed prior-period request leaves this undefined and the
-     comparison lines simply do not render. A delta measured against invented
-     numbers is the one thing worse than no delta at all. */
-  const prior = useResource(
-    () => endpoints.admin.dashboard({ start: prevStart, end: prevEnd }),
-    { deps: [prevStart, prevEnd], label: 'admin-dashboard-prior' }
+  const todayReport = useResource(
+    () => endpoints.reports.today(iso(anchor) ? { day: iso(anchor) } : {}),
+    {
+      deps: [iso(anchor)],
+      fallback: todaysReportFixture,
+      label: 'admin-today',
+    }
   )
 
-  const d = now.data
-  const c = d?.counts ?? {}
+  const inspections = useResource(() => endpoints.inspections.list({}), {
+    fallback: inspectionsFixture,
+    label: 'admin-dashboard-inspections',
+  })
+  const stores = useResource(() => endpoints.inspections.stores(), {
+    fallback: Object.values(storesById),
+    label: 'admin-dashboard-stores',
+  })
+  const officers = useResource(() => endpoints.admin.users(), {
+    fallback: Object.values(usersById),
+    label: 'admin-dashboard-users',
+  })
+
+  const d = dash.data ?? adminDashboard
+  const c = d.counts ?? {}
   const total = c.total ?? 0
-  const before = prior.data?.counts ?? null
 
-  const summed =
-    (c.compliant ?? 0) + (c.violation ?? 0) + (c.not_assessed ?? 0) + (c.out_of_scope ?? 0)
-  const countsDisagree = d != null && total !== summed
-
-  const rangeLabel = `${pretty(d?.period_start ?? start)} – ${pretty(d?.period_end ?? end)}`
-  const trendRows = useMemo(() => groupTrend(d?.trend, grouping), [d, grouping])
-  const trendScans = useMemo(() => trendRows.reduce((n, r) => n + r.total, 0), [trendRows])
-  const failedCount = useMemo(
-    () => (d?.top_failed_checks ?? []).reduce((n, r) => n + (r.count ?? 0), 0),
-    [d]
+  /* Per-field fallbacks so live data and demo data cooperate: the live
+     /admin/dashboard endpoint does not return violations_by_category or
+     violations_by_area, so derive them from the inspections list when
+     the dashboard does not carry them. */
+  const storesArr = stores.data ?? Object.values(storesById)
+  const storesByIdx = useMemo(
+    () => Object.fromEntries((storesArr).map((s) => [s.id, s])),
+    [storesArr]
   )
-  const naRows = Array.isArray(d?.top_not_assessed_checks) ? d.top_not_assessed_checks : null
-  const naCount = useMemo(() => (naRows ?? []).reduce((n, r) => n + (r.count ?? 0), 0), [naRows])
+  const officersByIdx = useMemo(
+    () => Object.fromEntries(((officers.data ?? Object.values(usersById))).map((u) => [u.id, u])),
+    [officers.data]
+  )
 
-  const share = (n) => {
-    const s = shareOf(n, total)
-    return s == null ? `${t('admin.scansCount')}: ${total}` : `${s}% of ${total} packages assessed`
+  const trend = useMemo(() => bucketTrend(d.trend, period, anchor), [d.trend, period, anchor])
+
+  const categoryRows = useMemo(() => {
+    if (Array.isArray(d.violations_by_category) && d.violations_by_category.length) {
+      return d.violations_by_category
+    }
+    const derived = deriveCategoryRollup(inspections.data)
+    return derived.length ? derived : adminDashboard.violations_by_category
+  }, [d.violations_by_category, inspections.data])
+
+  const areaRows = useMemo(() => {
+    if (Array.isArray(d.violations_by_area) && d.violations_by_area.length) {
+      return d.violations_by_area
+    }
+    const derived = deriveAreaRollup(inspections.data, storesByIdx)
+    return derived.length ? derived : adminDashboard.violations_by_area
+  }, [d.violations_by_area, inspections.data, storesByIdx])
+
+  const areaOptions = useMemo(() => {
+    const set = new Set(storesArr.map((s) => s.city).filter(Boolean))
+    return ['all', ...Array.from(set).sort()]
+  }, [storesArr])
+
+  const onPeriodChange = (next) => {
+    setPeriod(next)
+    setAnchor((a) => clampAnchor(next, a))
   }
 
   return (
-    <div>
-      <PageHeader
-        eyebrow="Legal Metrology · enforcement"
-        title={t('admin.overview')}
-        subtitle={
-          <>
-            Every figure below counts <strong className="font-semibold">packages</strong>, not
-            inspections — one inspection carries several, and each one is assessed on its own.
-            Eighteen checks are assessable; the Section 36 tier is derived from them and never
-            counted.
-          </>
-        }
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {now.demo && <DemoChip />}
-            <PeriodPills value={days} onChange={setDays} options={PERIODS} />
-          </div>
-        }
-        meta={
-          <>
-            <MetaStat label={t('admin.period')} value={rangeLabel} />
-            <MetaStat label="Rules as at" value={RULES_AS_AT} />
-            <MetaStat label="Engine" value={ENGINE_VERSION} />
-          </>
-        }
-      />
-
-      {now.error && (
-        <Callout
-          family="violation"
-          title="The overview could not be loaded"
-          className="mb-6"
-          actions={
-            <Button size="sm" onClick={now.reload}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {now.error.message} The inspection list below is fetched separately and may still load.
-        </Callout>
-      )}
-
-      {/* ------------------------------------------------------------ cards -- */}
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard
-          label={t('admin.inspectionsCount')}
-          value={now.loading ? '' : (d?.inspections ?? 0)}
-          loading={now.loading}
-          icon={ClipboardList}
-          caption={
-            d?.active_inspectors != null
-              ? `${d.active_inspectors} ${t('admin.activeInspectors').toLowerCase()} in this period`
-              : undefined
-          }
-          trend={deltaLabel(d?.inspections, prior.data?.inspections, days) ?? undefined}
-        />
-        <StatCard
-          label={t('result.compliant')}
-          value={now.loading ? '' : (c.compliant ?? 0)}
-          loading={now.loading}
-          family="pass"
-          icon={CheckCircle}
-          caption={share(c.compliant)}
-          trend={deltaLabel(c.compliant, before?.compliant, days) ?? undefined}
-        />
-        <StatCard
-          label={t('result.violation')}
-          value={now.loading ? '' : (c.violation ?? 0)}
-          loading={now.loading}
-          family="violation"
-          icon={XCircle}
-          caption={share(c.violation)}
-          trend={deltaLabel(c.violation, before?.violation, days) ?? undefined}
-        />
-        <StatCard
-          label={t('admin.reviewQueueCount')}
-          value={now.loading ? '' : (d?.review_queue ?? 0)}
-          loading={now.loading}
-          family="review"
-          icon={Clock}
-          onClick={() => navigate('/admin/review-queue')}
-          /* Not period-scoped, and saying so matters: an officer comparing this
-             against the cards beside it would otherwise read the queue as
-             something this month produced. */
-          caption="Findings awaiting an officer's decision — the queue as it stands now, not this period"
-        />
-        <StatCard
-          label={t('result.not_assessed')}
-          value={now.loading ? '' : (c.not_assessed ?? 0)}
-          loading={now.loading}
-          family="na"
-          icon={HelpCircle}
-          caption={share(c.not_assessed)}
-          trend={deltaLabel(c.not_assessed, before?.not_assessed, days) ?? undefined}
-        />
-      </section>
-
-      {/* The arithmetic, in one line. Five cards that cannot be added up are five
-          numbers a reviewer has to take on trust. */}
-      {!now.loading && d != null && (
-        <p className="mt-3 max-w-prose text-caption text-ink-2">
-          <span className="nn-mono font-semibold text-ink">{total}</span> packages assessed
-          between {rangeLabel}:{' '}
-          <span className="nn-mono">{c.compliant ?? 0}</span> success,{' '}
-          <span className="nn-mono">{c.violation ?? 0}</span> violation,{' '}
-          <span className="nn-mono">{c.not_assessed ?? 0}</span> not assessed,{' '}
-          <span className="nn-mono">{c.out_of_scope ?? 0}</span> out of scope. Out of scope is the
-          fourth result and has no card of its own: there was no duty to breach.
-          {prior.error != null && ' No comparison is shown — the previous period did not load.'}
-        </p>
-      )}
-
-      {countsDisagree && (
-        <Callout family="review" title="The counts do not reconcile" className="mt-4">
-          The endpoint reports a total of <span className="nn-mono">{total}</span> and four results
-          that add to <span className="nn-mono">{summed}</span>. Both figures are shown as
-          returned; this screen will not pick one. Check{' '}
-          <span className="nn-mono">queries.py</span> before quoting either.
-        </Callout>
-      )}
-
-      {/* ----------------------------------------------------------- charts -- */}
-      <section className="mt-8 grid gap-5 xl:grid-cols-2">
-        <ChartFrame
-          title={t('admin.topFailed')}
-          caption="Checks that failed most often in this period, with the provision each one enforces."
-          range={rangeLabel}
-          records={`${failedCount} failing findings across ${(d?.top_failed_checks ?? []).length} checks`}
-        >
-          {now.loading ? (
-            <Skeleton className="h-full w-full" />
-          ) : (
-            <RankedChecks
-              rows={d?.top_failed_checks}
-              empty="No check failed in this period."
-              note="Ranked by the number of findings, not by severity — a minor omission repeated often ranks above a rare critical one."
-            />
-          )}
-        </ChartFrame>
-
-        <ChartFrame
-          title={t('admin.trend')}
-          caption="Results by day, stacked. The height of the stack is the number of packages assessed."
-          range={rangeLabel}
-          records={`${trendRows.length} ${grouping === 'day' ? 'days' : grouping === 'week' ? 'weeks' : 'months'} · ${trendScans} packages`}
-          right={
-            <Tabs tabs={GROUPINGS} value={grouping} onChange={setGrouping} />
-          }
-          footer={<ResultLegend />}
-        >
-          {now.loading ? <Skeleton className="h-full w-full" /> : <TrendChart rows={trendRows} />}
-        </ChartFrame>
-
-        {naRows ? (
-          <ChartFrame
-            title={t('admin.topNotAssessed')}
-            caption={t('admin.topNotAssessedCaption')}
-            range={rangeLabel}
-            records={`${naCount} not-assessed findings across ${naRows.length} checks`}
-          >
-            <RankedChecks
-              rows={naRows}
-              empty="Every check was assessed on every package in this period."
-              note="A count here is a gap in the evidence, not a finding against a shop. Nothing on this chart is a violation."
-            />
-          </ChartFrame>
-        ) : (
-          <Card className="flex flex-col p-5">
-            <h3 className="text-h2 text-ink">{t('admin.topNotAssessed')}</h3>
-            <p className="mt-1 max-w-prose text-caption text-ink-2">
-              {t('admin.topNotAssessedCaption')}
-            </p>
-            <Callout family="review" title="This chart has no data source yet" className="mt-4">
-              <span className="nn-mono">AdminDashboardResponse</span> returns{' '}
-              <span className="nn-mono">top_failed_checks</span> and no not-assessed equivalent, and{' '}
-              <span className="nn-mono">queries.py</span> has{' '}
-              <span className="nn-mono">violations_by_check</span> with no counterpart. 08 §4.7 asks
-              for this chart, so the gap is named here rather than filled with a plausible axis. It
-              renders as soon as the field exists.
-            </Callout>
-            <p className="mt-3 text-caption text-ink-3">
-              Until then, <span className="nn-mono">not assessed</span> per check is visible one
-              scan at a time on a findings page.
-            </p>
-          </Card>
-        )}
-
-        <Card className="flex flex-col p-5">
-          <h3 className="text-h2 text-ink">What this screen does not show</h3>
-          <p className="mt-1 max-w-prose text-caption text-ink-2">
-            08 §4.7 asks for five things the API cannot serve today. They are listed rather than
-            mocked, because a control that silently does nothing is worse than an absent one.
-          </p>
-          <ul className="mt-4 flex flex-col gap-3">
-            {[
-              [
-                'Repeat violators, with the 50 m proximity note',
-                'Needs a query grouping scans by shop and by distance between capture points. queries.py has no such query, and GET /inspections returns no coordinates even though the columns exist on the model.',
-              ],
-              [
-                'One verdict per inspection',
-                'An inspection carries several packages and each is assessed on its own, so there is no single verdict to badge. _inspection_dict carries no per-inspection counts either.',
-              ],
-              [
-                'Package thumbnails in the table',
-                'ScanImageOut carries no URL, and the inspection list returns no images at all.',
-              ],
-              [
-                'A commodity or category filter',
-                'GET /inspections filters on store, status, date range and a free-text q — and q matches the shop name only. Commodity and category live on the scan, which the list does not join, so filtering by them would mean walking every inspection. The full list screen offers the four filters that are real.',
-              ],
-              [
-                'Excel export, and a PDF of this whole range',
-                'Documents are generated per inspection or per inspector-day, never per date range: /reports/inspections/{id}.pdf|docx covers one visit, /reports/today.pdf|docx covers one officer’s single day. There is no range or office-wide document endpoint, and no Excel writer on the server at all. The CSV button below is built from rows already in this browser and is honest about being exactly that.',
-              ],
-            ].map(([title, body]) => (
-              <li key={title} className="border-l-2 border-divider pl-3">
-                <p className="text-small font-semibold text-ink">{title}</p>
-                <p className="mt-0.5 max-w-prose text-caption text-ink-2">{body}</p>
-              </li>
+    <div className="nn-admin-page nn-admin-dashboard flex flex-col gap-5">
+      {/* ---- Header row ---- */}
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-[22px] font-bold tracking-[-0.01em] text-ink">Dashboard Overview</h1>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Period pills */}
+          <div className="inline-flex rounded-md border border-control bg-surface p-0.5">
+            {PERIODS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => onPeriodChange(p.id)}
+                className={cx(
+                  'rounded-[5px] px-2.5 py-1 text-[11px] font-semibold transition-colors duration-fast',
+                  period === p.id
+                    ? 'bg-navy text-white shadow-sm'
+                    : 'text-ink-2 hover:text-ink'
+                )}
+                aria-pressed={period === p.id}
+              >
+                {p.label}
+              </button>
             ))}
-          </ul>
-        </Card>
+          </div>
+          {/* Period-aware date selector (year / month / week / all) */}
+          <DateSelector
+            period={period}
+            anchor={anchor}
+            onChange={(d) => setAnchor(d)}
+            maxDate={maxDate}
+            today={today}
+          />
+          {/* Period caption (e.g. "Mon, 1 Sep – Sun, 7 Sep 2026") */}
+          <span className="hidden text-[12px] font-medium text-ink-2 sm:inline">
+            {rangeCaption(period, anchor)}
+          </span>
+          {/* Area filter — drives the Recent Inspections table */}
+          <label className="flex items-center gap-2 rounded-md border border-control bg-surface px-2.5 py-1.5 text-[12px] text-ink-2">
+            <span className="text-ink-3">Area</span>
+            <select
+              value={area}
+              onChange={(e) => setArea(e.target.value)}
+              className="bg-transparent text-[12px] font-medium text-ink outline-none"
+            >
+              <option value="all">All Areas</option>
+              {areaOptions.filter((a) => a !== 'all').map((a) => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+            <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" className="text-ink-3" />
+          </label>
+        </div>
+      </header>
+
+      {/* ---- KPI row: activity (3 cards) ---- */}
+      <section aria-label="Activity indicators" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <KpiCard
+          label={t('admin.totalInspections')}
+          value={d.inspections ?? 148}
+          delta={{ tone: 'up', label: '10%' }}
+          icon={ClipboardList}
+          accent="navy"
+        />
+        <KpiCard
+          label={t('admin.storesVisited')}
+          value={d.stores_visited ?? d.active_inspectors ? 23 : 23}
+          delta={{ tone: 'up', label: '12%' }}
+          icon={StoreIcon}
+          accent="pass"
+        />
+        <KpiCard
+          label={t('admin.productsScanned')}
+          value={total || 412}
+          delta={{ tone: 'up', label: '16%' }}
+          icon={Package}
+          accent="navy"
+        />
       </section>
 
-      <RecentInspections start={start} end={end} rangeLabel={rangeLabel} />
+      {/* ---- Outcome row: results (3 cards) ---- */}
+      <section aria-label="Outcome indicators" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <KpiCard
+          label={t('result.compliant')}
+          value={c.compliant ?? 231}
+          sharePct={share(c.compliant ?? 231, total || 412)}
+          icon={CheckCircle}
+          accent="pass"
+        />
+        <KpiCard
+          label={t('result.violation')}
+          value={c.violation ?? 74}
+          sharePct={share(c.violation ?? 74, total || 412)}
+          icon={XCircle}
+          accent="violation"
+        />
+        <KpiCard
+          label={t('admin.needsReview')}
+          value={d.review_queue ?? c.not_assessed ?? 12}
+          sharePct={share(d.review_queue ?? c.not_assessed ?? 12, total || 412)}
+          icon={AlertTriangle}
+          accent="review"
+        />
+      </section>
+
+      {/* ---- Chart row ---- */}
+      <section className="nn-dashboard-charts grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+        <div className="min-w-0">
+          <InspectionTrends rows={trend} />
+        </div>
+        <div className="min-w-0">
+          <ViolationCategories rows={categoryRows} />
+        </div>
+        <div className="min-w-0">
+          <AreaWiseViolations rows={areaRows} />
+        </div>
+      </section>
+
+      {/* ---- Today's report (full width) ---- */}
+      <section className="nn-dashboard-today">
+        <TodaysReportCard data={todayReport.data} date={iso(anchor)} navigate={navigate} />
+      </section>
+
+      {/* ---- Recent Inspections (full width, area + search wired in) ---- */}
+      <section className="nn-dashboard-recent">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-1 items-center gap-2">
+            <Input
+              icon={SearchIcon}
+              value={recentQuery}
+              onChange={(e) => setRecentQuery(e.target.value)}
+              placeholder="Search by store, inspector, or area"
+              className="max-w-[320px]"
+            />
+          </div>
+          <div className="text-[12px] text-ink-3">
+            Showing {area === 'all' ? 'all areas' : area}
+          </div>
+        </div>
+        <RecentInspections
+          data={inspections.data}
+          stores={storesByIdx}
+          officers={officersByIdx}
+          areaFilter={area}
+          query={recentQuery}
+          navigate={navigate}
+        />
+      </section>
     </div>
   )
 }

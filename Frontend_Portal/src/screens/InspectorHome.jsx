@@ -151,7 +151,7 @@ export default function InspectorHome() {
   const reportedFor = day.report_date ?? today
 
   return (
-    <div className="mx-auto max-w-[880px] px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto max-w-[880px]">
       <PageHeader
         eyebrow={
           user

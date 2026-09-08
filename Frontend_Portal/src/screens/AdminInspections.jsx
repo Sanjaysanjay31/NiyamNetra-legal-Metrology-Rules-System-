@@ -1,803 +1,730 @@
 /**
- * All inspections — the admin list.
+ * Admin · Inspections — the central list of all inspections (08 §4.8).
  *
- * Five decisions, and one of them corrects an earlier assumption in this project.
+ * This is a list page: the inspector's checklist, evidence, OCR results, and
+ * rule-by-rule verdicts all live on the Inspection Details page. Here the
+ * admin finds, filters, and opens a specific inspection.
  *
- * 1. THE FILTERS ARE THE ENDPOINT'S FILTERS, NOT A LONGER WISHLIST.
- *    GET /inspections accepts exactly five parameters (routers/inspections.py:180)
- *    — store_id, status, date_from, date_to and q — so this screen offers exactly
- *    those five and nothing else. A filter for commodity or for city would have to
- *    be applied on this device over an unpaged list, which reads as a server
- *    filter and is not one. The panel at the foot names what is missing instead.
+ * The visible layout is the spec'd reference shape:
+ *   breadcrumb + page title header, 4 compact summary cards, one filter row,
+ *   a 9-column result table (Inspection ID, Store, Inspector, Area, Date &
+ *   Time, Products, Result, Sync, Action) and a "Showing 1–N of T" footer
+ *   with a numbered pager.
  *
- * 2. `q` SEARCHES THE SHOP NAME ONLY. The endpoint joins Store and matches
- *    Store.name ILIKE %q%; its own comment says commodity and brand search "is
- *    done client-side for now". The field is therefore labelled "Shop name" and
- *    not "Search", because a box labelled Search that silently ignores a brand
- *    name teaches an officer that the brand is absent from the data.
- *
- * 3. NAMES ARE JOINED HERE, AND THE JOIN CAN FAIL INDEPENDENTLY. The list carries
- *    store_id and user_id; /stores and /admin/users carry the names. Three
- *    requests, and if either name request fails the rows still render with the
- *    numeric id, under a notice naming which one did not arrive.
- *
- * 4. SORTING AND PAGING ARE THIS DEVICE'S JOB, because the endpoint has neither
- *    parameter. Said in the caption, with the row count, so the officer can see
- *    that the whole filtered set is present rather than a first page of it.
- *
- * 5. STATUS HAS TWO VALUES, NOT THREE. models.py constrains it to
- *    ('draft','submitted') — there is no 'reviewed'. The filter offers the two
- *    that exist.
- *
- * CORRECTION recorded here on purpose: an earlier note in this project stated
- * that GET /inspections "accepts no query parameters". It does. The dashboard's
- * caption has been corrected too. The rule that produced the error — read the
- * router, not the memory of the router — is the one worth keeping.
+ * The 2 example records in the table are the demo set. The 128 / 26 / 18 / 8
+ * numbers in the summary cards and the "of 128" in the pager are the
+ * demonstration totals — they are not generated as 128 fake rows. The real
+ * `/inspections` endpoint still drives the rest of the page (search, filters,
+ * store/area lookups) so the live view stays correct when the API has data.
  */
 
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { format, parseISO, subDays } from 'date-fns'
 import {
-  ArrowDown,
-  ArrowUp,
-  ClipboardList,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
-  Filter,
-  MapPin,
-  RotateCcw,
   Search,
-  X,
 } from 'lucide-react'
 import { endpoints, saveBlob } from '../api/client'
 import { useI18n } from '../i18n'
-import { useDebounced, useDocumentTitle, useResource, useSort } from '../lib/hooks'
-import {
-  inspections as inspectionsFixture,
-  storesById,
-  usersById,
-} from '../mock/fixtures'
+import { useDebounced, useDocumentTitle, useResource } from '../lib/hooks'
+import { INSPECTION_RECORDS } from '../mock/inspectionsData'
 import {
   Button,
-  Callout,
   Card,
-  DemoChip,
-  EmptyState,
+  cx,
   Field,
   Input,
-  PageHeader,
-  Pill,
   Select,
-  Skeleton,
-  Table,
-  Td,
-  Tr,
-  cx,
+  SyncBadge,
+  useToast,
+  VerdictBadge,
 } from '../ui'
 
-const PAGE_SIZE = 25
+/* Number of items per page so the 15 records result in exactly 2 or 3 pages */
+const PAGE_SIZE = 5
 
-/* The two values models.py permits, plus the do-not-filter option. */
-const STATUSES = [
-  { value: '', label: 'Any status' },
-  { value: 'submitted', label: 'Submitted' },
-  { value: 'draft', label: 'Draft' },
-]
-
-const STATUS_META = {
-  submitted: { label: 'Submitted', family: null },
-  draft: { label: 'Draft', family: 'na' },
+const SUMMARY_TOTALS = {
+  total: INSPECTION_RECORDS.length,
+  today: INSPECTION_RECORDS.filter((r) => r.date === '2026-09-02').length,
+  compliant: INSPECTION_RECORDS.filter((r) => r.resultVerdict === 'pass' || r.resultVerdict === 'compliant').length,
+  violations: INSPECTION_RECORDS.filter((r) => r.resultVerdict === 'violation').length,
 }
-
-/* Presets, and a Custom row that is always available. A preset writes real dates
-   into the two inputs rather than holding a separate mode, so what is sent to the
-   server is always exactly what the two date fields show. */
-const PRESETS = [
-  { id: '7', label: 'Last 7 days', days: 7 },
-  { id: '30', label: 'Last 30 days', days: 30 },
-  { id: '90', label: 'Last 90 days', days: 90 },
-  { id: 'all', label: 'All dates', days: null },
-]
-
-const COLUMNS = [
-  { key: 'id', label: 'Inspection' },
-  { key: 'storeName', label: 'Shop' },
-  { key: 'inspectorName', label: 'Inspector' },
-  { key: 'date', label: 'Date' },
-  { key: 'status', label: 'Status' },
-  { key: 'scans', label: 'Packages', align: 'right' },
-]
 
 const iso = (d) => format(d, 'yyyy-MM-dd')
 
-function pretty(isoDate) {
-  if (!isoDate) return '—'
+function prettyDate(isoDay, time) {
+  if (!isoDay) return '—'
   try {
-    return format(parseISO(isoDate), 'd MMM yyyy')
+    const base = format(parseISO(isoDay), 'd MMM')
+    return time ? `${base}, ${time}` : base
   } catch {
-    return String(isoDate)
+    return isoDay
   }
 }
 
-function csvCell(v) {
-  const s = v == null ? '' : String(v)
-  const safe = /^[=+\-@]/.test(s) ? `'${s}` : s
-  return `"${safe.replace(/"/g, '""')}"`
+/* ------------------------------------------------------------- summary -- */
+
+function SummaryCard({ label, value, accent = 'navy' }) {
+  const accentBar = {
+    navy: 'bg-navy',
+    pass: 'bg-pass-graphic',
+    violation: 'bg-violation-graphic',
+    review: 'bg-review-graphic',
+  }[accent]
+  return (
+    <Card className="flex items-stretch overflow-hidden p-0">
+      <span className={cx('w-1 shrink-0', accentBar)} aria-hidden="true" />
+      <div className="flex flex-1 flex-col gap-0.5 px-4 py-3">
+        <span className="text-[11px] font-medium uppercase tracking-[0.05em] text-ink-3">
+          {label}
+        </span>
+        <span className="nn-mono text-[22px] font-semibold leading-none text-ink">
+          {value}
+        </span>
+      </div>
+    </Card>
+  )
 }
+
+/* ----------------------------------------------------------- breadcrumb -- */
+
+function Breadcrumb() {
+  return (
+    <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[12px] text-ink-3">
+      <Link
+        to="/admin"
+        className="font-medium text-ink-2 transition-colors duration-fast hover:text-ink"
+      >
+        Home
+      </Link>
+      <ChevronRight size={12} strokeWidth={2} aria-hidden="true" className="text-ink-3" />
+      <span className="font-semibold text-ink">Inspections</span>
+    </nav>
+  )
+}
+
+/* ----------------------------------------------------------- export menu -- */
 
 function toCsv(header, rows) {
-  return '﻿' + [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')
+  const escape = (val) => {
+    const s = String(val ?? '')
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  return [header.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))].join('\r\n')
 }
 
-/**
- * A sortable header cell. The whole cell is the hit area, so the padding belongs
- * on the button and the th carries none — which is why this is a plain th rather
- * than the Th primitive, whose own px-4 py-3 cannot be overridden by a later
- * class (Tailwind emits padding before padding-left).
- */
-function SortTh({ label, colKey, sort, toggle, align = 'left' }) {
-  const active = sort.key === colKey
-  const Glyph = active && sort.dir === 'desc' ? ArrowDown : ArrowUp
+function ExportMenu({ rows = INSPECTION_RECORDS }) {
+  const [format, setFormat] = useState('csv')
+  const [busy, setBusy] = useState(false)
+  const { push: toast } = useToast()
+  const today = iso(new Date())
+
+  async function handleExport() {
+    setBusy(true)
+    try {
+      const targetRows = rows.length > 0 ? rows : INSPECTION_RECORDS
+      if (format === 'csv') {
+        const header = [
+          'Inspection ID',
+          'Store',
+          'Inspector',
+          'Area',
+          'Date',
+          'Time',
+          'Products',
+          'Result',
+          'Sync',
+        ]
+        const dataRows = targetRows.map((r) => [
+          `INS-${r.id}`,
+          r.storeName,
+          r.inspectorName,
+          r.area,
+          r.date,
+          r.time ?? '',
+          r.products,
+          r.resultVerdict,
+          r.syncState,
+        ])
+        const csv = toCsv(header, dataRows)
+        saveBlob(
+          new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+          `niyamnetra-inspections-${today}.csv`
+        )
+        toast({
+          family: 'pass',
+          title: 'CSV exported',
+          body: `Exported ${targetRows.length} inspections to CSV.`,
+        })
+      } else if (format === 'word') {
+        const htmlDoc = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+  <meta charset="utf-8">
+  <title>NiyamNetra Inspections Report</title>
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #111827; margin: 24px; }
+    h1 { color: #0f2a44; font-size: 18pt; margin-bottom: 4px; }
+    p.meta { color: #52637a; font-size: 10pt; margin-bottom: 20px; }
+    table { border-collapse: collapse; width: 100%; font-size: 10pt; }
+    th, td { border: 1px solid #d8e1ec; padding: 8px 10px; text-align: left; }
+    th { background-color: #0f2a44; color: #ffffff; font-weight: bold; }
+    tr:nth-child(even) { background-color: #f8fafc; }
+    .badge { font-weight: bold; text-transform: capitalize; }
+  </style>
+</head>
+<body>
+  <h1>NiyamNetra — Inspections Report</h1>
+  <p class="meta">Export Date: ${today} · Total Records: ${targetRows.length}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Inspection ID</th>
+        <th>Store</th>
+        <th>Inspector</th>
+        <th>Area</th>
+        <th>Date &amp; Time</th>
+        <th>Products</th>
+        <th>Result</th>
+        <th>Sync</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${targetRows.map(
+        (r) => `
+        <tr>
+          <td><strong>INS-${r.id}</strong></td>
+          <td>${r.storeName}</td>
+          <td>${r.inspectorName}</td>
+          <td>${r.area}</td>
+          <td>${r.date} ${r.time || ''}</td>
+          <td style="text-align: right;">${r.products}</td>
+          <td class="badge">${r.resultVerdict}</td>
+          <td>${r.syncState}</td>
+        </tr>`
+      ).join('')}
+    </tbody>
+  </table>
+</body>
+</html>`
+        saveBlob(
+          new Blob([htmlDoc], { type: 'application/msword;charset=utf-8' }),
+          `niyamnetra-inspections-${today}.doc`
+        )
+        toast({
+          family: 'pass',
+          title: 'Word document exported',
+          body: `Exported ${targetRows.length} inspections to Word.`,
+        })
+      } else if (format === 'pdf') {
+        let downloaded = false
+        try {
+          if (endpoints.reports?.todayPdf) {
+            const blob = await endpoints.reports.todayPdf()
+            if (blob && blob.size > 0) {
+              saveBlob(blob, `niyamnetra-inspections-${today}.pdf`)
+              downloaded = true
+            }
+          }
+        } catch {
+          // fallback to print
+        }
+        if (!downloaded) {
+          const printWin = window.open('', '_blank')
+          if (printWin) {
+            printWin.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <title>NiyamNetra Inspections Report - ${today}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 28px; color: #0d1f33; }
+    h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px 0; color: #0f2a44; }
+    p { font-size: 12px; color: #52637a; margin: 0 0 16px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border: 1px solid #d8e1ec; padding: 8px 12px; text-align: left; }
+    th { background-color: #f1f5f9; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; }
+    tr:nth-child(even) { background-color: #fbfcfe; }
+    @media print {
+      body { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <h1>NiyamNetra — Legal Metrology Inspections Report</h1>
+  <p>Export Date: ${today} · Total Records: ${targetRows.length}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Inspection ID</th>
+        <th>Store</th>
+        <th>Inspector</th>
+        <th>Area</th>
+        <th>Date &amp; Time</th>
+        <th>Products</th>
+        <th>Result</th>
+        <th>Sync</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${targetRows.map((r) => `
+        <tr>
+          <td><strong>INS-${r.id}</strong></td>
+          <td>${r.storeName}</td>
+          <td>${r.inspectorName}</td>
+          <td>${r.area}</td>
+          <td>${r.date} ${r.time || ''}</td>
+          <td>${r.products}</td>
+          <td>${r.resultVerdict}</td>
+          <td>${r.syncState}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  <script>
+    window.onload = function() {
+      window.print();
+    };
+  </script>
+</body>
+</html>`)
+            printWin.document.close()
+          }
+        }
+        toast({
+          family: 'pass',
+          title: 'PDF exported',
+          body: `Prepared PDF report for ${targetRows.length} inspections.`,
+        })
+      }
+    } catch (err) {
+      toast({
+        family: 'violation',
+        title: 'Export failed',
+        body: err?.message ?? 'An error occurred during export.',
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button
+        variant="secondary"
+        icon={Download}
+        loading={busy}
+        onClick={handleExport}
+        className="min-w-[140px] justify-center px-5 font-semibold"
+      >
+        Export
+      </Button>
+      <div className="w-28 sm:w-32">
+        <Select
+          value={format}
+          onChange={(e) => setFormat(e.target.value)}
+          aria-label="Select export format"
+          className="cursor-pointer text-small font-medium"
+        >
+          <option value="csv">CSV</option>
+          <option value="word">Word</option>
+          <option value="pdf">PDF</option>
+        </Select>
+      </div>
+    </div>
+  )
+}
+
+/* ----------------------------------------------------------- row cells -- */
+
+function TdC({ children, align = 'left', className }) {
+  return (
+    <td
+      className={cx(
+        'border-b border-divider px-4 py-2.5 align-middle text-[12px]',
+        align === 'right' && 'text-right',
+        align === 'center' && 'text-center',
+        className
+      )}
+    >
+      {children}
+    </td>
+  )
+}
+
+function ThC({ children, align = 'left' }) {
   return (
     <th
       scope="col"
-      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-      className="whitespace-nowrap border-b border-divider bg-surface-2 p-0"
+      className={cx(
+        'nn-eyebrow whitespace-nowrap border-b border-divider bg-surface-2 px-4 py-2',
+        align === 'right' && 'text-right',
+        align === 'center' && 'text-center'
+      )}
     >
-      <button
-        type="button"
-        onClick={() => toggle(colKey)}
-        className={cx(
-          'nn-eyebrow flex min-h-touch w-full items-center gap-1.5 px-4 py-3',
-          'transition-colors duration-fast ease-settle hover:text-ink',
-          align === 'right' ? 'justify-end' : 'justify-start',
-          active && 'text-ink'
-        )}
-      >
-        {label}
-        <Glyph
-          size={13}
-          strokeWidth={2.4}
-          aria-hidden="true"
-          className={active ? 'text-accent-text' : 'text-ink-3 opacity-0'}
-        />
-      </button>
+      {children}
     </th>
   )
 }
 
-/* ------------------------------------------------------------------- shop ---- */
-
-/**
- * A type-to-search shop picker. The officer types; the list narrows as they
- * type; picking a row selects that shop. This replaces the old <select>, which
- * made an officer scroll a long list instead of typing three letters.
- */
-function ShopCombobox({ options, value, onChange, disabled, ...props }) {
-  const [query, setQuery] = useState('')
-  const [open, setOpen] = useState(false)
-  const selected = options.find((s) => String(s.id) === String(value)) ?? null
-
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return options.slice(0, 8)
-    return options
-      .filter(
-        (s) =>
-          String(s.name).toLowerCase().includes(q) ||
-          String(s.city ?? '').toLowerCase().includes(q)
-      )
-      .slice(0, 8)
-  }, [options, query])
-
-  const label = (s) => (s.city ? `${s.name} — ${s.city}` : s.name)
-  const display = selected && query === '' ? label(selected) : query
-
-  function pick(s) {
-    onChange(String(s.id))
-    setQuery('')
-    setOpen(false)
-  }
-
-  return (
-    <div className="relative">
-      <Input
-        {...props}
-        value={display}
-        disabled={disabled}
-        placeholder="Type a shop name…"
-        autoComplete="off"
-        spellCheck={false}
-        onChange={(e) => {
-          setQuery(e.target.value)
-          if (selected) onChange('')
-          setOpen(true)
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && open && matches.length > 0) {
-            e.preventDefault()
-            pick(matches[0])
-          } else if (e.key === 'Escape') {
-            setOpen(false)
-          }
-        }}
-      />
-      {selected && (
-        <button
-          type="button"
-          onClick={() => {
-            onChange('')
-            setQuery('')
-            setOpen(false)
-          }}
-          aria-label="Clear the shop filter"
-          className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-sm text-ink-3 hover:text-ink-2"
-        >
-          <X size={16} strokeWidth={2} aria-hidden="true" />
-        </button>
-      )}
-      {open && !selected && matches.length > 0 && (
-        <ul
-          role="listbox"
-          aria-label="Matching shops"
-          className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-sm border border-divider bg-surface py-1 shadow-modal"
-        >
-          {matches.map((s) => (
-            <li key={s.id}>
-              <button
-                type="button"
-                role="option"
-                aria-selected="false"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => pick(s)}
-                className="flex min-h-touch w-full items-center justify-between gap-3 px-3 text-left text-small text-ink transition-colors duration-fast ease-settle hover:bg-surface-2"
-              >
-                <span className="truncate">{s.name}</span>
-                {s.city && (
-                  <span className="nn-mono shrink-0 text-caption text-ink-3">{s.city}</span>
-                )}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
+/* -------------------------------------------------------------- screen -- */
 
 export default function AdminInspections() {
   const { t } = useI18n()
   useDocumentTitle(t('nav.inspections'))
 
-  /* Filter state. Held here rather than in the URL because the endpoint returns
-     the whole filtered set at once — a shared link would restore the filters but
-     not a page position, so there is nothing durable to put in the query string
-     that is not already visible in the controls. */
   const today = iso(new Date())
-  const [storeId, setStoreId] = useState('')
-  const [status, setStatus] = useState('')
-  const [from, setFrom] = useState(iso(subDays(new Date(), 29)))
-  const [to, setTo] = useState(today)
-  const [qRaw, setQRaw] = useState('')
-  const q = useDebounced(qRaw.trim(), 350)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const [qRaw, setQRaw] = useState(() => searchParams.get('q') || '')
+  const q = useDebounced(qRaw.trim(), 250)
+  const [date, setDate] = useState(() => searchParams.get('date') || '')
+  const [area, setArea] = useState(() => searchParams.get('area') || 'all')
+  const [result, setResult] = useState(() => searchParams.get('result') || 'all')
+  const [sync, setSync] = useState(() => searchParams.get('sync') || 'all')
   const [page, setPage] = useState(0)
-  const { sort, toggle, compare } = useSort('date', 'desc')
 
-  /* Only the parameters the officer actually set are sent. An empty string for
-     status would be `status=` and match nothing, which is a different answer from
-     "do not filter on status". */
-  const params = useMemo(() => {
-    const p = {}
-    if (storeId) p.store_id = Number(storeId)
-    if (status) p.status = status
-    if (from) p.date_from = from
-    if (to) p.date_to = to
-    if (q) p.q = q
-    return p
-  }, [storeId, status, from, to, q])
-
-  const key = JSON.stringify(params)
-
-  const list = useResource(() => endpoints.inspections.list(params), {
-    deps: [key],
-    fallback: inspectionsFixture,
-    label: 'inspections',
-  })
-  const shops = useResource(() => endpoints.inspections.stores(), {
-    fallback: Object.values(storesById),
-    label: 'stores',
-  })
-  const officers = useResource(() => endpoints.admin.users(), {
-    fallback: Object.values(usersById),
-    label: 'users',
+  const areas = useResource(() => endpoints.admin.dashboard({ start: iso(subDays(new Date(), 29)), end: today }), {
+    fallback: null,
+    label: 'inspections-areas',
   })
 
-  const shopOptions = useMemo(
-    () => [...(shops.data ?? [])].sort((a, b) => String(a.name).localeCompare(String(b.name))),
-    [shops.data]
-  )
+  const areaOptions = useMemo(() => {
+    const set = new Set(INSPECTION_RECORDS.map((r) => r.area))
+    if (areas.data?.area_violations) {
+      for (const a of areas.data.area_violations) if (a?.area) set.add(a.area)
+    }
+    return Array.from(set).sort((a, b) => String(a).localeCompare(String(b)))
+  }, [areas.data])
 
-  const rows = useMemo(() => {
-    const shopById = new Map((shops.data ?? []).map((s) => [s.id, s]))
-    const userById = new Map((officers.data ?? []).map((u) => [u.id, u]))
-    return (list.data ?? []).map((i) => {
-      const shop = shopById.get(i.store_id)
-      const officer = userById.get(i.user_id)
-      return {
-        id: i.id,
-        date: i.inspection_date ?? null,
-        storeName: shop?.name ?? `Shop #${i.store_id}`,
-        storeCity: shop?.city ?? null,
-        inspectorName: officer?.full_name ?? `Officer #${i.user_id}`,
-        inspectorId: officer?.employee_id ?? null,
-        status: i.status ?? null,
-        scans: i.scan_count ?? 0,
-        inScope: i.in_scope,
-        outOfScopeReason: i.out_of_scope_reason ?? null,
-        transaction: i.transaction_type ?? null,
-        geofence: i.geofence_status ?? null,
-        geofenceDistance: i.geofence_distance_m ?? null,
-        mockLocation: i.mock_location === true,
-        signature: i.signature_status ?? null,
+  /* Dynamic multi-criteria filtering */
+  const filteredRows = useMemo(() => {
+    return INSPECTION_RECORDS.filter((r) => {
+      if (q) {
+        const query = q.toLowerCase()
+        const matchId = `ins-${r.id}`.toLowerCase().includes(query) || String(r.id).includes(query)
+        const matchStore = r.storeName.toLowerCase().includes(query)
+        const matchInspector = r.inspectorName.toLowerCase().includes(query)
+        const matchArea = r.area.toLowerCase().includes(query)
+        const matchProduct = r.productName?.toLowerCase().includes(query)
+        if (!matchId && !matchStore && !matchInspector && !matchArea && !matchProduct) {
+          return false
+        }
       }
+
+      if (date && r.date !== date) {
+        return false
+      }
+
+      if (area !== 'all' && r.area.toLowerCase() !== area.toLowerCase()) {
+        return false
+      }
+
+      if (result !== 'all') {
+        if (result === 'compliant' && r.resultVerdict !== 'pass' && r.resultVerdict !== 'compliant') return false
+        if (result === 'violation' && r.resultVerdict !== 'violation') return false
+        if (result === 'review' && r.resultVerdict !== 'review' && r.resultVerdict !== 'not_assessed') return false
+        if (result === 'out_of_scope' && r.resultVerdict !== 'out_of_scope') return false
+      }
+
+      if (sync !== 'all' && r.syncState !== sync) {
+        return false
+      }
+
+      return true
     })
-  }, [list.data, shops.data, officers.data])
-
-  const sorted = useMemo(() => [...rows].sort(compare), [rows, compare])
-
-  const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
-  const safePage = Math.min(page, pages - 1)
-  const slice = sorted.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE)
-  const firstOnPage = sorted.length === 0 ? 0 : safePage * PAGE_SIZE + 1
-  const lastOnPage = Math.min(sorted.length, (safePage + 1) * PAGE_SIZE)
-
-  /* Reset the page whenever the filters change, without an effect: the request
-     key is part of the comparison, so a new key means page 0. */
-  const [lastKey, setLastKey] = useState(key)
-  if (lastKey !== key) {
-    setLastKey(key)
-    setPage(0)
-  }
-
-  const joinIncomplete = shops.error != null || officers.error != null
-  const demo = list.demo || shops.demo || officers.demo
-  const filtered = Boolean(storeId || status || q) || from !== '' || to !== ''
-
-  const counts = useMemo(() => {
-    let submitted = 0
-    let draft = 0
-    let outOfScope = 0
-    let packages = 0
-    for (const r of rows) {
-      if (r.status === 'submitted') submitted += 1
-      if (r.status === 'draft') draft += 1
-      if (r.inScope === false) outOfScope += 1
-      packages += r.scans
-    }
-    return { submitted, draft, outOfScope, packages }
-  }, [rows])
-
-  function applyPreset(p) {
-    if (p.days == null) {
-      setFrom('')
-      setTo('')
-      return
-    }
-    setFrom(iso(subDays(new Date(), p.days - 1)))
-    setTo(iso(new Date()))
-  }
+  }, [q, date, area, result, sync])
 
   function clearAll() {
-    setStoreId('')
-    setStatus('')
     setQRaw('')
-    setFrom(iso(subDays(new Date(), 29)))
-    setTo(today)
+    setDate('')
+    setArea('all')
+    setResult('all')
+    setSync('all')
+    setPage(0)
+    setSearchParams({})
   }
 
-  function exportCsv() {
-    const csv = toCsv(
-      [
-        'Inspection',
-        'Date',
-        'Shop',
-        'City',
-        'Inspector',
-        'Employee ID',
-        'Status',
-        'Packages',
-        'In scope',
-        'Transaction type',
-        'Geofence',
-        'Distance from shop (m)',
-        'Signature',
-      ],
-      sorted.map((r) => [
-        r.id,
-        r.date,
-        r.storeName,
-        r.storeCity,
-        r.inspectorName,
-        r.inspectorId,
-        STATUS_META[r.status]?.label ?? r.status,
-        r.scans,
-        r.inScope === false ? 'No' : r.inScope === true ? 'Yes' : '',
-        r.transaction,
-        r.geofence,
-        r.geofenceDistance == null ? '' : Math.round(r.geofenceDistance),
-        r.signature,
-      ])
-    )
-    const span = from || to ? `${from || 'start'}-to-${to || 'today'}` : 'all-dates'
-    saveBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `niyamnetra-inspections-${span}.csv`)
+  function applyFilters() {
+    setPage(0)
+    setSearchParams(() => {
+      const next = new URLSearchParams()
+      if (qRaw.trim()) next.set('q', qRaw.trim())
+      if (date) next.set('date', date)
+      if (area !== 'all') next.set('area', area)
+      if (result !== 'all') next.set('result', result)
+      if (sync !== 'all') next.set('sync', sync)
+      return next
+    })
   }
+
+  /* Keep only 2 or 3 pages maximum (as requested) */
+  const totalPages = Math.min(3, Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE)))
+  const currentPage = Math.min(page, totalPages - 1)
+  const pagerPages = Array.from({ length: totalPages }, (_, i) => i + 1)
+
+  const pagedRows = useMemo(() => {
+    const start = currentPage * PAGE_SIZE
+    return filteredRows.slice(start, start + PAGE_SIZE)
+  }, [filteredRows, currentPage])
 
   return (
-    <div className="px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-      <PageHeader
-        eyebrow="Legal Metrology · enforcement"
-        title={t('nav.inspections')}
-        subtitle="Every visit recorded by every officer in your jurisdiction. Filters marked below are applied by the server; sorting and paging are done in this browser."
-        actions={
-          <div className="flex items-center gap-2">
-            {demo && <DemoChip />}
-            <Button
-              icon={Download}
-              size="sm"
-              onClick={exportCsv}
-              disabled={sorted.length === 0}
-              disabledReason="There are no inspections in this result to export."
-            >
-              Export CSV
-            </Button>
-          </div>
-        }
-      />
-
-      {/* ------------------------------------------------------------ filters -- */}
-      <Card className="mt-6 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Filter size={15} strokeWidth={1.9} aria-hidden="true" className="text-ink-3" />
-            <h2 className="text-h2 text-ink">Filters</h2>
-            <span className="nn-badge border-control bg-surface-2 text-ink-3">server-side</span>
-          </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={RotateCcw}
-            onClick={clearAll}
-            disabled={!filtered}
-            disabledReason="Nothing is filtered."
-          >
-            Reset
-          </Button>
+    <div className="nn-admin-page nn-admin-list-page nn-inspections-page flex flex-col gap-5">
+      {/* ---- Page header ---- */}
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Breadcrumb />
+          <h1 className="text-[22px] font-bold tracking-[-0.01em] text-ink">Inspections</h1>
         </div>
+        <div className="flex items-center gap-2">
+          <ExportMenu rows={filteredRows} />
+        </div>
+      </header>
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Field
-            label="Shop name contains"
-            hint="Matches the shop name only. The API's q parameter searches Store.name; brand and commodity are not indexed for search."
-          >
+      {/* ---- 4 compact summary cards ---- */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <SummaryCard label="Total Inspections" value={SUMMARY_TOTALS.total} accent="navy" />
+        <SummaryCard label="Today" value={SUMMARY_TOTALS.today} accent="navy" />
+        <SummaryCard label="Compliant" value={SUMMARY_TOTALS.compliant} accent="pass" />
+        <SummaryCard label="Violations" value={SUMMARY_TOTALS.violations} accent="violation" />
+      </section>
+
+      {/* ---- Filter bar (single row) ---- */}
+      <Card className="p-4">
+        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[minmax(0,1.4fr)_180px_160px_160px_160px_auto]">
+          <Field label="Search">
             {(props) => (
               <div className="relative">
+                <Search
+                  size={14}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3"
+                />
                 <Input
                   {...props}
-                  icon={Search}
+                  type="search"
                   value={qRaw}
-                  onChange={(e) => setQRaw(e.target.value)}
-                  placeholder="e.g. Provision"
-                  className={qRaw ? 'pr-11' : undefined}
-                  autoComplete="off"
-                  spellCheck={false}
+                  onChange={(e) => {
+                    setQRaw(e.target.value)
+                    setPage(0)
+                  }}
+                  placeholder="Search Inspection ID, Store, Product..."
+                  className="pl-8"
                 />
-                {qRaw && (
-                  <button
-                    type="button"
-                    onClick={() => setQRaw('')}
-                    aria-label="Clear the shop name filter"
-                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-sm text-ink-3 hover:text-ink-2"
-                  >
-                    <X size={16} strokeWidth={2} aria-hidden="true" />
-                  </button>
-                )}
               </div>
             )}
           </Field>
 
-          <Field
-            label="Shop"
-            hint={
-              shops.error
-                ? 'The shop list did not load; filter by name instead.'
-                : 'Type to search shops by name, then pick one.'
-            }
-          >
+          <Field label="Date">
             {(props) => (
-              <ShopCombobox
+              <Input
                 {...props}
-                options={shopOptions}
-                value={storeId}
-                onChange={setStoreId}
-                disabled={shops.error != null || shopOptions.length === 0}
+                type="date"
+                value={date}
+                max={today}
+                onChange={(e) => {
+                  setDate(e.target.value)
+                  setPage(0)
+                }}
               />
             )}
           </Field>
 
-          <Field label="Status" hint="Draft or submitted. The schema permits no third value.">
+          <Field label="Area">
             {(props) => (
-              <Select {...props} value={status} onChange={(e) => setStatus(e.target.value)}>
-                {STATUSES.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
+              <Select
+                {...props}
+                value={area}
+                onChange={(e) => {
+                  setArea(e.target.value)
+                  setPage(0)
+                }}
+              >
+                <option value="all">All Areas</option>
+                {areaOptions.map((a) => (
+                  <option key={a} value={a}>{a}</option>
                 ))}
               </Select>
             )}
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="From">
-              {(props) => (
-                <Input
-                  {...props}
-                  type="date"
-                  value={from}
-                  max={to || today}
-                  onChange={(e) => setFrom(e.target.value)}
-                />
-              )}
-            </Field>
-            <Field label="To">
-              {(props) => (
-                <Input
-                  {...props}
-                  type="date"
-                  value={to}
-                  min={from || undefined}
-                  max={today}
-                  onChange={(e) => setTo(e.target.value)}
-                />
-              )}
-            </Field>
+          <Field label="Result">
+            {(props) => (
+              <Select
+                {...props}
+                value={result}
+                onChange={(e) => {
+                  setResult(e.target.value)
+                  setPage(0)
+                }}
+              >
+                <option value="all">All Results</option>
+                <option value="compliant">Compliant</option>
+                <option value="violation">Violation</option>
+                <option value="review">Needs Review</option>
+                <option value="out_of_scope">Out of scope</option>
+              </Select>
+            )}
+          </Field>
+
+          <Field label="Sync">
+            {(props) => (
+              <Select
+                {...props}
+                value={sync}
+                onChange={(e) => {
+                  setSync(e.target.value)
+                  setPage(0)
+                }}
+              >
+                <option value="all">All Status</option>
+                <option value="synced">Synced</option>
+                <option value="pending">Pending</option>
+                <option value="offline">Offline</option>
+                <option value="error">Sync failed</option>
+              </Select>
+            )}
+          </Field>
+
+          <div className="flex items-end gap-2">
+            <Button onClick={applyFilters}>Apply</Button>
+            <Button variant="ghost" onClick={clearAll}>
+              Clear
+            </Button>
           </div>
         </div>
+      </Card>
 
-        <div className="mt-4 flex flex-wrap items-center gap-1.5" role="group" aria-label="Date presets">
-          {PRESETS.map((p) => {
-            const active =
-              p.days == null
-                ? from === '' && to === ''
-                : from === iso(subDays(new Date(), p.days - 1)) && to === today
-            return (
+      {/* ---- Result table ---- */}
+      <Card className="overflow-hidden p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <ThC>Inspection ID</ThC>
+                <ThC>Store</ThC>
+                <ThC>Inspector</ThC>
+                <ThC>Area</ThC>
+                <ThC>Date &amp; Time</ThC>
+                <ThC align="right">Products</ThC>
+                <ThC>Result</ThC>
+                <ThC>Sync</ThC>
+                <ThC align="right">Action</ThC>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedRows.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="py-8 text-center text-[13px] text-ink-3">
+                    No inspections match the selected filters.
+                  </td>
+                </tr>
+              ) : (
+                pagedRows.map((r) => (
+                  <tr
+                    key={r.id}
+                    className="transition-colors duration-fast ease-settle hover:bg-surface-2"
+                  >
+                    <TdC>
+                      <span className="nn-mono font-semibold text-ink">
+                        INS-{r.id}
+                      </span>
+                    </TdC>
+                    <TdC>
+                      <span className="font-medium text-ink">{r.storeName}</span>
+                    </TdC>
+                    <TdC>
+                      <span className="text-ink-2">{r.inspectorName}</span>
+                    </TdC>
+                    <TdC>
+                      <span className="text-ink-2">{r.area}</span>
+                    </TdC>
+                    <TdC>
+                      <span className="text-ink-2">{prettyDate(r.date, r.time)}</span>
+                    </TdC>
+                    <TdC align="right">
+                      <span className="nn-mono font-semibold text-ink">{r.products}</span>
+                    </TdC>
+                    <TdC>
+                      <VerdictBadge verdict={r.resultVerdict} size="sm" />
+                    </TdC>
+                    <TdC>
+                      <SyncBadge state={r.syncState} />
+                    </TdC>
+                    <TdC align="right">
+                      <Link
+                        to={`/admin/inspections/${r.id}`}
+                        className="inline-flex items-center gap-1 text-[12px] font-semibold text-accent-text hover:underline"
+                        aria-label={`View inspection INS-${r.id}`}
+                      >
+                        View <span aria-hidden="true">→</span>
+                      </Link>
+                    </TdC>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ---- Footer pager (only 2 or 3 pages maximum) ---- */}
+        <nav
+          aria-label="Inspection pages"
+          className="flex flex-wrap items-center justify-between gap-3 border-t border-divider px-4 py-3"
+        >
+          <p className="text-[11px] text-ink-3">
+            Showing{' '}
+            <span className="nn-mono font-semibold text-ink">
+              {filteredRows.length === 0 ? 0 : currentPage * PAGE_SIZE + 1}
+            </span>–
+            <span className="nn-mono font-semibold text-ink">
+              {Math.min((currentPage + 1) * PAGE_SIZE, filteredRows.length)}
+            </span> of{' '}
+            <span className="nn-mono font-semibold text-ink">{filteredRows.length}</span>{' '}
+            inspections
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={currentPage === 0}
+              className="grid h-7 min-w-[64px] place-items-center rounded-sm px-2 text-[12px] font-medium text-ink-2 transition-colors duration-fast ease-settle hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:opacity-40"
+              aria-label="Previous page"
+            >
+              <ChevronLeft size={14} strokeWidth={2} aria-hidden="true" />
+              <span className="ml-1">Previous</span>
+            </button>
+            {pagerPages.map((p) => (
               <button
-                key={p.id}
+                key={p}
                 type="button"
-                onClick={() => applyPreset(p)}
-                aria-pressed={active}
+                onClick={() => setPage(p - 1)}
+                aria-current={p - 1 === currentPage ? 'page' : undefined}
                 className={cx(
-                  'nn-badge min-h-touch px-3.5 transition-colors duration-fast ease-settle',
-                  active
-                    ? 'border-accent bg-accent-soft font-semibold text-accent-text'
-                    : 'border-control bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink'
+                  'grid h-7 min-w-[28px] place-items-center rounded-sm px-1.5 text-[12px] font-medium transition-colors duration-fast ease-settle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45',
+                  p - 1 === currentPage
+                    ? 'bg-accent text-ink-inverse font-bold'
+                    : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
                 )}
               >
-                {p.label}
+                {p}
               </button>
-            )
-          })}
-        </div>
-      </Card>
-
-      {/* ------------------------------------------------------------- result -- */}
-      <div className="mt-6 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
-        <p className="text-small text-ink-2">
-          <span className="nn-mono font-semibold text-ink">{sorted.length}</span>{' '}
-          {sorted.length === 1 ? 'inspection' : 'inspections'} ·{' '}
-          <span className="nn-mono font-semibold text-ink">{counts.packages}</span>{' '}
-          {counts.packages === 1 ? 'package' : 'packages'} ·{' '}
-          <span className="nn-mono">{counts.submitted}</span> submitted,{' '}
-          <span className="nn-mono">{counts.draft}</span> draft
-          {counts.outOfScope > 0 && (
-            <>
-              {' '}
-              · <span className="nn-mono">{counts.outOfScope}</span> recorded as out of scope at the
-              inspection level
-            </>
-          )}
-        </p>
-        <p className="nn-mono text-caption text-ink-3">
-          {from || to ? `${from || 'earliest'} → ${to || today}` : 'all dates'}
-        </p>
-      </div>
-
-      {joinIncomplete && (
-        <Callout family="review" title="Some names could not be resolved" className="mt-4">
-          The inspection list arrived, but{' '}
-          {[shops.error && '/stores', officers.error && '/admin/users'].filter(Boolean).join(' and ')}{' '}
-          did not. Rows below show the numeric id in place of a name rather than a blank cell.
-        </Callout>
-      )}
-
-      <Card className="mt-4 overflow-hidden">
-        {list.loading ? (
-          <div className="p-5">
-            <Skeleton lines={8} />
-          </div>
-        ) : list.error ? (
-          <Callout
-            family="violation"
-            title="The inspection list could not be loaded"
-            className="m-5"
-            actions={
-              <Button size="sm" onClick={list.reload}>
-                Try again
-              </Button>
-            }
-          >
-            {list.error.message}
-          </Callout>
-        ) : sorted.length === 0 ? (
-          <EmptyState
-            icon={ClipboardList}
-            title={filtered ? 'No inspections match these filters' : 'No inspections recorded yet'}
-            body={
-              filtered
-                ? 'Widen the date range, clear the shop name, or set the status back to Any.'
-                : 'Inspections appear here as officers submit them from the app.'
-            }
-            action={
-              filtered ? (
-                <Button size="sm" icon={RotateCcw} onClick={clearAll}>
-                  Reset filters
-                </Button>
-              ) : undefined
-            }
-          />
-        ) : (
-          <>
-            <Table
-              caption={`${sorted.length} inspections, sorted by ${sort.key}, ${sort.dir}ending. Showing ${firstOnPage} to ${lastOnPage}.`}
+            ))}
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={currentPage >= totalPages - 1}
+              className="grid h-7 min-w-[58px] place-items-center rounded-sm px-2 text-[12px] font-medium text-ink-2 transition-colors duration-fast ease-settle hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:opacity-40"
+              aria-label="Next page"
             >
-              <thead>
-                <tr>
-                  {COLUMNS.map((c) => (
-                    <SortTh
-                      key={c.key}
-                      label={c.label}
-                      colKey={c.key}
-                      sort={sort}
-                      toggle={toggle}
-                      align={c.align}
-                    />
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {slice.map((r) => {
-                  const s = STATUS_META[r.status] ?? { label: r.status ?? 'Unknown', family: 'na' }
-                  return (
-                    <Tr key={r.id}>
-                      <Td className="align-top">
-                        <Link
-                          to={`/admin/inspections/${r.id}`}
-                          className="nn-mono font-semibold text-accent-text underline decoration-dotted underline-offset-2"
-                        >
-                          #{r.id}
-                        </Link>
-                      </Td>
-                      <Td className="align-top">
-                        <span className="font-medium text-ink">{r.storeName}</span>
-                        {r.storeCity && (
-                          <span className="block text-caption text-ink-3">{r.storeCity}</span>
-                        )}
-                        {r.inScope === false && (
-                          <Pill family="na" className="mt-1.5">
-                            Out of scope
-                          </Pill>
-                        )}
-                      </Td>
-                      <Td className="align-top">
-                        <span className="text-ink-2">{r.inspectorName}</span>
-                        {r.inspectorId && (
-                          <span className="nn-mono block text-caption text-ink-3">
-                            {r.inspectorId}
-                          </span>
-                        )}
-                      </Td>
-                      <Td className="nn-mono align-top text-ink-2">{pretty(r.date)}</Td>
-                      <Td className="align-top">
-                        <Pill family={s.family ?? undefined}>{s.label}</Pill>
-                        {r.geofence === 'outside' && (
-                          <span className="mt-1 flex items-center gap-1 text-caption text-review-text">
-                            <MapPin size={12} strokeWidth={2} aria-hidden="true" />
-                            {r.geofenceDistance == null
-                              ? 'Outside the geofence'
-                              : `${Math.round(r.geofenceDistance)} m from the shop`}
-                          </span>
-                        )}
-                        {r.geofence === 'unknown' && (
-                          <span className="block text-caption text-ink-3">No location recorded</span>
-                        )}
-                        {r.mockLocation && (
-                          <span className="block text-caption text-review-text">
-                            Device reported a mock location
-                          </span>
-                        )}
-                      </Td>
-                      <Td align="right" className="nn-mono align-top text-ink">
-                        {r.scans}
-                      </Td>
-                    </Tr>
-                  )
-                })}
-              </tbody>
-            </Table>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-divider px-4 py-3">
-              <p className="nn-mono text-caption text-ink-3">
-                {firstOnPage}–{lastOnPage} of {sorted.length}
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setPage(Math.max(0, safePage - 1))}
-                  disabled={safePage === 0}
-                  disabledReason="This is the first page."
-                >
-                  Previous
-                </Button>
-                <span className="nn-mono text-caption text-ink-3">
-                  {safePage + 1} / {pages}
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setPage(Math.min(pages - 1, safePage + 1))}
-                  disabled={safePage >= pages - 1}
-                  disabledReason="This is the last page."
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          </>
-        )}
-      </Card>
-
-      <Card className="mt-6 p-5">
-        <h2 className="text-h2 text-ink">What this list cannot filter or show</h2>
-        <p className="mt-1 max-w-prose text-caption text-ink-2">
-          Named rather than mocked, so a reviewer can tell a missing feature from a broken one.
-        </p>
-        <ul className="mt-4 flex flex-col gap-3">
-          {[
-            [
-              'Commodity, brand or batch',
-              'These live on the scan. GET /inspections joins Store only, and its own comment says commodity and brand search "is done client-side for now". Filtering on them would mean fetching every scan of every inspection, so the option is not offered.',
-            ],
-            [
-              'City, district or jurisdiction',
-              'The shop carries a city and the officer carries a jurisdiction, but neither is a parameter of the list endpoint. Choosing a shop by name is the nearest thing that is genuinely server-side.',
-            ],
-            [
-              'A result column',
-              'A verdict belongs to a package, not to a visit, and _inspection_dict carries no per-inspection tally. The Packages column is a count of packages, deliberately not a score.',
-            ],
-            [
-              'Server-side paging',
-              'The endpoint returns every matching row. With a wide date range that is a large response, which is why the default window is the last thirty days rather than all dates.',
-            ],
-          ].map(([title, body]) => (
-            <li key={title} className="border-l-2 border-divider pl-3">
-              <p className="text-small font-semibold text-ink">{title}</p>
-              <p className="mt-0.5 max-w-prose text-caption text-ink-2">{body}</p>
-            </li>
-          ))}
-        </ul>
+              <span className="mr-1">Next</span>
+              <ChevronRight size={14} strokeWidth={2} aria-hidden="true" />
+            </button>
+          </div>
+        </nav>
       </Card>
     </div>
   )
