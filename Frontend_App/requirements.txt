@@ -1,0 +1,55 @@
+# ============================================================
+# NiyamNetra Frontend_App — Requirements
+# SIH 2026 · SIH26034
+# Install: npm install (uses package.json)
+# ============================================================
+#
+# This is a reference file for the Frontend_App (Expo/React Native).
+# The actual dependencies are managed via package.json.
+# Run `npm install` in the Frontend_App directory to install all packages.
+#
+# Core:
+#   expo ^54.0.37
+#   react 19.1.0
+#   react-native 0.81.5
+#
+# Navigation:
+#   @react-navigation/native ^6.1.9
+#   @react-navigation/native-stack ^6.9.0
+#   @react-navigation/bottom-tabs ^6.5.0
+#   react-native-screens ~4.16.0
+#   react-native-safe-area-context ~5.6.0
+#
+# Camera & Media:
+#   expo-camera ~17.0.10
+#   expo-image-manipulator ~14.0.12
+#   expo-barcode-scanner ~14.0.12
+#
+# Storage & Files:
+#   expo-file-system ~19.0.24
+#   expo-secure-store ~15.0.8
+#   @react-native-async-storage/async-storage ~2.1.2
+#
+# Location & Sensors:
+#   expo-location ~19.0.8
+#   expo-haptics ~15.0.9
+#
+# Security:
+#   expo-local-authentication ~17.0.9
+#   expo-screen-capture ~8.0.10
+#
+# Network:
+#   expo-network ~8.0.8
+#   axios ^1.6.0
+#
+# UI/UX:
+#   react-native-reanimated ~3.19.0
+#   react-native-gesture-handler ~2.24.0
+#   expo-splash-screen ~0.31.4
+#   expo-status-bar ~2.2.3
+#
+# Utility:
+#   uuid ^9.0.1
+#   @expo/metro-runtime ~6.1.2
+#   react-dom 19.1.0
+#   react-native-web ^0.21.0

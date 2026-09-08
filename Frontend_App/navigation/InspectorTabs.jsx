@@ -4,7 +4,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import SyncStrip from '../components/SyncStrip';
 import LowStorageGuard from '../components/LowStorageGuard';
 import { colors } from '../theme';
-import ScanScreen from '../screens/inspector/ScanScreen';
+import InspectorFlow from '../screens/inspector/InspectorFlow';
 import PassScreen from '../screens/inspector/PassScreen';
 import ViolationsScreen from '../screens/inspector/ViolationsScreen';
 import ReportsScreen from '../screens/inspector/ReportsScreen';
@@ -56,12 +56,12 @@ export default function InspectorTabs() {
         }}
       >
         <Tab.Screen
-          name="Scan"
-          component={ScanScreen}
+          name="Inspect"
+          component={InspectorFlow}
           options={{
-            tabBarLabel: 'Scan',
-            tabBarAccessibilityLabel: 'Scan, capture a new inspection',
-            tabBarIcon: ({ focused }) => <TabIcon icon="📷" focused={focused} label="Scan" />,
+            tabBarLabel: 'Inspect',
+            tabBarAccessibilityLabel: 'Inspect, establishment surveillance and sampling',
+            tabBarIcon: ({ focused }) => <TabIcon icon="⚖️" focused={focused} label="Inspect" />,
           }}
         />
         <Tab.Screen

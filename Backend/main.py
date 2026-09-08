@@ -1,4 +1,5 @@
 """main.py — the app. Run from inside backend/ so flat imports resolve."""
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -7,6 +8,8 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 from routers import admin, auth, inspections, reports, scans
+
+logger = logging.getLogger("niyamnetra.startup")
 
 
 @asynccontextmanager
@@ -23,13 +26,16 @@ async def lifespan(app: FastAPI):
     if settings.ENV != "test":
         try:
             if getattr(settings, "DISABLE_PADDLE", False):
+                logger.info("[OCR] PaddleOCR disabled in configuration (cloud OCR deploy).")
                 raise RuntimeError("paddle disabled (cloud OCR deploy)")
             if getattr(settings, "OCR_PROVIDER", "auto") in ("google", "ocrspace"):
+                logger.info(f"[OCR] Cloud provider '{settings.OCR_PROVIDER}' selected; local model warmup bypassed.")
                 raise RuntimeError("cloud OCR forced; no local warmup needed")
             from ocr_engine import get_paddle
             get_paddle()
-        except Exception:
-            pass
+            logger.info("[OCR] Local PaddleOCR engine initialized and warmed up successfully.")
+        except Exception as e:
+            logger.info(f"[OCR] Engine initialization note: {e}. Fallback pipeline (Tesseract / Cloud) active.")
     yield
 
 

@@ -69,12 +69,12 @@ import {
 } from '../ui'
 
 /* The seven values SubmitInspectionRequest permits on transaction_type, in the
-   order the schema lists them. `scope: 'retail'` marks the two the server treats
-   as in scope; the rest are recorded and stamped out of scope. The hint on each
-   is what an officer needs *before* choosing, not after. */
+   order the schema lists them. `scope: 'retail'` marks retail_sale which the server
+   treats as in scope; the rest are recorded and stamped out of scope per Rule 3. The hint
+   on each is what an officer needs *before* choosing, not after. */
 const TRANSACTION_TYPES = [
   { value: 'retail_sale', scope: 'retail', hintEn: 'A sale to the end consumer. Chapter II applies in full.' },
-  { value: 'packed_in_presence', scope: 'retail', hintEn: 'Packed for the buyer at the counter. Still a retail declaration duty.' },
+  { value: 'packed_in_presence', scope: 'other', hintEn: 'Made up in purchaser’s presence. Exempt from Chapter II retail rules under Rule 3.' },
   { value: 'wholesale', scope: 'other', hintEn: 'Sale in bulk for resale. Recorded, but outside the packaged-commodity rules.' },
   { value: 'institutional', scope: 'other', hintEn: 'Supply to an institution, not a retail sale. Recorded out of scope.' },
   { value: 'industrial', scope: 'other', hintEn: 'Supply as a raw or packing material to industry. Recorded out of scope.' },
@@ -84,7 +84,7 @@ const TRANSACTION_TYPES = [
 
 /* Kept in lockstep with routers/inspections.py:_RETAIL_TYPES. If the server ever
    widens what counts as retail, this set — and only this set — moves with it. */
-const IN_SCOPE = new Set(['retail_sale', 'packed_in_presence'])
+const IN_SCOPE = new Set(['retail_sale'])
 
 const storeMatches = (s, q) => {
   if (!q) return true

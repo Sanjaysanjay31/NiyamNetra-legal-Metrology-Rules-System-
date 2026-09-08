@@ -83,12 +83,12 @@ import {
   useToast,
 } from '../ui'
 
-/* The seven transaction types CreateInspectionRequest permits, with the two that
-   put a package inside Chapter II's retail ambit marked. _RETAIL_TYPES in
-   routers/inspections.py is the authority for that mark. */
+/* The seven transaction types CreateInspectionRequest permits, with retail sale
+   marking a package inside Chapter II's retail ambit. _RETAIL_TYPES in
+   routers/inspections.py and CHK03 in rules_engine.py are the authority for that mark. */
 const TRANSACTIONS = {
   retail_sale: { label: 'Retail sale', retail: true },
-  packed_in_presence: { label: 'Packed in the buyer’s presence', retail: true },
+  packed_in_presence: { label: 'Packed in the buyer’s presence', retail: false },
   wholesale: { label: 'Wholesale', retail: false },
   institutional: { label: 'Institutional supply', retail: false },
   industrial: { label: 'Industrial supply', retail: false },

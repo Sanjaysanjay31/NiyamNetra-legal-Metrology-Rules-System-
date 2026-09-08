@@ -5,7 +5,7 @@
 export const ACTIVE_BACKEND = 'lan'; // 'lan' | 'render'
 
 // 2. Your Laptop Wi-Fi IPv4 Address (find by running `ipconfig` in terminal)
-export const LAPTOP_WIFI_IP = '192.168.101.73';
+export const LAPTOP_WIFI_IP = '10.131.217.148';
 
 // 3. Backend port
 export const API_PORT = 8000;
