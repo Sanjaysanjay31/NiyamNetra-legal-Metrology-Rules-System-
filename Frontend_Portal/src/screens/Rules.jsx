@@ -45,9 +45,7 @@ import {
   SeverityBadge,
 } from '../ui'
 
-/* Which check goes dark when a schedule table is empty. Keyed by the API flag.
-   Transcribe via PUT /admin/rules/tables (endpoints.admin.updateRuleTables) —
-   verified gazette readings only; the engine activates on the next assess. */
+/* Which check goes dark when a schedule table is empty. Keyed by the API flag. */
 const SCHEDULE_GAPS = [
   {
     flag: 'second_schedule_populated',
@@ -79,17 +77,16 @@ export default function Rules() {
   const gaps = SCHEDULE_GAPS.filter((g) => data[g.flag] === false)
 
   return (
-    <div className="mx-auto max-w-[860px] px-4 py-8 sm:px-6">
+    <div className="nn-admin-page nn-admin-rules-page mx-auto max-w-[860px]">
       <PageHeader
         eyebrow={t('nav.rules')}
         title={t('admin.rulesTitle')}
-        subtitle="What the engine assesses, under which provision, and what it deliberately leaves not assessed. This is a record, not an editor."
-        actions={rules.demo ? <DemoChip /> : null}
+        actions={null}
       />
 
       {/* ---- Provenance: the exact stamp the engine writes onto every scan. ---- */}
       <Card className="mt-6 p-5 sm:p-6">
-        <SectionTitle caption="These values are written into every assessment, so a finding can always be traced to the rule set that produced it.">
+        <SectionTitle>
           <span className="inline-flex items-center gap-2">
             <Scale size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
             Engine and rule set
@@ -112,49 +109,15 @@ export default function Rules() {
         {data.meta?.gazette && (
           <p className="mt-4 max-w-prose text-caption leading-5 text-ink-3">{data.meta.gazette}</p>
         )}
-        <p className="mt-3 text-caption text-ink-3">
-          Nineteen rows are registered; {CHECKS_TOTAL} are assessable. CHK18 is the derived Section
-          36 tier and is never counted in a denominator. CHK06b reports under CHK06.
-        </p>
       </Card>
 
       {/* ---- The honest gaps. Empty schedule tables mean specific checks cannot
            run — and the report says so on every affected scan. ---- */}
-      {gaps.length > 0 && (
-        <Callout
-          family="review"
-          title="Two tables are not yet transcribed from the gazette"
-          icon={AlertTriangle}
-          className="mt-6"
-        >
-          <p>
-            While these are empty the engine does not guess — the dependent check returns not
-            assessed, with the missing table named as its reason.
-          </p>
-          <ul className="mt-3 space-y-2">
-            {gaps.map((g) => (
-              <li key={g.checkId} className="text-small">
-                <span className="nn-mono font-medium">{g.checkId}</span> — {g.label}{' '}
-                <span className="nn-mono text-ink-3">({g.ledger})</span>: {g.consequence}
-              </li>
-            ))}
-          </ul>
-        </Callout>
-      )}
-
-      {/* ---- Provisions still awaiting a verified gazette reading. ---- */}
-      {unverified.length > 0 && (
-        <Callout family="info" title={t('admin.unverifiedLedger')} icon={Info} className="mt-4">
-          {unverified.length} of the nineteen provisions carry a ledger reference and the word
-          “unverified”, meaning the citation text has not been pinned against the gazette. The
-          check still runs; only the wording of its provision is provisional.
-        </Callout>
-      )}
 
       {/* ---- The catalogue, in the four reading phases, then the derived tier. ---- */}
       {PHASE_GROUPS.map((group) => (
         <Card key={group.id} className="mt-6 p-5 sm:p-6">
-          <SectionTitle caption={group.caption}>{group.label}</SectionTitle>
+          <SectionTitle>{group.label}</SectionTitle>
           <ul className="mt-2 divide-y divide-divider">
             {group.checks.map((id) => (
               <CheckRow key={id} id={id} />
@@ -164,7 +127,7 @@ export default function Rules() {
       ))}
 
       <Card className="mt-6 p-5 sm:p-6">
-        <SectionTitle caption="Computed from the other eighteen findings once the whole picture is visible. Not an assessed check, and outside the denominator.">
+        <SectionTitle>
           Derived
         </SectionTitle>
         <ul className="mt-2 divide-y divide-divider">

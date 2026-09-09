@@ -1,45 +1,19 @@
 <!doctype html>
-<html lang="en" data-theme="light" data-accent="teal">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="NiyamNetra - Legal Metrology compliance inspection portal" />
-    <meta name="theme-color" content="#0F2A44" />
+    <meta name="theme-color" content="#0f2a44" />
     <title>NiyamNetra Portal</title>
-
-    <!--
-      Resolve the theme BEFORE first paint. Without this the page paints light,
-      then flips to dark a frame later, which reads as a bug on every load.
-      Only a display preference is read here - never a token, never a role.
-    -->
-    <script>
-      (function () {
-        try {
-          var root = document.documentElement
-          var mode = localStorage.getItem('nn.theme') || 'system'
-          var accent = localStorage.getItem('nn.accent') || 'teal'
-          var dark =
-            mode === 'dark' ||
-            (mode === 'system' &&
-              window.matchMedia('(prefers-color-scheme: dark)').matches)
-          root.setAttribute('data-theme', dark ? 'dark' : 'light')
-          root.setAttribute('data-accent', accent)
-          root.style.colorScheme = dark ? 'dark' : 'light'
-          var meta = document.querySelector('meta[name="theme-color"]')
-          if (meta) meta.setAttribute('content', dark ? '#0A1120' : '#0F2A44')
-        } catch (e) {
-          /* private mode or storage disabled - light theme is a safe default */
-        }
-      })()
-    </script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <!--
       Inter for Latin, Noto Sans Devanagari for Hindi (declared in the same
       family stack so mixed strings render without a visible seam), JetBrains
-      Mono for identifiers, hashes and extracted values. Per 08 SS2.2.
+      Mono for identifiers, hashes and extracted values.
     -->
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"

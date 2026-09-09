@@ -107,6 +107,7 @@ def admin_stats(db: Session, start: date, end: date):
         select(
             func.count(func.distinct(Inspection.id)).label("inspections"),
             func.count(func.distinct(Inspection.user_id)).label("active_inspectors"),
+            func.count(func.distinct(Inspection.store_id)).label("stores_visited"),
             total, comp, viol, na, oos,
         )
         .select_from(Inspection)
@@ -254,3 +255,75 @@ def inspection_trend(db: Session, start: date, end: date):
             .order_by(Inspection.inspection_date)
         )
     ]
+
+
+def check_category(check_id: str | None, title: str | None = "") -> str:
+    cid = (check_id or "").upper()
+    t = (title or "").upper()
+    if cid in ("CHK06", "CHK11") or "MRP" in t:
+        return "MRP Declaration"
+    if cid in ("CHK05", "CHK10") or "QUANTITY" in t or "NET" in t:
+        return "Net Quantity"
+    if cid in ("CHK07", "CHK13") or "DATE" in t or "EXPIRY" in t or "MONTH" in t:
+        return "Date / Expiry"
+    if cid == "CHK09" or "CONSUMER" in t or "CARE" in t:
+        return "Consumer Care"
+    if cid == "CHK04" or "MANUFACTURER" in t or "PACKER" in t:
+        return "Manufacturer Info"
+    if cid == "CHK12" or "ORIGIN" in t:
+        return "Country of Origin"
+    if cid in ("CHK15", "CHK16") or "ECOMMERCE" in t or "MARKETPLACE" in t:
+        return "E-Commerce"
+    return "Package Declarations"
+
+
+def admin_violations_list(
+    db: Session,
+    start: date | None = None,
+    end: date | None = None,
+    store_id: int | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Query live finding failures joined with Scan, Inspection, Store, User."""
+    verdict = func.coalesce(Finding.human_verdict, Finding.engine_verdict)
+    q = (
+        db.query(Finding, Scan, Inspection, Store, User)
+        .join(Scan, Finding.scan_id == Scan.id)
+        .join(Inspection, Scan.inspection_id == Inspection.id)
+        .join(Store, Inspection.store_id == Store.id)
+        .join(User, Inspection.user_id == User.id)
+        .filter(verdict == "fail", LIVE)
+    )
+    if start:
+        q = q.filter(Inspection.inspection_date >= start)
+    if end:
+        q = q.filter(Inspection.inspection_date <= end)
+    if store_id is not None:
+        q = q.filter(Store.id == store_id)
+
+    rows = q.order_by(Inspection.inspection_date.desc(), Finding.id.desc()).limit(limit).all()
+
+    out = []
+    for f, s, i, st, u in rows:
+        prod_name = (
+            f"{s.brand_name} {s.commodity_generic}".strip()
+            if (s.brand_name or s.commodity_generic)
+            else "Packaged Item"
+        )
+        out.append({
+            "id": f.id,
+            "date": i.inspection_date.isoformat() if i.inspection_date else "",
+            "store_id": st.id,
+            "store_name": st.name,
+            "area": st.city or st.district or "Andhra Pradesh",
+            "commodity_generic": s.commodity_generic or "Packaged Commodity",
+            "product_name": prod_name,
+            "brand_name": s.brand_name or "—",
+            "manufacturer": s.brand_name or st.name or "Manufacturer",
+            "category": check_category(f.check_id, f.title),
+            "rule": f.citation or f"Rule ({f.check_id})",
+            "reason": f.reason or f.observed or "Non-compliance observed",
+            "result": "violation",
+            "inspector": u.full_name or u.employee_id,
+        })
+    return out

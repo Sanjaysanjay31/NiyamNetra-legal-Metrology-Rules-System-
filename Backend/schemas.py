@@ -261,10 +261,48 @@ class AdminDashboardResponse(BaseModel):
     period_end: date
     inspections: int
     active_inspectors: int
+    stores_visited: int = 0
     counts: ResultCounts
     review_queue: int
     top_failed_checks: list[CheckTally]
     trend: list[TrendPoint]
+
+
+class AdminViolationItem(BaseModel):
+    id: int
+    date: str
+    store_id: int
+    store_name: str
+    area: str
+    commodity_generic: str
+    product_name: str
+    brand_name: str
+    manufacturer: str
+    category: str
+    rule: str
+    reason: str
+    result: str
+    inspector: str
+
+
+class AdminViolationsResponse(BaseModel):
+    total: int
+    violations: list[AdminViolationItem]
+    top_violations: list[dict] = []
+
+
+class RuleVersionOut(BaseModel):
+    id: str
+    year: int
+    name: str
+    gazette_ref: str
+    effective_from: str
+    effective_to: str | None = None
+    description: str
+    status: str
+    is_active: bool
+    summary: str
+    rules: list[dict] = []
 
 
 # ------------------------------------------------------------------ admin

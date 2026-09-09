@@ -14,13 +14,13 @@ from database import get_db
 from models import AuditLog, Finding, Scan, User
 from password_handler import hash_password
 from queries import (
-    admin_stats, inspection_trend, proximity_flags, repeat_violators, review_queue_size,
+    admin_stats, admin_violations_list, inspection_trend, proximity_flags, repeat_violators, review_queue_size,
     violations_by_check,
 )
 from rbac import require_admin
 from schemas import (
-    AdminDashboardResponse, AuditEntryOut, CheckTally, CreateUserRequest,
-    OverrideFindingRequest, ResetInstallRequest, ResultCounts, TrendPoint,
+    AdminDashboardResponse, AdminViolationItem, AdminViolationsResponse, AuditEntryOut, CheckTally, CreateUserRequest,
+    OverrideFindingRequest, ResetInstallRequest, ResultCounts, RuleVersionOut, TrendPoint,
     UpdateUserRequest, UserOut,
 )
 
@@ -55,6 +55,7 @@ def dashboard(start: date | None = Query(default=None),
         period_start=start, period_end=end,
         inspections=stats.get("inspections") or 0,
         active_inspectors=stats.get("active_inspectors") or 0,
+        stores_visited=stats.get("stores_visited") or 0,
         counts=_counts(stats),
         review_queue=stats.get("review_queue") or 0,
         top_failed_checks=top, trend=trend,
@@ -82,6 +83,115 @@ def repeat_offenders(start: date | None = Query(default=None),
             for r in rows
         ],
     }
+
+
+@router.get("/repeat-offenders")
+def repeat_offenders_alias(start: date | None = Query(default=None),
+                           end: date | None = Query(default=None),
+                           limit: int = Query(default=20, ge=1, le=100),
+                           user: User = Depends(require_admin),
+                           db: Session = Depends(get_db)):
+    """Alias for /admin/repeat-violators matching the portal route."""
+    return repeat_offenders(start=start, end=end, limit=limit, user=user, db=db)
+
+
+@router.get("/violations", response_model=AdminViolationsResponse)
+def get_admin_violations(
+    start: date | None = Query(default=None),
+    end: date | None = Query(default=None),
+    store_id: int | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """List live statutory violations across jurisdiction for regulator review."""
+    rows = admin_violations_list(db, start=start, end=end, store_id=store_id, limit=limit)
+    counts = {}
+    for r in rows:
+        cat = r["category"]
+        counts[cat] = counts.get(cat, 0) + 1
+    top = [{"category": k, "count": v} for k, v in sorted(counts.items(), key=lambda x: x[1], reverse=True)]
+    return AdminViolationsResponse(
+        total=len(rows),
+        violations=[AdminViolationItem(**r) for r in rows],
+        top_violations=top,
+    )
+
+
+@router.get("/rule-versions", response_model=list[RuleVersionOut])
+def get_rule_versions(user: User = Depends(require_admin)):
+    """Statutory catalog timeline for Legal Metrology Rules amendments."""
+    return [
+        RuleVersionOut(
+            id="rv-2009-act",
+            year=2009,
+            name="Legal Metrology Act, 2009",
+            gazette_ref="Act No. 1 of 2010 · Ministry of Law and Justice",
+            effective_from="2009-10-01",
+            effective_to="2011-03-06",
+            description="Parent statutory Act establishing standards of weights and measures, inspection authority, and legal framework for packaged goods.",
+            status="Archived",
+            is_active=False,
+            summary="The primary parliamentary statute replacing the Standards of Weights and Measures Act, 1976. Established statutory definition of pre-packaged commodities (Sec 2(l)), mandatory packaging declarations (Sec 18), inspection and seizure powers (Sec 15), and statutory penalties for non-standard commodities (Sec 36).",
+            rules=[
+                {"section": "Section 18(1)", "title": "Mandatory Declarations on Pre-packaged Commodities", "category": "Statutory Mandate", "status": "Mandatory"},
+                {"section": "Section 36(1)", "title": "Penalty for Non-Standard Packages", "category": "Penal Provisions", "status": "Enforced"},
+                {"section": "Section 36(2)", "title": "Penalty for Non-Declaration on Package", "category": "Penal Provisions", "status": "Enforced"},
+            ],
+        ),
+        RuleVersionOut(
+            id="rv-2011-pcr",
+            year=2011,
+            name="Legal Metrology (Packaged Commodities) Rules, 2011",
+            gazette_ref="G.S.R. 202(E) · Ministry of Consumer Affairs",
+            effective_from="2011-03-07",
+            effective_to="2017-12-31",
+            description="Comprehensive subordinate legislation establishing Rule 6 mandatory declarations, Second Schedule prescribed sizes, font size tables, and inspection procedures.",
+            status="Archived",
+            is_active=False,
+            summary="Enacted under Section 52(2)(j) & (q) of Act 1 of 2010. Laid down 8 core declarations (Rule 6(1)), area-to-height font ratios (Rule 7), retail price display (Rule 6(1)(e)), and maximum permissible errors (First Schedule).",
+            rules=[
+                {"section": "Rule 6(1)", "title": "Mandatory Declarations on Retail Packages", "category": "Core Mandate", "status": "Superseded"},
+                {"section": "Rule 7", "title": "General Provisions relating to Display of Declarations", "category": "Typography", "status": "Superseded"},
+            ],
+        ),
+        RuleVersionOut(
+            id="rv-2017-amend",
+            year=2017,
+            name="Legal Metrology (Packaged Commodities) Amendment Rules, 2017",
+            gazette_ref="G.S.R. 629(E) · w.e.f. 01-01-2018",
+            effective_from="2018-01-01",
+            effective_to="2022-06-30",
+            description="Major landmark amendment introducing Rule 6(10) E-Commerce marketplace declarations, dual MRP prohibitions, bar on altering MRP, and expanded medical device exemptions.",
+            status="Archived",
+            is_active=False,
+            summary="Introduced mandatory e-commerce declarations (Rule 6(10)), barred charging higher price on different channels, tightened sticker rules, and strengthened consumer care declaration requirements.",
+            rules=[
+                {"section": "Rule 6(10)", "title": "E-Commerce Entity Declarations", "category": "Digital / E-Commerce", "status": "Amended"},
+                {"section": "Rule 6(3)", "title": "Sticker Prohibitions & Exceptions", "category": "Stickers / Overwrite", "status": "Active"},
+            ],
+        ),
+        RuleVersionOut(
+            id="rv-2026-current",
+            year=2026,
+            name="Legal Metrology (Packaged Commodities) Rules, 2011 (As Amended 2026)",
+            gazette_ref="G.S.R. 226(E) & 521(E) · Consolidated 2026 Edition",
+            effective_from="2026-07-01",
+            effective_to=None,
+            description="Current active statutory rulebook enforced by NiyamNetra v2.0 Compliance Engine. Incorporates unit sale price mandates, QR code provisions, and enhanced schedule standards.",
+            status="Active",
+            is_active=True,
+            summary="Consolidated rules in force as at 2026-07-01. Governs all 19 algorithmic checks in NiyamNetra including Rule 6(1)(f) Unit Sale Price, Second Schedule standard sizing, and digital e-commerce compliance.",
+            rules=[
+                {"section": "Rule 6(1)(e)", "title": "Maximum Retail Price (MRP) & Sticker Rules", "category": "Pricing", "status": "Active"},
+                {"section": "Rule 6(1)(c)", "title": "Net Quantity & Numeral Height (Rule 7)", "category": "Quantity", "status": "Active"},
+                {"section": "Rule 6(1)(d)", "title": "Month & Year of Manufacture / Pre-packing", "category": "Dates", "status": "Active"},
+                {"section": "Rule 6(1)(a)", "title": "Name & Address of Manufacturer / Packer", "category": "Identity", "status": "Active"},
+                {"section": "Rule 6(1)(f)", "title": "Unit Sale Price (USP) per g/ml/piece", "category": "Pricing", "status": "Active"},
+                {"section": "Rule 6(10)", "title": "E-Commerce Marketplace Compliance", "category": "Digital", "status": "Active"},
+            ],
+        ),
+    ]
 
 
 @router.get("/users", response_model=list[UserOut])

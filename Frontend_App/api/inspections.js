@@ -1,0 +1,87 @@
+// api/inspections.js — Live endpoints for inspection & scan lifecycle
+import { api } from './client';
+
+export async function fetchStores() {
+  const { data } = await api.get('/stores');
+  return Array.isArray(data) ? data : data?.items || [];
+}
+
+export async function fetchTodayStats() {
+  try {
+    const { data } = await api.get('/reports/today');
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function fetchInspectionsList(params = {}) {
+  const { data } = await api.get('/inspections', { params });
+  return Array.isArray(data) ? data : data?.items || [];
+}
+
+export async function fetchInspectionDetails(inspectionId) {
+  const { data } = await api.get(`/inspections/${inspectionId}`);
+  return data;
+}
+
+export async function createInspection(body) {
+  const { data } = await api.post('/inspections', body);
+  return data;
+}
+
+export async function createScan(inspectionId, scanBody) {
+  const { data } = await api.post(`/inspections/${inspectionId}/scans`, scanBody);
+  return data;
+}
+
+export async function uploadScanImage(scanId, panel, imageUri) {
+  const formData = new FormData();
+  formData.append('panel', panel);
+
+  const filename = imageUri.split('/').pop() || `panel_${panel}.jpg`;
+  const match = /\.(\w+)$/.exec(filename);
+  const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+  formData.append('file', {
+    uri: imageUri,
+    name: filename,
+    type,
+  });
+
+  const { data } = await api.post(`/scans/${scanId}/images`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data;
+}
+
+export async function updateScanScope(scanId, scopeFlags) {
+  const { data } = await api.patch(`/scans/${scanId}`, scopeFlags);
+  return data;
+}
+
+export async function assessScan(scanId) {
+  const { data } = await api.post(`/scans/${scanId}/assess`);
+  return data;
+}
+
+export async function fetchScanDetails(scanId) {
+  const { data } = await api.get(`/scans/${scanId}`);
+  return data;
+}
+
+export async function overrideFinding(findingId, humanVerdict, overrideReason) {
+  const { data } = await api.patch(`/admin/findings/${findingId}`, {
+    human_verdict: humanVerdict,
+    override_reason: overrideReason,
+  });
+  return data;
+}
+
+export async function submitInspection(inspectionId, { signature_status = 'signed', notes = '' }) {
+  const { data } = await api.post(`/inspections/${inspectionId}/submit`, {
+    signature_status,
+    notes,
+  });
+  return data;
+}

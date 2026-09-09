@@ -135,6 +135,21 @@ def _inspection_dict(insp: Inspection) -> dict:
         "checks": _total, "checks_total": _total,
         "evidence_thumbnails": _thumbs, "evidence_uris": _thumbs,
         "photos": _thumbs, "images": _thumbs,
+        "scans": [
+            {
+                "id": s.id,
+                "commodity_generic": s.commodity_generic,
+                "brand_name": s.brand_name,
+                "overall_result": s.overall_result,
+                "checks_total": s.checks_total,
+                "checks_assessed": s.checks_assessed,
+                "duplicate_of": s.duplicate_of,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "images": [{"id": img.id, "panel": img.panel} for img in (getattr(s, "images", []) or [])],
+                "image_count": len(getattr(s, "images", []) or []),
+            }
+            for s in live
+        ],
     }
 class CreateStoreRequest(BaseModel):
     name: str = Field(min_length=2, max_length=160)
