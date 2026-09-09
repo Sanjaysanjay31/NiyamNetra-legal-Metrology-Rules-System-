@@ -5,24 +5,21 @@
  *
  * 1. The access token lives in a module variable, set by AuthContext. It is
  *    never written to localStorage or sessionStorage. The refresh token is an
- *    httpOnly cookie scoped to path /auth that no JavaScript here can read,
- *    which is the entire point of the arrangement: an XSS in this bundle cannot
- *    walk away with a durable session. SameSite is Strict for a same-site
- *    deploy and None+Secure when the portal and the API are cross-site
- *    (see Backend/routers/auth.py:_set_refresh_cookie).
+ *    httpOnly SameSite=Strict cookie that no JavaScript here can read, which is
+ *    the entire point of the arrangement: an XSS in this bundle cannot walk away
+ *    with a durable session.
  *
  * 2. There is exactly one refresh in flight at a time. When six requests fire
  *    on a dashboard mount and all six get 401, they await the *same* promise and
- *    then replay. Without the shared promise you get six concurrent refreshes
- *    racing each other and hammering the session. Note: backend rotation is
- *    NOT single-use (routers/auth.py keeps the old token valid until expiry;
- *    revocation is via token_epoch), so the shared promise is about load and
- *    ordering, not about surviving single-use invalidation.
+ *    then replay. Without the shared promise you get six concurrent refreshes,
+ *    and because the backend rotates refresh tokens single-use, five of them
+ *    fail and log the officer out mid-inspection. That bug is subtle, rare in
+ *    development and constant on a slow connection.
  */
 
 import axios from 'axios'
 
-const BASE = String(import.meta.env.VITE_API_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
+const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 export const DEMO_DATA = String(import.meta.env.VITE_DEMO_DATA) === 'true'
 
 /* ---------------------------------------------------------------- token ---- */
@@ -46,9 +43,7 @@ export function setSessionLostHandler(fn) {
 export const api = axios.create({
   baseURL: BASE,
   timeout: 20000,
-  /* withCredentials lets the browser send the refresh cookie. The cookie itself
-     is scoped to path /auth by the backend, so it only travels on /auth/*
-     requests; elsewhere this flag is harmless. */
+  /* Sends the refresh cookie. Required on /auth/* and harmless elsewhere. */
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -208,38 +203,27 @@ export const endpoints = {
 
   inspections: {
     stores: (params) => unwrap(api.get('/stores', { params })),
+    createStore: (body) => unwrap(api.post('/stores', body)),
     list: (params) => unwrap(api.get('/inspections', { params })),
     get: (id) => unwrap(api.get(`/inspections/${id}`)),
-    /* Neither CreateInspectionRequest nor CreateScanRequest has a client_uuid
-       body field. Idempotency travels as the `Idempotency-Key` header (CORS-
-       allowed in Backend/main.py); callers pass `{ headers:
-       { 'Idempotency-Key': <uuid> } }` as the second argument. */
-    create: (body, config) => unwrap(api.post('/inspections', body, config)),
-    submit: (id, body, config) => unwrap(api.post(`/inspections/${id}/submit`, body, config)),
-    createScan: (id, body, config) => unwrap(api.post(`/inspections/${id}/scans`, body, config)),
+    create: (body) => unwrap(api.post('/inspections', body)),
+    submit: (id, body) => unwrap(api.post(`/inspections/${id}/submit`, body)),
+    createScan: (id, body) => unwrap(api.post(`/inspections/${id}/scans`, body)),
   },
 
   scans: {
     get: (id) => unwrap(api.get(`/scans/${id}`)),
     verify: (id) => unwrap(api.get(`/scans/${id}/verify`)),
-    assess: (id, body, config) => unwrap(api.post(`/scans/${id}/assess`, body ?? {}, config)),
-    /* Scope flags that decide CHK02/11/12/13/14. PATCH /scans/{id} must run
-       before assess so a re-assess is reproducible (Backend/routers/scans.py:
-       UpdateScanRequest). Nullable = unknown -> not_assessed, never pass. */
-    updateScan: (id, fields, config) => unwrap(api.patch(`/scans/${id}`, fields, config)),
-    /* E-commerce listing for CHK15/16 via the SSRF-guarded fetcher. Raw HTML
-       is never appended to ocr_text; the URL is recorded in the audit trail. */
-    attachListing: (id, url, config) =>
-      unwrap(api.post(`/scans/${id}/listing`, { url }, config)),
+    assess: (id, body) => unwrap(api.post(`/scans/${id}/assess`, body ?? {})),
     /* multipart: the browser must set its own boundary, so the JSON default
        Content-Type is removed rather than overwritten. */
-    uploadImage: (id, file, panel, onProgress, config) => {
+    uploadImage: (id, file, panel, onProgress) => {
       const form = new FormData()
       form.append('file', file)
       form.append('panel', panel)
       return unwrap(
         api.post(`/scans/${id}/images`, form, {
-          headers: { 'Content-Type': undefined, ...(config?.headers ?? {}) },
+          headers: { 'Content-Type': undefined },
           timeout: 60000,
           onUploadProgress: onProgress
             ? (e) => onProgress(e.total ? e.loaded / e.total : 0)
@@ -280,20 +264,10 @@ export const endpoints = {
       api.get(`/reports/inspections/${id}/xlsx`, { responseType: 'blob' }).then((r) => r.data),
     inspectionCsv: (id) =>
       api.get(`/reports/inspections/${id}/csv`, { responseType: 'blob' }).then((r) => r.data),
-    /* Range documents: one file for a month-of-work (0-31 days, own visits).
-       GET /reports/range.{pdf,docx,xlsx,csv}?start=&end=. */
-    rangeDoc: (fmt, params) =>
-      api.get(`/reports/range.${fmt}`, { params, responseType: 'blob' }).then((r) => r.data),
   },
 
   admin: {
     dashboard: (params) => unwrap(api.get('/admin/dashboard', { params })),
-    repeatViolators: (params) => unwrap(api.get('/admin/repeat-violators', { params })),
-    /* Office-wide range documents (all inspectors, or one via user_id). */
-    officeRangeDoc: (fmt, params) =>
-      api.get(`/admin/reports/range.${fmt}`, { params, responseType: 'blob' }).then((r) => r.data),
-    /* Gazette-table transcription to activate CHK10/CHK06b. Verified readings only. */
-    updateRuleTables: (body) => unwrap(api.put('/admin/rules/tables', body)),
     users: () => unwrap(api.get('/admin/users')),
     createUser: (body) => unwrap(api.post('/admin/users', body)),
     updateUser: (id, body) => unwrap(api.patch(`/admin/users/${id}`, body)),
@@ -302,23 +276,29 @@ export const endpoints = {
        the reason is a required argument here rather than an optional one. */
     resetInstall: (id, reason) =>
       unwrap(api.post(`/admin/users/${id}/reset-install`, { reason })),
-    /* GET /admin/review-queue takes no query parameters and returns
-       {count: n} (Backend/routers/admin.py). Any params would be ignored by
-       the backend, so none are accepted here. */
-    reviewQueue: () => unwrap(api.get('/admin/review-queue')),
-    /* GET /admin/review-queue/items returns the listable rows behind the
-       count (not_assessed_scans + low_confidence_findings + offline_edits). */
-    reviewQueueItems: (params) => unwrap(api.get('/admin/review-queue/items', { params })),
-    /* Enforcement analytics: violation-ranked premises + same-doorstep pairs. */
-    repeatViolators: (params) => unwrap(api.get('/admin/repeat-violators', { params })),
-    proximityFlags: (params) => unwrap(api.get('/admin/proximity-flags', { params })),
-    /* Archive list of generated documents (who/what/sha256). */
-    reportHistory: (params) => unwrap(api.get('/admin/reports/history', { params })),
-    scanThumbnailUrl: (scanId, imageId) => `${BASE}/scans/${scanId}/images/${imageId}/thumbnail`,
+    /* GET /admin/review-queue takes no parameters and returns {count: n}. The
+       params argument is kept because the shell passes one; FastAPI ignores it. */
+    reviewQueue: (params) => unwrap(api.get('/admin/review-queue', { params })),
     updateFinding: (findingId, body) =>
       unwrap(api.patch(`/admin/findings/${findingId}`, body)),
     audit: (params) => unwrap(api.get('/admin/audit', { params })),
     rules: () => unwrap(api.get('/admin/rules')),
+    /* GET /admin/rule-versions — every gazette version the engine knows, with
+       its effective window. The current version (the one rules_meta.rules_as_at
+       points at) has effective_to: null. */
+    ruleVersions: () => unwrap(api.get('/admin/rule-versions')),
+    /* /admin/violations takes the same date / store / inspector / rule-version
+       parameters the inspections list does, and returns a Top-Violations
+       rollup alongside the per-record list. The list is unpaged on the
+       server; sorting and paging are this device's job, named in the
+       screen caption so the absence of a "page 2" is not silent. */
+    violations: (params) => unwrap(api.get('/admin/violations', { params })),
+    /* /admin/repeat-offenders returns a rollup of manufacturers that have
+       breached the three-store threshold, each with their full per-violation
+       history. The five search modes the UI exposes (manufacturer, brand,
+       shop, region, declaration type) are applied client-side; the live
+       router does not yet accept any of them. */
+    repeatOffenders: (params) => unwrap(api.get('/admin/repeat-offenders', { params })),
   },
 
   health: () => unwrap(api.get('/health')),

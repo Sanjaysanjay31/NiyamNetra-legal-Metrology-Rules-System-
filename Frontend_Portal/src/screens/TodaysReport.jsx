@@ -195,7 +195,7 @@ export default function TodaysReport() {
   const empty = packages === 0 && visits === 0
 
   return (
-    <div className="mx-auto max-w-[880px] px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto max-w-[880px]">
       <PageHeader
         eyebrow={t('nav.today')}
         title={t('reports.today')}

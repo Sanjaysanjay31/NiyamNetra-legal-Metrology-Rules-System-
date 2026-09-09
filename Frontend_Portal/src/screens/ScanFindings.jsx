@@ -45,12 +45,14 @@ import { format, parseISO } from 'date-fns'
 import {
   ArrowLeft,
   Camera,
+  CheckCircle2,
   ChevronDown,
   Filter,
   HelpCircle,
   Info,
   Ruler,
   Scale,
+  XCircle,
 } from 'lucide-react'
 import { endpoints } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -188,7 +190,8 @@ function FindingRow({ finding, expanded, onToggle, canOverride, overrideBlocked,
   const measurement = measurementFor(finding, check)
 
   return (
-    <li className={cx('overflow-hidden rounded-card border bg-surface', f.border)}>
+    <li id={`check-${finding.check_id}`} className="scroll-mt-24">
+      <div className={cx('overflow-hidden rounded-card border bg-surface', f.border)}>
       <div className="flex">
         {/* The verdict edge. Colour is the third channel here, after the word
             and the icon in the badge — never the only one. */}
@@ -339,6 +342,7 @@ function FindingRow({ finding, expanded, onToggle, canOverride, overrideBlocked,
           </div>
         </div>
       )}
+      </div>
     </li>
   )
 }
@@ -447,15 +451,6 @@ function EvidencePanel({ images = [], scan }) {
                   {img.width_px}×{img.height_px}
                 </span>
               </div>
-              {scan?.id && img?.id && (
-                <img
-                  src={`${import.meta.env.VITE_API_URL?.replace(/\/+$/, '')}/scans/${scan.id}/images/${img.id}/thumbnail`}
-                  alt={`${img.panel} panel evidence`}
-                  loading="lazy"
-                  className="mt-3 max-h-64 w-full rounded-card border border-divider object-contain bg-surface"
-                  onError={(e) => { e.currentTarget.style.display = 'none' }}
-                />
-              )}
               <div className="mt-2 flex flex-wrap gap-2">
                 <Pill family={img.rectified ? 'pass' : 'na'}>
                   {img.rectified ? 'Rectified' : 'Not rectified'}
@@ -495,11 +490,13 @@ function EvidencePanel({ images = [], scan }) {
         </p>
       )}
 
-      {/* Thumbnails served by GET /scans/{id}/images/{image_id}/thumbnail
-          (auth, 512px copy; purged images 404 and hide via onError). */}
+      {/* Metadata only, and deliberately so: ScanImageOut carries a hash, the
+          geometry and the rectification diagnostics, but no URL or path. The
+          crops are not served back through the API, so nothing here pretends a
+          thumbnail is one click away. */}
       <p className="mt-3 max-w-prose text-caption text-ink-3">
-        Thumbnails load from the evidence store when retained (violation /
-        not-assessed). Purged compliant images show metadata only.
+        The portal records each panel&apos;s hash and geometry. The images themselves are
+        not served back through the API.
       </p>
     </Card>
   )
@@ -680,6 +677,147 @@ function OverrideDialog({ finding, onClose, onSubmit, pending, error }) {
         </p>
       </form>
     </Modal>
+  )
+}
+
+/* ------------------------------------------------------------ findings table -- */
+
+/**
+ * The flat findings table that judges and reviewers read first.
+ *
+ * Four columns and four promises:
+ *
+ *  1. One row per check, in the order the Rules apply them — the same
+ *     `REGISTRATION_ORDER` the engine uses. Section 36 is included because
+ *     the table is about the verdict, and the verdict depends on it.
+ *
+ *  2. The Result column carries the canonical word in capitals: PASS, FAIL,
+ *     NOT ASSESSED. A pill colour, an icon, and a strong left bar sit beside
+ *     the word, so a reader who only sees the colour still gets the answer
+ *     from the icon and the text. "Good" / "Bad" never appear, because the
+ *     Rules do not recognise them and neither should the screen.
+ *
+ *  3. The Evidence column is a "View" link that jumps to the matching row
+ *     below, where the per-check evidence and the override controls already
+ *     live. A column that says "View image" when the image is not served
+ *     would be the worst kind of disabled affordance, so it names what the
+ *     link leads to: a per-check evidence block, with the image count
+ *     when the engine reported it.
+ *
+ *  4. The Rule column is the catalog's own citation, copied verbatim and
+ *     shortened for fit. Pinpoint sub-rules are kept where the catalog
+ *     gives them (Rule 6(1)(e) on MRP, for example) and the broader
+ *     provision is used where it does not.
+ *
+ * Filter tabs (all / fail / not_assessed / pass) live above the existing
+ * grouped view, not above this table — the table is the answer, the tabs
+ * are the workbench.
+ */
+const RESULT_TEXT = {
+  pass: { word: 'PASS', family: 'pass', icon: CheckCircle2 },
+  fail: { word: 'FAIL', family: 'violation', icon: XCircle },
+  not_assessed: { word: 'NOT ASSESSED', family: 'na', icon: HelpCircle },
+}
+
+function FindingsTable({ rows, scan }) {
+  const { t } = useI18n()
+  const imageCount = Array.isArray(scan?.images) ? scan.images.length : 0
+
+  return (
+    <Card className="p-0">
+      <div className="border-b border-divider px-5 py-4">
+        <p className="nn-eyebrow">{t('findings.table.title')}</p>
+        <p className="mt-1 max-w-prose text-caption text-ink-2">
+          {t('findings.table.caption')}
+        </p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-small">
+          <thead>
+            <tr className="text-caption uppercase tracking-wide text-ink-3">
+              <th scope="col" className="w-[34%] py-2.5 pl-5 pr-3 font-semibold">
+                {t('findings.table.colCheck')}
+              </th>
+              <th scope="col" className="w-[18%] py-2.5 pr-3 font-semibold">
+                {t('findings.table.colResult')}
+              </th>
+              <th scope="col" className="w-[16%] py-2.5 pr-3 font-semibold">
+                {t('findings.table.colEvidence')}
+              </th>
+              <th scope="col" className="w-[32%] py-2.5 pr-5 font-semibold">
+                {t('findings.table.colRule')}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((f) => {
+              const v = verdictOf(f) ?? 'not_assessed'
+              const r = RESULT_TEXT[v] ?? RESULT_TEXT.not_assessed
+              const Icon = r.icon
+              const overridden = isOverridden(f)
+              const rule = CHECKS[f.check_id]?.citation ?? '—'
+              const href = `#check-${f.check_id}`
+              return (
+                <tr
+                  key={f.check_id}
+                  className={cx(
+                    'border-t border-divider align-top transition-colors duration-fast ease-settle',
+                    'hover:bg-surface-2'
+                  )}
+                >
+                  <td className="py-3 pl-5 pr-3">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-semibold text-ink">
+                        {CHECKS[f.check_id]?.title ?? f.title ?? f.check_id}
+                      </span>
+                      <span className="nn-mono text-[11px] uppercase tracking-wider text-ink-3">
+                        {f.check_id}
+                        {overridden && (
+                          <span className="ml-2 inline-flex items-center gap-1 rounded-pill border border-review-border bg-review-fill px-1.5 py-0.5 text-[10px] font-semibold text-review-text">
+                            {t('verdict.overridden')}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="py-3 pr-3">
+                    <span
+                      className={cx(
+                        'inline-flex items-center gap-1.5 rounded-pill border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider',
+                        r.family === 'pass' && 'border-pass-border bg-pass-fill text-pass-text',
+                        r.family === 'violation' && 'border-violation-border bg-violation-fill text-violation-text',
+                        r.family === 'na' && 'border-divider bg-surface-2 text-ink-2'
+                      )}
+                    >
+                      <Icon size={12} strokeWidth={2.2} aria-hidden="true" />
+                      {r.word}
+                    </span>
+                  </td>
+                  <td className="py-3 pr-3">
+                    {imageCount === 0 ? (
+                      <span className="text-caption text-ink-3">
+                        {t('findings.table.noEvidence')}
+                      </span>
+                    ) : (
+                      <a
+                        href={href}
+                        title={t('findings.table.viewHint')}
+                        className="inline-flex items-center gap-1 font-semibold text-accent-text underline decoration-dotted underline-offset-2"
+                      >
+                        <Camera size={13} strokeWidth={1.9} aria-hidden="true" />
+                        {t('findings.table.view')}
+                      </a>
+                    )}
+                  </td>
+                  <td className="py-3 pr-5 text-ink-2">{rule}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   )
 }
 
@@ -928,6 +1066,11 @@ export default function ScanFindings() {
           </Callout>
         )}
       </Card>
+
+      {/* The flat findings table — the answer in one screen, with the
+          canonical PASS / FAIL / NOT ASSESSED verdict per row. Lives above
+          the grouped cards so a judge or reviewer can read it first. */}
+      <FindingsTable rows={findings} scan={scan} />
 
       {/* -------------------------------------------------------- findings -- */}
       <div>

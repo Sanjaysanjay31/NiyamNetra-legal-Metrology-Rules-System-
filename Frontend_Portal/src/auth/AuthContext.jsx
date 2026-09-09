@@ -35,11 +35,6 @@ export function AuthProvider({ children }) {
   const [booting, setBooting] = useState(true)
   const [sessionEnded, setSessionEnded] = useState(false)
   const refreshTimer = useRef(null)
-  /* True only during the initial mount-time refresh. A 401 there is the normal
-     case for a first-time visitor (no refresh cookie yet) and must not raise
-     the session-ended banner; only user-initiated or post-login refresh
-     failures broadcast. */
-  const mountingRef = useRef(true)
 
   const clear = useCallback(() => {
     setAccessToken(null)
@@ -70,9 +65,6 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     setSessionLostHandler(() => {
-      /* Suppress the banner for the initial mount refresh attempt: a 401
-         there means "never signed in", not "signed out from under you". */
-      if (mountingRef.current) return
       clear()
       setSessionEnded(true)
     })
@@ -93,13 +85,11 @@ export function AuthProvider({ children }) {
       } catch {
         /* no valid refresh cookie: not signed in */
       } finally {
-        mountingRef.current = false
         if (alive) setBooting(false)
       }
     })()
     return () => {
       alive = false
-      mountingRef.current = false
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
     }
   }, [scheduleRefresh])
