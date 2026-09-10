@@ -21,7 +21,16 @@ function isViolation(it) {
 }
 
 function findingsOf(it) {
-  if (Array.isArray(it?.findings)) return it.findings;
+  if (Array.isArray(it?.findings) && it.findings.length > 0) return it.findings;
+  if (Array.isArray(it?.scans)) {
+    const fromScans = [];
+    for (const s of it.scans) {
+      if (Array.isArray(s?.findings)) {
+        fromScans.push(...s.findings);
+      }
+    }
+    if (fromScans.length > 0) return fromScans;
+  }
   if (Array.isArray(it?.checks)) {
     return it.checks
       .filter((c) => String(c?.verdict || c?.result || '').toLowerCase() !== 'pass')

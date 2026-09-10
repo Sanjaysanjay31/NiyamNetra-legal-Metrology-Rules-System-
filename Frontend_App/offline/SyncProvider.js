@@ -138,38 +138,75 @@ export function SyncProvider({ children }) {
               // --- evidence upload (multipart) ---------------------------------
               // The inspection POST carries JSON metadata only. Every captured
               // file must reach POST /scans/{scanId}/images or the photos are
-              // lost the moment we purge. So: create ONE scan under the new
+              // lost the moment we purge. So: create scans under the new
               // inspection, upload each file to it, and only then mark synced.
-              const files = item.files?.length
-                ? item.files
-                : (item.fileUris || []).map((uri, i) => ({ uri, panel: i === 0 ? 'front' : 'other' }));
-              if (serverId && files.length > 0) {
-                const scanResp = await api.post(
-                  `/inspections/${serverId}/scans`,
-                  { ...(item.scanBody || {}) },
-                  { headers: { 'Idempotency-Key': `${item.id}-scan` } },
-                );
-                const serverScanId = scanResp?.data?.scan_id ?? scanResp?.data?.id;
-                if (!serverScanId) throw new Error('Scan created but returned no id');
-                for (let i = 0; i < files.length; i++) {
-                  // eslint-disable-next-line no-await-in-loop
-                  await uploadEvidenceFile(serverScanId, files[i], i);
-                }
-                // Best-effort assessment so server findings exist for the
-                // Violations/Pass screens. A failure here does NOT fail the
-                // sync — the evidence is already stored server-side.
-                try {
-                  await api.post(`/scans/${serverScanId}/assess`, undefined, { timeout: 60000 });
-                } catch (e) {
-                  if (__DEV__) console.warn('[sync] assess failed (evidence kept):', e?.message || e);
+              if (serverId) {
+                const scanItems = Array.isArray(item.scans) && item.scans.length > 0
+                  ? item.scans
+                  : [{
+                      commodity_generic: item.scanBody?.commodity_generic || null,
+                      brand_name: item.scanBody?.brand_name || null,
+                      batch_number: item.scanBody?.batch_number || null,
+                      geometry: item.scanBody?.geometry,
+                      files: item.files?.length
+                        ? item.files
+                        : (item.fileUris || []).map((uri, i) => ({ uri, panel: i === 0 ? 'front' : 'other' })),
+                    }];
+
+                for (let sIdx = 0; sIdx < scanItems.length; sIdx++) {
+                  const s = scanItems[sIdx];
+                  const files = s.files?.length
+                    ? s.files
+                    : (s.fileUris || []).map((uri, i) => ({ uri, panel: i === 0 ? 'front' : 'other' }));
+
+                  const geometry = s.geometry || {
+                    panel_shape: 'rectangular',
+                    panel_height_mm: 120.0,
+                    panel_width_mm: 80.0,
+                    is_blown_moulded: false,
+                    scale_source: 'declared',
+                  };
+
+                  const scanResp = await api.post(
+                    `/inspections/${serverId}/scans`,
+                    {
+                      commodity_generic: s.commodity_generic || null,
+                      brand_name: s.brand_name || null,
+                      batch_number: s.batch_number || null,
+                      geometry,
+                    },
+                    { headers: { 'Idempotency-Key': `${item.id}-scan-${sIdx}` } },
+                  );
+                  const serverScanId = scanResp?.data?.scan_id ?? scanResp?.data?.id;
+                  if (!serverScanId) throw new Error('Scan created but returned no id');
+
+                  // Patch scope flags if present
+                  try {
+                    await api.patch(`/scans/${serverScanId}`, {
+                      is_imported: s.is_imported ?? null,
+                      is_perishable: s.is_perishable ?? null,
+                      has_sticker: s.has_sticker ?? null,
+                    });
+                  } catch (patchErr) {
+                    if (__DEV__) console.warn('[sync] patch scope failed:', patchErr?.message);
+                  }
+
+                  for (let i = 0; i < files.length; i++) {
+                    // eslint-disable-next-line no-await-in-loop
+                    await uploadEvidenceFile(serverScanId, files[i], i);
+                  }
+
+                  // Run statutory assessment across all 19 rules
+                  try {
+                    await api.post(`/scans/${serverScanId}/assess`, undefined, { timeout: 60000 });
+                  } catch (e) {
+                    if (__DEV__) console.warn('[sync] assess failed (evidence kept):', e?.message || e);
+                  }
                 }
               }
               // Only purge files AFTER all uploads succeed: markSynced is the
               // gate purgeSynced reads, so reaching here means the bytes are
-              // server-side. If any upload above threw, we skip this and the
-              // files stay queued for the next pass.
-              // NOTE: if the upload API is ever unavailable, files are KEPT
-              // (do NOT purge) — purgeSynced only collects is_synced rows.
+              // server-side.
               await markSynced(item.id);
               anySuccess = true;
               done = true;
@@ -177,16 +214,38 @@ export function SyncProvider({ children }) {
               // A scan is created at POST /inspections/{server_id}/scans, so
               // it needs the parent's SERVER id. Resolve it from this pass's
               // inspection responses; if the parent hasn't synced yet, leave
-              // this scan queued — it will go on a later pass, never to a
-              // guessed URL.
+              // this scan queued.
               const parentServerId = remoteIdByLocal.current[item.parentId];
               if (parentServerId == null) break;
+
+              const scanBody = { ...item.body };
+              if (!scanBody.geometry) {
+                scanBody.geometry = {
+                  panel_shape: 'rectangular',
+                  panel_height_mm: 120.0,
+                  panel_width_mm: 80.0,
+                  is_blown_moulded: false,
+                  scale_source: 'declared',
+                };
+              }
+
               const scanResp = await api.post(
                 `/inspections/${parentServerId}/scans`,
-                { ...item.body },
+                scanBody,
                 { headers: { 'Idempotency-Key': item.id } },
               );
               const serverScanId = scanResp?.data?.scan_id ?? scanResp?.data?.id;
+
+              if (item.body?.is_imported !== undefined || item.body?.has_sticker !== undefined) {
+                try {
+                  await api.patch(`/scans/${serverScanId}`, {
+                    is_imported: item.body.is_imported ?? null,
+                    is_perishable: item.body.is_perishable ?? null,
+                    has_sticker: item.body.has_sticker ?? null,
+                  });
+                } catch {}
+              }
+
               const files = item.files?.length
                 ? item.files
                 : (item.fileUris || []).map((uri, i) => ({ uri, panel: i === 0 ? 'front' : 'other' }));

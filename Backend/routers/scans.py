@@ -354,8 +354,10 @@ def _assess_inner(scan: Scan, user: User, db: Session):
 
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+        import logging as _logging
+        _logging.getLogger("niyamnetra.assess").error("Assessment commit IntegrityError: %s", exc)
         raise HTTPException(status.HTTP_409_CONFLICT,
                             detail="Assessment conflicts with existing data; retry")
     append_audit(db, inspection_id=scan.inspection_id, scan_id=scan.id,

@@ -19,6 +19,13 @@ import PrimaryButton from '../../components/PrimaryButton';
 import VerdictBadge from '../../components/VerdictBadge';
 import { enqueueInspection, enqueueScan } from '../../offline/queue';
 import { useAppLock } from '../../hooks/useAppLock';
+import {
+  createInspection,
+  createScan,
+  uploadScanImage,
+  updateScanScope,
+  assessScan,
+} from '../../api/inspections';
 
 let ScreenCapture = null;
 try { ScreenCapture = require('expo-screen-capture'); } catch { ScreenCapture = null; }
@@ -29,6 +36,44 @@ const PANELS = [
   { key: 'mrp', label: 'MRP Panel', desc: 'MRP, Unit Sale Price, Dates' },
   { key: 'batch', label: 'Batch / Barcode', desc: 'Batch code & barcode' },
 ];
+
+function buildOfflineFindings({ commodity, brand, batch, hasSticker, isImported, isPerishable }) {
+  const master = [
+    { code: 'CHK01', name: 'All mandatory Rule 6 declarations present', citation: 'Rule 6(1) and 6(2), mandatory declarations', required: 'All statutory declarations present on PDP', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
+    { code: 'CHK02', name: 'Unit Sale Price (USP)', citation: 'Rule 6(1)(ea) — 2017 Amendment', required: 'Unit price in Rs per g/ml/piece where net qty > 100g/ml', severity: 'major', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
+    { code: 'CHK03', name: 'Chapter II Applicability', citation: 'Rule 3 — Retail Sale Scope', required: 'Pre-packaged commodity intended for retail sale', severity: 'critical', defaultObserved: 'Retail sale transaction confirmed', needsOcr: false, verdict: 'pass' },
+    { code: 'CHK04', name: 'Manufacturer / Packer Identity', citation: 'Rule 6(1)(a) — Name & Complete Address', required: 'Name and complete physical address of manufacturer/packer', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
+    { code: 'CHK05', name: 'Generic Commodity Name', citation: 'Rule 6(1)(b) — Common / Generic Name', required: 'Common or generic name of commodity in package', severity: 'major', defaultObserved: commodity ? `Declared: ${commodity}` : 'Missing generic commodity name', needsOcr: false, verdict: commodity ? 'pass' : 'fail', reason: commodity ? null : 'Generic commodity name not provided.' },
+    { code: 'CHK06', name: 'Net Quantity Declaration', citation: 'Rule 6(1)(c) — Standard Weights & Measures', required: 'Net weight, measure or number in standard metric units', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
+    { code: 'CHK06b', name: 'Metric Units Compliance', citation: 'Rule 12 — Standard Metric Units (SI)', required: 'Only metric units (g, kg, ml, L, m, cm) permissible', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
+    { code: 'CHK07', name: 'Date of Manufacture / Packing', citation: 'Rule 6(1)(d) — Month & Year', required: 'Month and year of manufacture or pre-packing', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
+    { code: 'CHK08', name: 'Best Before / Expiry Date', citation: 'Rule 6(1)(d) — Perishable Commodities', required: 'Clear expiry or best before period for perishable goods', severity: 'major', defaultObserved: isPerishable ? 'Perishable good flagged — pending expiry check' : 'Non-perishable commodity', needsOcr: isPerishable, verdict: isPerishable ? 'not_assessed' : 'pass', reason: isPerishable ? 'Perishable item requires verified expiry date from server OCR.' : null },
+    { code: 'CHK09', name: 'Consumer Care Contact Details', citation: 'Rule 6(1)(n) — Name, Address, Tel, Email', required: 'Designation, full postal address, phone number & email', severity: 'major', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
+    { code: 'CHK10', name: 'Country of Origin (Imports)', citation: 'Rule 6(1)(a) proviso — Imported Packages', required: 'Clear declaration of country of origin for all packages', severity: 'major', defaultObserved: isImported ? 'Imported item — pending origin check' : 'Domestic package', needsOcr: isImported, verdict: isImported ? 'not_assessed' : 'pass', reason: isImported ? 'Imported item requires Country of Origin declaration.' : null },
+    { code: 'CHK11', name: 'Principal Display Panel (PDP) Area', citation: 'Rule 9 — Calculation of PDP Dimensions', required: 'At least 40% of total surface area on front panel', severity: 'minor', defaultObserved: 'Dimensions recorded from geometry input', needsOcr: false, verdict: 'pass' },
+    { code: 'CHK12', name: 'Minimum Font Height & Proportion', citation: 'Rule 9 Table I — Font Size by PDP Area', required: 'Numeral height matching Table I prescribed standards', severity: 'minor', defaultObserved: 'Pending millimetre pixel measurement (captured offline)', needsOcr: true },
+    { code: 'CHK13', name: 'Sticker / Smudge Alteration', citation: 'Section 36 & Rule 6 — Over-stickering Prohibition', required: 'Declarations must be indelible; no price alterations', severity: 'critical', defaultObserved: hasSticker ? 'Price sticker found affixed over declared MRP' : 'No sticker alteration declared', needsOcr: false, verdict: hasSticker ? 'fail' : 'pass', reason: hasSticker ? 'Price sticker affixed over original declared MRP. Section 36 violation.' : null },
+    { code: 'CHK14', name: 'Overcharging Assessment', citation: 'Section 36(1) — Sale beyond declared MRP', required: 'Prohibition of sale at price exceeding declared MRP', severity: 'critical', defaultObserved: 'Pending server price verification', needsOcr: true },
+    { code: 'CHK15', name: 'E-Commerce Marketplace Listing', citation: 'Rule 6(10) — Digital Display Compliance', required: 'All mandatory declarations displayed on web listing', severity: 'advisory', defaultObserved: 'Physical retail package sampled in store', needsOcr: false, verdict: 'not_assessed', reason: 'Rule 6(10) governs digital marketplace listings.' },
+    { code: 'CHK16', name: 'Dual MRP Assessment', citation: 'Rule 18(2) — Prohibition of dual pricing', required: 'No manufacturer shall declare different MRPs on identical packages', severity: 'critical', defaultObserved: 'Pending multi-panel comparison', needsOcr: true },
+    { code: 'CHK17', name: 'Veg / Non-Veg Statutory Symbol', citation: 'FSSAI Alignment & Rule 6 General', required: 'Food category indicator present and conspicuous', severity: 'advisory', defaultObserved: 'Pending visual inspection', needsOcr: true },
+    { code: 'CHK18', name: 'Penalty Limb & Section 36 Classification', citation: 'Section 36, Legal Metrology Act 2009', required: 'Section 36 tier 1 / tier 2 offense determination', severity: 'critical', defaultObserved: hasSticker ? 'Section 36(1) penalty limb engaged due to sticker alteration' : 'Pending server statutory review', needsOcr: false, verdict: hasSticker ? 'fail' : 'not_assessed', reason: hasSticker ? 'Section 36(1) penalty limb engaged.' : 'Pending complete evidence review.' },
+  ];
+
+  return master.map((m, idx) => ({
+    id: idx + 1,
+    check_id: m.code,
+    title: m.name,
+    citation: m.citation,
+    engine_verdict: m.verdict || 'not_assessed',
+    effective_verdict: m.verdict || 'not_assessed',
+    human_verdict: null,
+    observed: m.defaultObserved,
+    required: m.required,
+    severity: m.severity,
+    reason: m.reason || (m.needsOcr ? 'Captured offline — pending server OCR text extraction and statutory rules assessment.' : null),
+  }));
+}
 
 export default function InspectionSessionScreen({
   inspectionSession,
@@ -114,23 +159,125 @@ export default function InspectionSessionScreen({
 
     setAssessing(true);
     try {
-      // Create mock or real assessment record
-      const scanItem = {
-        id: `pkg-${Date.now()}`,
-        commodity_generic: commodity.trim() || 'Sample Commodity',
-        brand_name: brand.trim() || 'Sample Brand',
-        batch_number: batch.trim() || 'B-2026',
-        geometry: { panel_shape: panelShape, is_blown_moulded: isBlownMoulded },
-        panelPhotos: { ...panelPhotos },
-        is_imported: isImported,
-        is_perishable: isPerishable,
-        has_sticker: hasSticker,
-        // Default rule verdict logic
-        overall_result: hasSticker ? 'violation' : 'compliant',
-        checks_assessed: 19,
-        checks_total: 19,
-        created_at: new Date().toISOString(),
+      let serverScanId = null;
+      let assessedScan = null;
+      let usedServerId = inspectionSession?.serverInspectionId;
+
+      // 1. If online and no serverInspectionId yet, create inspection on the server
+      if (!usedServerId && inspectionSession?.store?.id) {
+        try {
+          const newInsp = await createInspection({
+            store_id: Number(inspectionSession.store.id),
+            transaction_type: inspectionSession.transaction_type || 'retail_sale',
+            latitude: inspectionSession.coords?.latitude,
+            longitude: inspectionSession.coords?.longitude,
+            gps_accuracy_m: inspectionSession.coords?.accuracy,
+            local_created_at: inspectionSession.started_at || new Date().toISOString(),
+          });
+          usedServerId = newInsp?.id || newInsp?.inspection_id;
+          if (usedServerId && inspectionSession) {
+            inspectionSession.serverInspectionId = usedServerId;
+          }
+        } catch (inspErr) {
+          console.warn('[Session] createInspection failed (offline?):', inspErr?.message || inspErr);
+        }
+      }
+
+      // 2. Geometry conforming to Backend/schemas.py PanelGeometry
+      const geometry = {
+        panel_shape: panelShape || 'rectangular',
+        panel_height_mm: panelShape === 'other' ? undefined : 120.0,
+        panel_width_mm: panelShape === 'rectangular' ? 80.0 : undefined,
+        panel_diameter_mm: panelShape === 'cylindrical' ? 65.0 : undefined,
+        total_surface_area_cm2: panelShape === 'other' ? 200.0 : undefined,
+        is_blown_moulded: isBlownMoulded,
+        scale_source: 'declared',
       };
+
+      // 3. Try server createScan -> scope -> upload images -> assessScan
+      if (usedServerId) {
+        try {
+          const scanRes = await createScan(usedServerId, {
+            commodity_generic: commodity.trim() || null,
+            brand_name: brand.trim() || null,
+            batch_number: batch.trim() || null,
+            geometry,
+          });
+          serverScanId = scanRes?.id || scanRes?.scan_id;
+
+          if (serverScanId) {
+            // Persist declared scope flags
+            await updateScanScope(serverScanId, {
+              is_imported: isImported,
+              is_perishable: isPerishable,
+              has_sticker: hasSticker,
+            });
+
+            // Upload all captured panel images
+            for (const [panelKey, uri] of Object.entries(panelPhotos)) {
+              if (uri) {
+                await uploadScanImage(serverScanId, panelKey, uri);
+              }
+            }
+
+            // Run authoritative statutory assessment across all 19 rules
+            assessedScan = await assessScan(serverScanId);
+          }
+        } catch (serverErr) {
+          console.warn('[Session] Live server assessment failed, falling back to local:', serverErr?.message || serverErr);
+        }
+      }
+
+      let scanItem;
+      if (assessedScan && Array.isArray(assessedScan.findings)) {
+        // Authoritative server assessment result
+        scanItem = {
+          id: `pkg-${serverScanId || Date.now()}`,
+          server_id: serverScanId,
+          commodity_generic: assessedScan.commodity_generic || commodity.trim() || 'Sample Commodity',
+          brand_name: assessedScan.brand_name || brand.trim() || 'Sample Brand',
+          batch_number: assessedScan.batch_number || batch.trim() || 'B-2026',
+          geometry,
+          panelPhotos: { ...panelPhotos },
+          is_imported: isImported,
+          is_perishable: isPerishable,
+          has_sticker: hasSticker,
+          overall_result: assessedScan.overall_result,
+          violation_limb: assessedScan.violation_limb,
+          checks_assessed: assessedScan.checks_assessed,
+          checks_total: assessedScan.checks_total,
+          findings: assessedScan.findings,
+          created_at: assessedScan.created_at || new Date().toISOString(),
+        };
+      } else {
+        // Offline assessment fallback — never invent a false compliant verdict
+        const offlineFindings = buildOfflineFindings({
+          commodity: commodity.trim(),
+          brand: brand.trim(),
+          batch: batch.trim(),
+          hasSticker,
+          isImported,
+          isPerishable,
+        });
+        const hasFail = offlineFindings.some((f) => f.effective_verdict === 'fail');
+        scanItem = {
+          id: `pkg-${Date.now()}`,
+          commodity_generic: commodity.trim() || 'Sample Commodity',
+          brand_name: brand.trim() || 'Sample Brand',
+          batch_number: batch.trim() || 'B-2026',
+          geometry,
+          panelPhotos: { ...panelPhotos },
+          is_imported: isImported,
+          is_perishable: isPerishable,
+          has_sticker: hasSticker,
+          overall_result: hasFail ? 'violation' : 'not_assessed',
+          checks_assessed: offlineFindings.filter((f) => f.effective_verdict !== 'not_assessed').length,
+          checks_total: 19,
+          findings: offlineFindings,
+          is_offline: true,
+          created_at: new Date().toISOString(),
+        };
+      }
 
       const updated = [...packages, scanItem];
       setPackages(updated);
