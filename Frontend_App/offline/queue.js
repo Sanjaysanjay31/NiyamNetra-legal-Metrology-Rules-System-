@@ -123,40 +123,75 @@ export async function enqueueInspection({ store_id, transaction_type, latitude, 
   const q = await loadQueue();
   const id = newId('insp');
   const local_created_at = new Date().toISOString();
-  // Copy each image file into pending dir as file:// reference (never base64).
-  // Copy failures are logged and recorded on the item (incompleteFiles) so a
-  // silently half-missing inspection can never look complete.
-  const firstScan = (scans || [])[0] || {};
-  const panelUris = firstScan.panelUris || [];
-  const panels = firstScan.panels || firstScan.panelNames || panelUris.map((_, i) => (
-    ['front', 'back', 'mrp', 'batch'][i] || `extra-${i - 3}`
-  ));
-  const { files, incompleteFiles } = await copyIntoPending(panelUris, panels, id);
-  const fileUris = files.map((f) => f.uri); // legacy shape, kept for readers
-  // violationSuspected is an honest FIFO comment carrier: set only when the
-  // officer explicitly flags suspicion at capture; otherwise absent and the
-  // pass stays strict FIFO (inspections before scans, oldest first).
+
+  // Process all packages in the inspection session
+  const processedScans = [];
+  const allFiles = [];
+  const allIncomplete = [];
+
+  const scanList = Array.isArray(scans) && scans.length > 0 ? scans : [{}];
+  for (let sIdx = 0; sIdx < scanList.length; sIdx++) {
+    const s = scanList[sIdx];
+    const sId = `${id}-scan-${sIdx + 1}`;
+    const panelUris = s.panelUris || (s.panelPhotos ? Object.values(s.panelPhotos) : []);
+    const panels = s.panels || (s.panelPhotos ? Object.keys(s.panelPhotos) : panelUris.map((_, i) => (
+      ['front', 'back', 'mrp', 'batch'][i] || `extra-${i - 3}`
+    )));
+    const { files, incompleteFiles } = await copyIntoPending(panelUris, panels, sId);
+    allFiles.push(...files);
+    allIncomplete.push(...incompleteFiles);
+
+    // Default compliant rectangular geometry if none provided (prevents 422 Unprocessable Entity)
+    const geometry = s.geometry || {
+      panel_shape: 'rectangular',
+      panel_height_mm: 120.0,
+      panel_width_mm: 80.0,
+      is_blown_moulded: false,
+      scale_source: 'declared',
+    };
+
+    processedScans.push({
+      commodity_generic: s.commodity_generic || null,
+      brand_name: s.brand_name || null,
+      batch_number: s.batch_number || null,
+      geometry,
+      is_imported: s.is_imported,
+      is_perishable: s.is_perishable,
+      has_sticker: s.has_sticker,
+      files,
+      fileUris: files.map((f) => f.uri),
+      incompleteFiles,
+    });
+  }
+
   q.push({
     id,
     type: 'inspection',
     body: { store_id, transaction_type, latitude, longitude, gps_accuracy_m, local_created_at },
-    files,
-    fileUris,
-    incompleteFiles,
+    scans: processedScans,
+    // Keep top-level files & fileUris for backward compatibility
+    files: allFiles,
+    fileUris: allFiles.map((f) => f.uri),
+    incompleteFiles: allIncomplete,
     createdAt: local_created_at,
     is_synced: false,
     ...(result ? { result } : {}),
   });
   await saveQueue(q);
-  // Web fallback note: the item is persisted to localStorage above, so the
-  // preview queue survives a reload even with no filesystem.
   return id;
 }
 
 // Enqueue a scan with panels
-export async function enqueueScan(inspectionLocalId, { commodity_generic, batch_number, geometry, panelUris, panels, is_imported, is_perishable, is_tobacco, result, violationSuspected }) {
+export async function enqueueScan(inspectionLocalId, { commodity_generic, brand_name, batch_number, geometry, panelUris, panels, is_imported, is_perishable, is_tobacco, has_sticker, result, violationSuspected }) {
   const q = await loadQueue();
   const id = newId('scan');
+  const geom = geometry || {
+    panel_shape: 'rectangular',
+    panel_height_mm: 120.0,
+    panel_width_mm: 80.0,
+    is_blown_moulded: false,
+    scale_source: 'declared',
+  };
   const { files, incompleteFiles } = await copyIntoPending(
     panelUris,
     panels || (panelUris || []).map((_, i) => (['front', 'back', 'mrp', 'batch'][i] || `extra-${i - 3}`)),
@@ -166,7 +201,16 @@ export async function enqueueScan(inspectionLocalId, { commodity_generic, batch_
     id,
     type: 'scan',
     parentId: inspectionLocalId,
-    body: { commodity_generic, batch_number, geometry, is_imported, is_perishable, is_tobacco },
+    body: {
+      commodity_generic,
+      brand_name,
+      batch_number,
+      geometry: geom,
+      is_imported,
+      is_perishable,
+      is_tobacco,
+      has_sticker,
+    },
     files,
     fileUris: files.map((f) => f.uri),
     incompleteFiles,

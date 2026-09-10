@@ -174,10 +174,29 @@ const STATUTORY_CHECKS_MASTER = [
 
 export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
   const [findings, setFindings] = useState(() => {
-    // If scan has existing findings, use them; otherwise initialize from 19 master checks
+    // If scan has real findings from server or offline assessment, use them!
+    if (Array.isArray(scan?.findings) && scan.findings.length > 0) {
+      return scan.findings.map((f, idx) => ({
+        id: f.id || idx + 1,
+        server_id: typeof f.id === 'number' && f.id > 0 ? f.id : null,
+        check_id: f.check_id || f.code,
+        title: f.title || f.name,
+        citation: f.citation || '',
+        engine_verdict: f.engine_verdict || f.verdict || 'not_assessed',
+        effective_verdict: f.effective_verdict || f.human_verdict || f.engine_verdict || f.verdict || 'not_assessed',
+        human_verdict: f.human_verdict || null,
+        override_reason: f.override_reason || null,
+        observed: f.observed || 'Pending observation',
+        required: f.required || '',
+        severity: f.severity || 'critical',
+        reason: f.reason || null,
+        confidence: f.confidence,
+      }));
+    }
+
     const hasSticker = scan?.has_sticker;
     return STATUTORY_CHECKS_MASTER.map((m, idx) => {
-      let engineVerdict = 'pass';
+      let engineVerdict = 'not_assessed';
       let reason = null;
 
       if (m.code === 'CHK13' && hasSticker) {
@@ -187,6 +206,7 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
 
       return {
         id: idx + 1,
+        server_id: null,
         check_id: m.code,
         title: m.name,
         citation: m.citation,
@@ -222,36 +242,40 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
     setSubmittingOverride(true);
     try {
       if (selectedFinding.server_id) {
-        await overrideFinding(selectedFinding.server_id, overrideVerdict, overrideReason);
+        await overrideFinding(selectedFinding.server_id, overrideVerdict, overrideReason.trim());
       }
 
-      setFindings((prev) =>
-        prev.map((item) =>
-          item.check_id === selectedFinding.check_id
-            ? {
-                ...item,
-                human_verdict: overrideVerdict,
-                effective_verdict: overrideVerdict,
-                override_reason: overrideReason,
-              }
-            : item
-        )
+      const updated = findings.map((item) =>
+        item.check_id === selectedFinding.check_id
+          ? {
+              ...item,
+              human_verdict: overrideVerdict,
+              effective_verdict: overrideVerdict,
+              override_reason: overrideReason.trim(),
+            }
+          : item
       );
+      setFindings(updated);
+      if (onSaveFindings) {
+        onSaveFindings(updated);
+      }
       setSelectedFinding(null);
     } catch (e) {
       // Local fallback
-      setFindings((prev) =>
-        prev.map((item) =>
-          item.check_id === selectedFinding.check_id
-            ? {
-                ...item,
-                human_verdict: overrideVerdict,
-                effective_verdict: overrideVerdict,
-                override_reason: overrideReason,
-              }
-            : item
-        )
+      const updated = findings.map((item) =>
+        item.check_id === selectedFinding.check_id
+          ? {
+              ...item,
+              human_verdict: overrideVerdict,
+              effective_verdict: overrideVerdict,
+              override_reason: overrideReason.trim(),
+            }
+          : item
       );
+      setFindings(updated);
+      if (onSaveFindings) {
+        onSaveFindings(updated);
+      }
       setSelectedFinding(null);
     } finally {
       setSubmittingOverride(false);
@@ -260,7 +284,8 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
 
   const passCount = findings.filter((f) => f.effective_verdict === 'pass').length;
   const failCount = findings.filter((f) => f.effective_verdict === 'fail').length;
-  const overallResult = failCount > 0 ? 'violation' : 'compliant';
+  const notAssessedCount = findings.filter((f) => f.effective_verdict === 'not_assessed').length;
+  const overallResult = failCount > 0 ? 'violation' : (passCount > 0 && notAssessedCount === 0 ? 'compliant' : 'not_assessed');
 
   return (
     <View style={styles.container}>
@@ -282,34 +307,50 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
             <VerdictBadge result={overallResult} />
           </View>
 
-          <View style={[styles.rowAlign, { marginTop: spacing.md }]}>
+          <View style={[styles.rowAlign, { marginTop: spacing.md, flexWrap: 'wrap', gap: 6 }]}>
             <View style={[styles.statBadge, { backgroundColor: colors.pass.fill, borderColor: colors.pass.border }]}>
               <Text style={[styles.statBadgeText, { color: colors.pass.text }]}>✓ {passCount} Compliant</Text>
             </View>
-            <View
-              style={[
-                styles.statBadge,
-                failCount > 0
-                  ? { backgroundColor: colors.violation.fill, borderColor: colors.violation.border }
-                  : { backgroundColor: colors.notAssessed.fill, borderColor: colors.notAssessed.border },
-              ]}
-            >
-              <Text
+            {failCount > 0 && (
+              <View
                 style={[
-                  styles.statBadgeText,
-                  { color: failCount > 0 ? colors.violation.text : colors.textMuted },
+                  styles.statBadge,
+                  { backgroundColor: colors.violation.fill, borderColor: colors.violation.border },
                 ]}
               >
-                ⚠️ {failCount} Violations
-              </Text>
-            </View>
+                <Text
+                  style={[
+                    styles.statBadgeText,
+                    { color: colors.violation.text },
+                  ]}
+                >
+                  ⚠️ {failCount} Violations
+                </Text>
+              </View>
+            )}
+            {notAssessedCount > 0 && (
+              <View
+                style={[
+                  styles.statBadge,
+                  { backgroundColor: colors.notAssessed.fill, borderColor: colors.notAssessed.border },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.statBadgeText,
+                    { color: colors.notAssessed.text },
+                  ]}
+                >
+                  ⏳ {notAssessedCount} Pending
+                </Text>
+              </View>
+            )}
           </View>
         </Card>
 
         {/* List of 19 Checks */}
         <Text style={styles.sectionTitle}>CHECKLIST BREAKDOWN (RULE 6 & 9)</Text>
         {findings.map((f) => {
-          const isPass = f.effective_verdict === 'pass';
           return (
             <Card key={f.check_id} padding="md" style={styles.findingCard}>
               <View style={styles.rowBetween}>
@@ -320,7 +361,7 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
                   </View>
                   <Text style={styles.citationText}>{f.citation}</Text>
                 </View>
-                <VerdictBadge result={isPass ? 'compliant' : 'violation'} />
+                <VerdictBadge checkVerdict={f.effective_verdict} />
               </View>
 
               {/* Observed & Required Details */}

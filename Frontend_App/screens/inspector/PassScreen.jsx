@@ -24,7 +24,7 @@ function isSuccess(it) {
   if (['success', 'pass', 'compliant'].includes(r)) return true;
   const violations = it?.result_counts?.violation ?? it?.violation_count ?? 0;
   const compliant = it?.result_counts?.compliant ?? it?.pass_count ?? 0;
-  if (violations === 0 && (compliant > 0 || r === 'not_assessed')) return true;
+  if (violations === 0 && compliant > 0) return true;
   return false;
 }
 

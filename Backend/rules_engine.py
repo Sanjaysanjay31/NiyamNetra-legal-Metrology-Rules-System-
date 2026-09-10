@@ -1216,7 +1216,7 @@ def chk18_violation_tier(ctx: CheckContext) -> FindingResult:
     """
     return FindingResult(
         "CHK18", "Graduated response under Section 36 as amended", "not_assessed",
-        "advisory",
+        "critical",
         citation=cite("S36", "Section 36, Legal Metrology Act 2009, as amended by "
                              "the Jan Vishwas Act 2026"),
         ledger_ref="L-12",
@@ -1312,12 +1312,14 @@ def derive_result(findings: list[FindingResult], ctx: CheckContext) -> ScanVerdi
     tier = next(f for f in findings if f.check_id == "CHK18")
     if result == "violation":
         tier.verdict, tier.reason = "fail", None
+        tier.severity = "critical"
         tier.observed = _tier_description(assessable, limb)
-        tier.limb = limb
+        tier.limb = "36(2)" if "36(2)" in limbs else ("36(1)" if "36(1)" in limbs else None)
     elif result == "out_of_scope":
         tier.reason = ctx.halt_reason
     elif result == "compliant":
         tier.verdict, tier.reason = "pass", None
+        tier.severity = "critical"
         tier.observed = "No breach identified, so no response under Section 36 arises."
     else:
         tier.reason = (

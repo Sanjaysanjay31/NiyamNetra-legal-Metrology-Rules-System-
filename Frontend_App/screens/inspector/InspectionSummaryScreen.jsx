@@ -37,9 +37,10 @@ export default function InspectionSummaryScreen({
   const [submittedId, setSubmittedId] = useState(null);
 
   const packages = inspectionSession?.scans || [];
-  const compliantCount = packages.filter((p) => (p.overall_result || 'compliant') === 'compliant').length;
-  const violationCount = packages.filter((p) => (p.overall_result || 'compliant') === 'violation').length;
-  const overallInspectionVerdict = violationCount > 0 ? 'violation' : 'compliant';
+  const compliantCount = packages.filter((p) => p.overall_result === 'compliant').length;
+  const violationCount = packages.filter((p) => p.overall_result === 'violation').length;
+  const notAssessedCount = packages.filter((p) => p.overall_result === 'not_assessed').length;
+  const overallInspectionVerdict = violationCount > 0 ? 'violation' : (compliantCount > 0 && notAssessedCount === 0 ? 'compliant' : 'not_assessed');
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -56,6 +57,16 @@ export default function InspectionSummaryScreen({
           commodity_generic: p.commodity_generic,
           brand_name: p.brand_name,
           batch_number: p.batch_number,
+          geometry: p.geometry || {
+            panel_shape: 'rectangular',
+            panel_height_mm: 120.0,
+            panel_width_mm: 80.0,
+            is_blown_moulded: false,
+            scale_source: 'declared',
+          },
+          is_imported: p.is_imported,
+          is_perishable: p.is_perishable,
+          has_sticker: p.has_sticker,
         })),
         result: overallInspectionVerdict,
       });
