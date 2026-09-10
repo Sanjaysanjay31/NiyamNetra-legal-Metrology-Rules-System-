@@ -31,7 +31,7 @@ export default function InspectionSummaryScreen({
   const [signatureStatus, setSignatureStatus] = useState('signed');
   const [officerNotes, setOfficerNotes] = useState('');
   const [recordSeizure, setRecordSeizure] = useState(false);
-  const [seizedUnits, setSeizedUnits] = useState('5');
+  const [seizedUnits, setSeizedUnits] = useState('');
   const [witnessDetails, setWitnessDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submittedId, setSubmittedId] = useState(null);
@@ -43,15 +43,39 @@ export default function InspectionSummaryScreen({
   const overallInspectionVerdict = violationCount > 0 ? 'violation' : (compliantCount > 0 && notAssessedCount === 0 ? 'compliant' : 'not_assessed');
 
   const handleSubmit = async () => {
+    if (!inspectionSession?.store?.id) {
+      Alert.alert('Store Required', 'Please select a valid registered store before finalizing the inspection.');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      // 1. Enqueue to offline storage / sync queue
+      let liveSubmitted = false;
+
+      // 1. Direct API submission if server inspection already created
+      if (inspectionSession.serverInspectionId) {
+        try {
+          await submitInspection(inspectionSession.serverInspectionId, {
+            signature_status: signatureStatus,
+            notes: officerNotes,
+          });
+          liveSubmitted = true;
+        } catch (subErr) {
+          console.warn('[Summary] Live submit failed, enqueuing for sync:', subErr?.message || subErr);
+        }
+      }
+
+      // 2. Enqueue to storage. If live submission already succeeded, mark is_synced: true
+      // so SyncProvider does not submit a duplicate inspection to the server.
       const localId = await enqueueInspection({
-        store_id: inspectionSession.store?.id || 1,
+        store_id: Number(inspectionSession.store.id),
         transaction_type: inspectionSession.transaction_type || 'retail_sale',
         latitude: inspectionSession.coords?.latitude,
         longitude: inspectionSession.coords?.longitude,
         gps_accuracy_m: inspectionSession.coords?.accuracy,
+        signature_status: signatureStatus,
+        notes: officerNotes,
+        is_synced: liveSubmitted,
         scans: packages.map((p) => ({
           panelUris: Object.values(p.panelPhotos || {}),
           commodity_generic: p.commodity_generic,
@@ -71,18 +95,13 @@ export default function InspectionSummaryScreen({
         result: overallInspectionVerdict,
       });
 
-      // 2. Best-effort direct API submission if online
-      if (inspectionSession.serverInspectionId) {
-        await submitInspection(inspectionSession.serverInspectionId, {
-          signature_status: signatureStatus,
-          notes: officerNotes,
-        });
-      }
-
-      setSubmittedId(localId || 'INSP-2026-OK');
+      setSubmittedId(
+        inspectionSession.serverInspectionId
+          ? `INSP-${inspectionSession.serverInspectionId}`
+          : localId
+      );
     } catch (e) {
-      // Fallback
-      setSubmittedId('INSP-LOCAL-QUEUED');
+      setSubmittedId('INSP-QUEUED');
     } finally {
       setSubmitting(false);
     }

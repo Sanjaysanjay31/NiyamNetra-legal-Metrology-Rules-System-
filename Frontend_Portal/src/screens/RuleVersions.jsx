@@ -34,10 +34,12 @@ import {
   Callout,
   Card,
   cx,
+  DemoChip,
   EmptyState,
   Input,
   Modal,
   Select,
+  Skeleton,
   StatusBadge,
   Table,
   Td,
@@ -437,10 +439,20 @@ export default function RuleVersions() {
   useDocumentTitle('Rule versions')
   const toast = useToast()
 
+  /* ---- Fetch live rule versions from backend ---- */
+  const rvRes = useResource(() => endpoints.admin.ruleVersions(), {
+    fallback: RULE_VERSIONS_DATA,
+    label: 'rule-versions',
+  })
+
+  const isDemo = rvRes.demo
+  const isLoading = rvRes.loading
+
   // Strict chronological order requested: 1st 2009, next 2011, next 2017 amendments, next 2022 amendments
   const sorted = useMemo(() => {
-    return [...RULE_VERSIONS_DATA].sort((a, b) => (a.year ?? 0) - (b.year ?? 0))
-  }, [])
+    const raw = Array.isArray(rvRes.data) ? rvRes.data : []
+    return [...raw].sort((a, b) => (a.year ?? 0) - (b.year ?? 0))
+  }, [rvRes.data])
 
   const [menuFor, setMenuFor] = useState(null)
   const [viewingRules, setViewingRules] = useState(null)
@@ -462,6 +474,7 @@ export default function RuleVersions() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-h1 font-semibold tracking-tight text-ink">Rule Versions</h1>
+          {isDemo && <DemoChip />}
           <p className="mt-1 text-small text-ink-2">
             Gazette readings and statutory frameworks governing Legal Metrology inspections.
           </p>

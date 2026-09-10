@@ -49,6 +49,7 @@ import {
   Button,
   Card,
   cx,
+  DemoChip,
   Field,
   Input,
   Pill,
@@ -459,24 +460,43 @@ export default function AdminViolations() {
   const toast = useToast()
 
   const today = todayIso()
-  // Default to covering August-September 2026 data range
-  const [from, setFrom] = useState('2026-08-10')
-  const [to, setTo] = useState('2026-09-08')
+  // Dynamic date defaults: last 30 days
+  const [from, setFrom] = useState(() => iso(subDays(new Date(), 29)))
+  const [to, setTo] = useState(() => todayIso())
   const [area, setArea] = useState('all')
   const [violationType, setViolationType] = useState('all')
   const [result, setResult] = useState('all')
   const [exportFormat, setExportFormat] = useState('csv')
   const [exporting, setExporting] = useState(false)
 
-  /* Active multi-criteria filtering */
-  const filteredViolations = useMemo(() => {
-    return VIOLATIONS_DATA.filter((v) => {
-      // Date range filter
-      if (from && v.date < from) return false
-      if (to && v.date > to) return false
+  /* ---- Fetch live violations from backend ---- */
+  const violRes = useResource(
+    () => endpoints.admin.violations({ start: from, end: to }),
+    {
+      fallback: { total: VIOLATIONS_DATA.length, violations: VIOLATIONS_DATA, top_violations: [] },
+      deps: [from, to],
+      label: 'admin-violations',
+    }
+  )
 
+  const isDemo = violRes.demo
+  const isLoading = violRes.loading
+
+  /* Unwrap: live API returns { total, violations: [...], top_violations: [...] }
+     Demo fallback is the raw VIOLATIONS_DATA array */
+  const allViolations = useMemo(() => {
+    const d = violRes.data
+    if (!d) return []
+    if (Array.isArray(d)) return d
+    if (Array.isArray(d.violations)) return d.violations
+    return []
+  }, [violRes.data])
+
+  /* Active multi-criteria filtering (client-side on top of server-filtered data) */
+  const filteredViolations = useMemo(() => {
+    return allViolations.filter((v) => {
       // Area filter
-      if (area !== 'all' && v.area.toLowerCase() !== area.toLowerCase()) {
+      if (area !== 'all' && v.area?.toLowerCase() !== area.toLowerCase()) {
         return false
       }
 
@@ -496,7 +516,7 @@ export default function AdminViolations() {
 
       return true
     })
-  }, [from, to, area, violationType, result])
+  }, [allViolations, area, violationType, result])
 
   /* Dynamic KPIs based on filtered records */
   const totalViolations = useMemo(() => {

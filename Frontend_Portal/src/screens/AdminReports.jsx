@@ -40,18 +40,10 @@ import {
 } from '../mock/fixtures'
 import { Button, Card, cx, Select, Skeleton, useToast } from '../ui'
 
-/* The reference freezes the date at 02 Sep 2026 so the screen looks complete
-   at a glance. Users can still move the picker — this is the example day. */
-const DEFAULT_DAY = '2026-09-02'
+/* Default to today so the screen shows current data, not a frozen demo date. */
+const DEFAULT_DAY = format(new Date(), 'yyyy-MM-dd')
 
-const AREA_FALLBACK = [
-  'Kakinada',
-  'Rajahmundry',
-  'Anakapalli',
-  'Visakhapatnam',
-  'Vijayawada',
-  'Guntur',
-]
+const AREA_FALLBACK = []
 
 const VIOLATION_PALETTE = [
   'var(--nn-chart-1)',

@@ -5,7 +5,7 @@
 export const ACTIVE_BACKEND = 'lan'; // 'lan' | 'render'
 
 // 2. Your Laptop Wi-Fi IPv4 Address (find by running `ipconfig` in terminal)
-export const LAPTOP_WIFI_IP = '192.168.101.73';
+export const LAPTOP_WIFI_IP = '10.50.17.186';
 
 // 3. Backend port
 export const API_PORT = 8000;
@@ -99,27 +99,34 @@ export const BACKEND_TARGETS = {
     resolve: () => RENDER_API_URL,
   },
   local: {
-    label: 'Wi-Fi (Laptop)',
-    hint: 'Local server on Wi-Fi',
-    resolve: () => `http://${resolveHost()}:${API_PORT}`,
+    label: 'Local (This PC)',
+    hint: 'Localhost on this device',
+    resolve: () => LOCAL_API_URL,
   },
   custom: {
-    label: 'Wi-Fi (Laptop)',
-    hint: 'Local server on Wi-Fi',
-    resolve: () => `http://${resolveHost()}:${API_PORT}`,
+    label: 'Custom URL',
+    hint: 'User-provided backend address',
+    resolve: () => customUrl || `http://${resolveHost()}:${API_PORT}`,
   },
 };
 
 const TARGET_KEY = 'nn_backend_target';
-export const TARGET_NAMES = ['lan', 'render'];
+export const TARGET_NAMES = ['lan', 'render', 'local', 'custom'];
 
 export function targetOf(url) {
   const u = String(url || '');
   if (u.startsWith(RENDER_API_URL)) return 'render';
+  if (u.startsWith(LOCAL_API_URL)) return 'local';
+  if (customUrl && u.startsWith(customUrl)) return 'custom';
   return 'lan';
 }
 
 export async function loadSavedTarget() {
+  try {
+    const { getItem } = await import('../auth/secureStore');
+    const saved = await getItem(TARGET_KEY);
+    if (saved && BACKEND_TARGETS[saved]) return saved;
+  } catch { /* storage unavailable */ }
   return ACTIVE_BACKEND;
 }
 

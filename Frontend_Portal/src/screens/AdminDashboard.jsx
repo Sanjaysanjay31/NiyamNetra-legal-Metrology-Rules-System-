@@ -1025,16 +1025,18 @@ export default function AdminDashboard() {
       return d.violations_by_category
     }
     const derived = deriveCategoryRollup(inspections.data)
-    return derived.length ? derived : adminDashboard.violations_by_category
-  }, [d.violations_by_category, inspections.data])
+    if (derived.length) return derived
+    return dash.demo ? adminDashboard.violations_by_category : []
+  }, [d.violations_by_category, inspections.data, dash.demo])
 
   const areaRows = useMemo(() => {
     if (Array.isArray(d.violations_by_area) && d.violations_by_area.length) {
       return d.violations_by_area
     }
     const derived = deriveAreaRollup(inspections.data, storesByIdx)
-    return derived.length ? derived : adminDashboard.violations_by_area
-  }, [d.violations_by_area, inspections.data, storesByIdx])
+    if (derived.length) return derived
+    return dash.demo ? adminDashboard.violations_by_area : []
+  }, [d.violations_by_area, inspections.data, storesByIdx, dash.demo])
 
   const areaOptions = useMemo(() => {
     const set = new Set(storesArr.map((s) => s.city).filter(Boolean))

@@ -9,6 +9,7 @@ import Input from '../../components/Input';
 import { enqueueInspection } from '../../offline/queue';
 import { fetchStores } from '../../api/admin';
 import { useAppLock } from '../../hooks/useAppLock';
+import { getItem, setItem } from '../../auth/secureStore';
 
 // expo-location / expo-screen-capture / FileSystem are optional at runtime:
 // each import is guarded so a missing native module degrades to manual entry
@@ -100,20 +101,24 @@ export default function ScanScreen({ navigation }) {
         const list = Array.isArray(data) ? data : data?.items || data?.results || [];
         if (mounted && list.length > 0) {
           setStores(list);
+          await setItem('nn_cached_stores', JSON.stringify(list));
         } else if (mounted) {
-          setStores([
-            { id: 1, name: 'Sri Balaji Supermarket (Hyderabad)' },
-            { id: 2, name: 'Anand General Store (Charminar)' },
-            { id: 3, name: 'Metro Cash & Carry Wholesale' },
-          ]);
+          const cached = await getItem('nn_cached_stores');
+          const parsed = cached ? JSON.parse(cached) : [];
+          setStores(parsed);
+          if (parsed.length === 0) setStoresError(true);
         }
       } catch {
         if (mounted) {
-          setStores([
-            { id: 1, name: 'Sri Balaji Supermarket (Offline Demo)' },
-            { id: 2, name: 'Anand General Store (Offline Demo)' },
-          ]);
-          setStoresError(false);
+          try {
+            const cached = await getItem('nn_cached_stores');
+            const parsed = cached ? JSON.parse(cached) : [];
+            setStores(parsed);
+            if (parsed.length === 0) setStoresError(true);
+          } catch {
+            setStores([]);
+            setStoresError(true);
+          }
         }
       } finally {
         if (mounted) setStoresLoading(false);

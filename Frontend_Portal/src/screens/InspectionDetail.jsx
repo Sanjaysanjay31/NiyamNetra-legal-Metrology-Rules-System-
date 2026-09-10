@@ -750,10 +750,20 @@ export default function InspectionDetail() {
     async () => {
       try {
         const res = await endpoints.inspections.get(id)
-        if (res && res.scans && res.scans.length > 0 && res.scans[0].extracted_fields) {
+        if (res) {
+          if (res.scans && res.scans.length > 0 && res.scans[0].id) {
+            try {
+              const fullScan = await endpoints.scans.get(res.scans[0].id)
+              if (fullScan) {
+                res.scans[0] = { ...res.scans[0], ...fullScan }
+              }
+            } catch {
+              // best-effort scan enrichment
+            }
+          }
           return res
         }
-        return mockRecord ?? res
+        return mockRecord
       } catch (err) {
         if (mockRecord) return mockRecord
         throw err
@@ -899,6 +909,7 @@ export default function InspectionDetail() {
               Inspection Details - {inspectionRef}
             </h1>
             <VerdictBadge verdict={displayVerdict} size="md" />
+            {detail.demo && <DemoChip />}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">

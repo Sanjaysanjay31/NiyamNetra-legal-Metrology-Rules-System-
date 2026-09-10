@@ -46,7 +46,7 @@ import {
 
 const PAGE_SIZE = 7
 
-const AREA_FALLBACK = ['Kakinada', 'Rajahmundry', 'Anakapalli', 'Visakhapatnam', 'Vijayawada', 'Guntur']
+const AREA_FALLBACK = []
 
 const RESULT_OPTIONS = [
   { value: 'all', label: 'All' },

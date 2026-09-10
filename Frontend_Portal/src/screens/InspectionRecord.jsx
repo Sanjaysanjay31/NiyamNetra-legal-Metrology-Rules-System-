@@ -536,12 +536,12 @@ export default function InspectionRecord() {
     }
   }
 
-  const inspectorName = user?.full_name || 'Inspector One'
-  const inspectorId = user?.employee_id || 'LM-TG-1042'
-  const shopName = shop?.name || `Store #${data?.store_id || 1}`
-  const shopAddress = [shop?.address, shop?.city, shop?.state, shop?.pincode].filter(Boolean).join(', ') || 'Hyderabad North, Telangana'
+  const inspectorName = user?.full_name || 'Inspector'
+  const inspectorId = user?.employee_id || (data?.user_id ? `LM-${data.user_id}` : '—')
+  const shopName = shop?.name || (data?.store_id ? `Store #${data.store_id}` : '—')
+  const shopAddress = [shop?.address, shop?.city, shop?.state, shop?.pincode].filter(Boolean).join(', ') || '—'
   const inspectionDate = pretty(data?.inspection_date)
-  const submittedTime = prettyTime(data?.submitted_at) || '08 Sep 2026, 10:32 AM'
+  const submittedTime = prettyTime(data?.submitted_at) || (data?.status === 'draft' ? 'Draft (not submitted)' : '—')
 
   const geofenceMeta = GEOFENCE[data?.geofence_status] ?? GEOFENCE.inside
   const skew = skewLabel(data?.clock_skew_seconds)
@@ -564,7 +564,7 @@ export default function InspectionRecord() {
               {record.demo && <DemoChip />}
             </div>
             <p className="mt-1 text-small text-ink-2">
-              <span className="font-semibold text-ink">{shopName}</span> · {shop?.city || 'Hyderabad North'}
+              <span className="font-semibold text-ink">{shopName}</span> · {shop?.city || '—'}
             </p>
           </div>
           <div className="flex items-center gap-3">

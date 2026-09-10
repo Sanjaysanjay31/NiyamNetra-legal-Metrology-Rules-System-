@@ -234,9 +234,9 @@ export default function InspectionSessionScreen({
         scanItem = {
           id: `pkg-${serverScanId || Date.now()}`,
           server_id: serverScanId,
-          commodity_generic: assessedScan.commodity_generic || commodity.trim() || 'Sample Commodity',
-          brand_name: assessedScan.brand_name || brand.trim() || 'Sample Brand',
-          batch_number: assessedScan.batch_number || batch.trim() || 'B-2026',
+          commodity_generic: assessedScan.commodity_generic || commodity.trim() || 'Unspecified Commodity',
+          brand_name: assessedScan.brand_name || brand.trim() || 'Unspecified Brand',
+          batch_number: assessedScan.batch_number || batch.trim() || null,
           geometry,
           panelPhotos: { ...panelPhotos },
           is_imported: isImported,
@@ -262,9 +262,9 @@ export default function InspectionSessionScreen({
         const hasFail = offlineFindings.some((f) => f.effective_verdict === 'fail');
         scanItem = {
           id: `pkg-${Date.now()}`,
-          commodity_generic: commodity.trim() || 'Sample Commodity',
-          brand_name: brand.trim() || 'Sample Brand',
-          batch_number: batch.trim() || 'B-2026',
+          commodity_generic: commodity.trim() || 'Unspecified Commodity',
+          brand_name: brand.trim() || 'Unspecified Brand',
+          batch_number: batch.trim() || null,
           geometry,
           panelPhotos: { ...panelPhotos },
           is_imported: isImported,

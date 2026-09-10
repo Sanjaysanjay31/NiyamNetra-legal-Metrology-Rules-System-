@@ -61,7 +61,7 @@ const STATUS_OPTIONS = [
   { value: 'inactive', label: 'Inactive' },
 ]
 
-const AREA_FALLBACK = ['Kakinada', 'Rajahmundry', 'Anakapalli', 'Visakhapatnam', 'Vijayawada', 'Guntur']
+const AREA_FALLBACK = []
 
 const PAGE_SIZE = 7
 

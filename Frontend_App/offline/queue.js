@@ -119,7 +119,7 @@ async function copyIntoPending(uris, panels, idPrefix) {
 // ride along for the geofence. `result` is a provisional local hint only
 // (e.g. 'queued') — the server verdict is authoritative; the sync pass sorts
 // provisional violations first when the flag is present.
-export async function enqueueInspection({ store_id, transaction_type, latitude, longitude, gps_accuracy_m, scans, result }) {
+export async function enqueueInspection({ store_id, transaction_type, latitude, longitude, gps_accuracy_m, scans, result, signature_status, notes, is_synced = false }) {
   const q = await loadQueue();
   const id = newId('insp');
   const local_created_at = new Date().toISOString();
@@ -167,14 +167,16 @@ export async function enqueueInspection({ store_id, transaction_type, latitude, 
   q.push({
     id,
     type: 'inspection',
-    body: { store_id, transaction_type, latitude, longitude, gps_accuracy_m, local_created_at },
+    body: { store_id, transaction_type, latitude, longitude, gps_accuracy_m, local_created_at, notes: notes || null },
+    signature_status: signature_status || 'signed',
+    notes: notes || null,
     scans: processedScans,
     // Keep top-level files & fileUris for backward compatibility
     files: allFiles,
     fileUris: allFiles.map((f) => f.uri),
     incompleteFiles: allIncomplete,
     createdAt: local_created_at,
-    is_synced: false,
+    is_synced: Boolean(is_synced),
     ...(result ? { result } : {}),
   });
   await saveQueue(q);

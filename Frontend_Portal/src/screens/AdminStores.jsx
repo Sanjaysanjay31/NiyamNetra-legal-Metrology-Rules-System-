@@ -40,21 +40,13 @@ import {
   useToast,
 } from '../ui'
 
-/* UserOut carries full_name but StoreOut does not carry an owner field. The
-   owner shown here is a stable by-id mapping used in the fixture set; the live
-   endpoint is expected to return it the same way once the schema lands. The
-   mapping is applied on top of the server response, never the other way round,
-   so an owner returned by the server is always shown. */
-const STORE_OWNER_FALLBACK = {
-  11: 'R. Kulkarni',
-  12: 'S. Iyer',
-  13: 'V. Sharma',
-  14: 'M. Fernandes',
-}
+/* Owner names come from the server response when available. No hardcoded
+   fallback — real stores don't match fixture IDs. */
+const STORE_OWNER_FALLBACK = {}
 
 const PAGE_SIZE = 7
 
-const AREA_FALLBACK = ['Kakinada', 'Rajahmundry', 'Anakapalli', 'Visakhapatnam', 'Vijayawada', 'Guntur']
+const AREA_FALLBACK = []
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All' },

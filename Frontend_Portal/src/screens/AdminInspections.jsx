@@ -36,25 +36,50 @@ import {
   Button,
   Card,
   cx,
+  DemoChip,
   Field,
   Input,
   Select,
+  Skeleton,
   SyncBadge,
   useToast,
   VerdictBadge,
 } from '../ui'
 
-/* Number of items per page so the 15 records result in exactly 2 or 3 pages */
 const PAGE_SIZE = 5
 
-const SUMMARY_TOTALS = {
-  total: INSPECTION_RECORDS.length,
-  today: INSPECTION_RECORDS.filter((r) => r.date === '2026-09-02').length,
-  compliant: INSPECTION_RECORDS.filter((r) => r.resultVerdict === 'pass' || r.resultVerdict === 'compliant').length,
-  violations: INSPECTION_RECORDS.filter((r) => r.resultVerdict === 'violation').length,
-}
-
 const iso = (d) => format(d, 'yyyy-MM-dd')
+
+/**
+ * Normalise a backend inspection dict (from GET /inspections) into the display
+ * shape the table renders. The mock INSPECTION_RECORDS use camelCase; the live
+ * API returns snake_case + different field names. This adapter makes both look
+ * the same so every downstream filter / cell / export just reads one shape.
+ */
+function normaliseRow(r, usersById = {}, storesById = {}) {
+  // Already normalised (mock data) — return as-is
+  if (r.storeName !== undefined) return r
+  const store = storesById[r.store_id] || {}
+  const user = usersById[r.user_id] || {}
+  const result = r.result || r.overall_result || r.verdict || 'not_assessed'
+  return {
+    id: r.id,
+    storeName: r.store_name || store.name || '—',
+    inspectorName: user.full_name || `Officer #${r.user_id}`,
+    inspectorId: user.employee_id || '',
+    area: store.city || store.district || '—',
+    date: r.inspection_date ? r.inspection_date.slice(0, 10) : '—',
+    time: r.inspection_date && r.inspection_date.length > 10
+      ? r.inspection_date.slice(11, 16)
+      : '',
+    products: r.scan_count ?? r.scans?.length ?? 0,
+    resultVerdict: result,
+    syncState: r.edited_offline ? 'pending' : 'synced',
+    transactionType: r.transaction_type || '',
+    productName: r.scans?.[0]?.commodity_generic || '',
+    brand: r.scans?.[0]?.brand_name || '',
+  }
+}
 
 function prettyDate(isoDay, time) {
   if (!isoDay) return '—'
@@ -117,7 +142,7 @@ function toCsv(header, rows) {
   return [header.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))].join('\r\n')
 }
 
-function ExportMenu({ rows = INSPECTION_RECORDS }) {
+function ExportMenu({ rows = [] }) {
   const [format, setFormat] = useState('csv')
   const [busy, setBusy] = useState(false)
   const { push: toast } = useToast()
@@ -126,7 +151,7 @@ function ExportMenu({ rows = INSPECTION_RECORDS }) {
   async function handleExport() {
     setBusy(true)
     try {
-      const targetRows = rows.length > 0 ? rows : INSPECTION_RECORDS
+      const targetRows = rows
       if (format === 'csv') {
         const header = [
           'Inspection ID',
@@ -386,22 +411,65 @@ export default function AdminInspections() {
   const [sync, setSync] = useState(() => searchParams.get('sync') || 'all')
   const [page, setPage] = useState(0)
 
-  const areas = useResource(() => endpoints.admin.dashboard({ start: iso(subDays(new Date(), 29)), end: today }), {
-    fallback: null,
-    label: 'inspections-areas',
+  /* ---- Fetch live data from backend ---- */
+  const inspRes = useResource(() => endpoints.inspections.list(), {
+    fallback: INSPECTION_RECORDS,
+    label: 'inspections-list',
+  })
+  const usersRes = useResource(() => endpoints.admin.users(), {
+    fallback: [],
+    label: 'inspections-users',
+  })
+  const storesRes = useResource(() => endpoints.inspections.stores(), {
+    fallback: [],
+    label: 'inspections-stores',
   })
 
+  const usersById = useMemo(() => {
+    const map = {}
+    for (const u of (usersRes.data || [])) map[u.id] = u
+    return map
+  }, [usersRes.data])
+
+  const storesById = useMemo(() => {
+    const map = {}
+    for (const s of (storesRes.data || [])) map[s.id] = s
+    return map
+  }, [storesRes.data])
+
+  const allRows = useMemo(() => {
+    const raw = Array.isArray(inspRes.data) ? inspRes.data : (inspRes.data?.items || [])
+    return raw.map((r) => normaliseRow(r, usersById, storesById))
+  }, [inspRes.data, usersById, storesById])
+
+  const isDemo = inspRes.demo
+  const isLoading = inspRes.loading
+
+  /* ---- Dynamic summary totals from live data ---- */
+  const summaryTotals = useMemo(() => {
+    const todayStr = iso(new Date())
+    return {
+      total: allRows.length,
+      today: allRows.filter((r) => r.date === todayStr).length,
+      compliant: allRows.filter((r) => r.resultVerdict === 'pass' || r.resultVerdict === 'compliant').length,
+      violations: allRows.filter((r) => r.resultVerdict === 'violation').length,
+    }
+  }, [allRows])
+
+  /* ---- Dynamic area options from live data ---- */
   const areaOptions = useMemo(() => {
-    const set = new Set(INSPECTION_RECORDS.map((r) => r.area))
-    if (areas.data?.area_violations) {
-      for (const a of areas.data.area_violations) if (a?.area) set.add(a.area)
+    const set = new Set()
+    for (const r of allRows) if (r.area && r.area !== '—') set.add(r.area)
+    for (const s of (storesRes.data || [])) {
+      if (s.city) set.add(s.city)
+      if (s.district) set.add(s.district)
     }
     return Array.from(set).sort((a, b) => String(a).localeCompare(String(b)))
-  }, [areas.data])
+  }, [allRows, storesRes.data])
 
   /* Dynamic multi-criteria filtering */
   const filteredRows = useMemo(() => {
-    return INSPECTION_RECORDS.filter((r) => {
+    return allRows.filter((r) => {
       if (q) {
         const query = q.toLowerCase()
         const matchId = `ins-${r.id}`.toLowerCase().includes(query) || String(r.id).includes(query)
@@ -435,7 +503,7 @@ export default function AdminInspections() {
 
       return true
     })
-  }, [q, date, area, result, sync])
+  }, [q, date, area, result, sync, allRows])
 
   function clearAll() {
     setQRaw('')
@@ -460,8 +528,7 @@ export default function AdminInspections() {
     })
   }
 
-  /* Keep only 2 or 3 pages maximum (as requested) */
-  const totalPages = Math.min(3, Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE)))
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages - 1)
   const pagerPages = Array.from({ length: totalPages }, (_, i) => i + 1)
 
@@ -476,7 +543,10 @@ export default function AdminInspections() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-col gap-1.5">
           <Breadcrumb />
-          <h1 className="text-[22px] font-bold tracking-[-0.01em] text-ink">Inspections</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-[22px] font-bold tracking-[-0.01em] text-ink">Inspections</h1>
+            {isDemo && <DemoChip />}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <ExportMenu rows={filteredRows} />
@@ -485,10 +555,10 @@ export default function AdminInspections() {
 
       {/* ---- 4 compact summary cards ---- */}
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SummaryCard label="Total Inspections" value={SUMMARY_TOTALS.total} accent="navy" />
-        <SummaryCard label="Today" value={SUMMARY_TOTALS.today} accent="navy" />
-        <SummaryCard label="Compliant" value={SUMMARY_TOTALS.compliant} accent="pass" />
-        <SummaryCard label="Violations" value={SUMMARY_TOTALS.violations} accent="violation" />
+        <SummaryCard label="Total Inspections" value={isLoading ? '…' : summaryTotals.total} accent="navy" />
+        <SummaryCard label="Today" value={isLoading ? '…' : summaryTotals.today} accent="navy" />
+        <SummaryCard label="Compliant" value={isLoading ? '…' : summaryTotals.compliant} accent="pass" />
+        <SummaryCard label="Violations" value={isLoading ? '…' : summaryTotals.violations} accent="violation" />
       </section>
 
       {/* ---- Filter bar (single row) ---- */}

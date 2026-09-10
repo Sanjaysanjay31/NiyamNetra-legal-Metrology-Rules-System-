@@ -14,6 +14,8 @@ import Card from '../../components/Card';
 import PrimaryButton from '../../components/PrimaryButton';
 import { fetchStores } from '../../api/inspections';
 
+import { getItem, setItem } from '../../auth/secureStore';
+
 let Location = null;
 try { Location = require('expo-location'); } catch { Location = null; }
 
@@ -101,25 +103,33 @@ export default function NewInspectionScreen({ navigation, onStartInspectionSessi
   const [coords, setCoords] = useState(null);
   const [locStatus, setLocStatus] = useState('locating');
 
-  // Load stores
+  // Load stores from API and cache for offline resilience
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         const list = await fetchStores();
-        if (mounted) {
+        if (mounted && Array.isArray(list) && list.length > 0) {
           setStores(list);
-          if (list.length > 0) setSelectedStore(list[0]);
+          setSelectedStore(list[0]);
+          await setItem('nn_cached_stores', JSON.stringify(list));
+        } else if (mounted) {
+          const cached = await getItem('nn_cached_stores');
+          const parsed = cached ? JSON.parse(cached) : [];
+          setStores(parsed);
+          if (parsed.length > 0) setSelectedStore(parsed[0]);
         }
       } catch (e) {
-        // graceful offline stores fallback
+        // Load previously cached stores when offline
         if (mounted) {
-          const fallback = [
-            { id: 1, name: 'Sri Balaji Supermarket', store_type: 'supermarket', city: 'Hyderabad', district: 'Hyderabad', latitude: 17.385, longitude: 78.4867, geofence_radius_m: 150 },
-            { id: 2, name: 'Anand General Store', store_type: 'kirana', city: 'Hyderabad', district: 'Hyderabad', latitude: 17.4126, longitude: 78.4482, geofence_radius_m: 100 },
-          ];
-          setStores(fallback);
-          setSelectedStore(fallback[0]);
+          try {
+            const cached = await getItem('nn_cached_stores');
+            const parsed = cached ? JSON.parse(cached) : [];
+            setStores(parsed);
+            if (parsed.length > 0) setSelectedStore(parsed[0]);
+          } catch {
+            setStores([]);
+          }
         }
       } finally {
         if (mounted) setLoadingStores(false);
@@ -232,28 +242,38 @@ export default function NewInspectionScreen({ navigation, onStartInspectionSessi
             <ActivityIndicator size="small" color={colors.netraTeal} style={{ padding: spacing.md }} />
           ) : (
             <View style={{ maxHeight: 200 }}>
-              <ScrollView nestedScrollEnabled>
-                {filteredStores.map((s) => {
-                  const isSel = selectedStore?.id === s.id;
-                  return (
-                    <Pressable
-                      key={s.id}
-                      onPress={() => setSelectedStore(s)}
-                      style={[styles.storeRow, isSel && styles.storeRowSelected]}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.storeName, isSel && styles.storeNameSelected]}>
-                          {s.name}
-                        </Text>
-                        <Text style={styles.storeAddr}>
-                          {s.store_type?.toUpperCase()} • {s.city || s.district || 'Telangana'}
-                        </Text>
-                      </View>
-                      {isSel && <Text style={{ color: colors.netraTeal, fontWeight: '800' }}>✓</Text>}
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
+              {filteredStores.length === 0 ? (
+                <View style={{ padding: spacing.md, alignItems: 'center' }}>
+                  <Text style={{ color: colors.textMuted, fontSize: 13, textAlign: 'center' }}>
+                    {stores.length === 0
+                      ? 'No registered establishments found. Please connect to internet to download store registry.'
+                      : 'No matching establishments found.'}
+                  </Text>
+                </View>
+              ) : (
+                <ScrollView nestedScrollEnabled>
+                  {filteredStores.map((s) => {
+                    const isSel = selectedStore?.id === s.id;
+                    return (
+                      <Pressable
+                        key={s.id}
+                        onPress={() => setSelectedStore(s)}
+                        style={[styles.storeRow, isSel && styles.storeRowSelected]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.storeName, isSel && styles.storeNameSelected]}>
+                            {s.name}
+                          </Text>
+                          <Text style={styles.storeAddr}>
+                            {s.store_type?.toUpperCase()} • {s.city || s.district || 'Telangana'}
+                          </Text>
+                        </View>
+                        {isSel && <Text style={{ color: colors.netraTeal, fontWeight: '800' }}>✓</Text>}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              )}
             </View>
           )}
         </Card>

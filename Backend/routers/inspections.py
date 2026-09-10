@@ -378,17 +378,19 @@ def list_inspections(
 def get_inspection(insp: Inspection = Depends(owned_inspection),
                    db: Session = Depends(get_db)):
     d = _inspection_dict(insp)
-    d["scans"] = [
-        {"id": s.id, "commodity_generic": s.commodity_generic,
-         "brand_name": s.brand_name, "overall_result": s.overall_result,
-         "result": s.overall_result, "verdict": s.overall_result,
-         "checks_assessed": s.checks_assessed, "checks_total": s.checks_total,
-         "checks": s.checks_total, "duplicate_of": s.duplicate_of,
-         "thumbnail_url": (
-             f"/scans/{s.id}/images/{sorted(getattr(s, 'images', []) or [], key=lambda i: getattr(i, 'id', 0))[0].id}/thumbnail"
-             if sorted(getattr(s, "images", []) or [], key=lambda i: getattr(i, "id", 0)) else None)}
-        for s in insp.scans
-    ]
+    d["scans"] = []
+    for s in insp.scans:
+        _imgs = sorted(getattr(s, "images", []) or [], key=lambda i: getattr(i, "id", 0))
+        d["scans"].append({
+            "id": s.id, "commodity_generic": s.commodity_generic,
+            "brand_name": s.brand_name, "overall_result": s.overall_result,
+            "result": s.overall_result, "verdict": s.overall_result,
+            "checks_assessed": s.checks_assessed, "checks_total": s.checks_total,
+            "checks": s.checks_total, "duplicate_of": s.duplicate_of,
+            "thumbnail_url": (
+                f"/scans/{s.id}/images/{_imgs[0].id}/thumbnail"
+                if _imgs else None),
+        })
     return d
 
 

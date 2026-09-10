@@ -2,6 +2,7 @@
 import math
 import os
 import threading
+from datetime import date
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -36,7 +37,7 @@ def _assess_limit() -> int:
 _ASSESS_SEMAPHORE = threading.Semaphore(_assess_limit())
 _ASSESS_WAIT_S = int(getattr(settings, "ASSESS_QUEUE_WAIT_S", 20) or 20)
 
-ALLOWED_PANELS = {"front", "back", "side", "mrp", "batch", "other"}
+ALLOWED_PANELS = {"front", "back", "side", "mrp", "batch", "other", "principal"}
 ALLOWED_QUANTITY_UNITS = {
     "g", "kg", "mg", "gm", "ml", "l", "ltr", "litre",
     "pcs", "pc", "pack", "m", "cm", "mm", "n", "u",
@@ -397,8 +398,9 @@ def _assess_inner(scan: Scan, user: User, db: Session):
 
 
 def _scan_out(db: Session, scan: Scan) -> ScanOut:
+    from rules_engine import ALL_CHECK_IDS
     rows = db.query(Finding).filter(Finding.scan_id == scan.id).all()
-    order = {cid: i for i, cid in enumerate(__import__("rules_engine").ALL_CHECK_IDS)}
+    order = {cid: i for i, cid in enumerate(ALL_CHECK_IDS)}
     rows.sort(key=lambda r: order.get(r.check_id, 99))
     counts = VerdictCounts(
         total=len(rows),
@@ -689,12 +691,10 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         total_surface_area_cm2=scan.total_surface_area_cm2,
         is_blown_moulded=scan.is_blown_moulded,
         panels_captured={i.panel for i in images},
-        rules_as_at=scan.rules_as_at or __import__("datetime").date.fromisoformat(
-            settings.RULES_AS_AT
-        ),
+        rules_as_at=scan.rules_as_at or date.fromisoformat(settings.RULES_AS_AT),
     )
 
-    front = next((i for i in images if i.panel == "front"), None)
+    front = next((i for i in images if i.panel in ("front", "principal")), None)
     if front is None or not Path(front.file_path).exists():
         ctx.image_usable = False
         ctx.image_quality_reason = (
@@ -768,7 +768,12 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         # Fall back to the front-panel result for an honest failure reason.
         ocr = run_ocr(bgr)
     ctx.ocr_available = ocr.engine != "none"
-    ctx.ocr_failure_reason = ocr.failure_reason if not ctx.ocr_available else _fail_reason if _fail_reason and not _all_lines else ocr.failure_reason
+    if not ctx.ocr_available:
+        ctx.ocr_failure_reason = ocr.failure_reason
+    elif _fail_reason and not _all_lines:
+        ctx.ocr_failure_reason = _fail_reason
+    else:
+        ctx.ocr_failure_reason = ocr.failure_reason
     ctx.ocr_mean_confidence = ocr.mean_confidence
     ctx.fields = extract_fields(ocr)
     try:
@@ -847,7 +852,7 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     # POST /scans/{id}/listing) into the same extract_fields shape the engine
     # reads, so e-commerce scans actually assess Rule 6(10).
     try:
-        listing_text = getattr(scan, "listing_text", None) or getattr(scan, "listing_url", None) and ""
+        listing_text = getattr(scan, "listing_text", None)
         listing_url = getattr(scan, "listing_url", None)
         if listing_text:
             from ocr_engine import OcrLine, OcrResult as _OR, extract_fields as _ef

@@ -72,7 +72,7 @@ export const getBackendTarget = () => targetOf(api.defaults.baseURL);
  *  validated and persisted before the switch, and rejected (no-op) if it
  *  cannot be turned into a URL. */
 export async function switchBackend(name, url) {
-  const targetKey = name === 'render' ? 'render' : 'lan';
+  const targetKey = BACKEND_TARGETS[name] ? name : 'lan';
   const t = BACKEND_TARGETS[targetKey];
   if (!t) return getApiBaseUrl();
   if (url !== undefined && url !== null) {
@@ -92,7 +92,10 @@ export async function switchBackend(name, url) {
  */
 export async function applySavedBackend() {
   try {
-    const target = ACTIVE_BACKEND || 'lan';
+    // Load the custom URL FIRST so BACKEND_TARGETS.custom.resolve() works
+    // when the saved target is 'custom' (otherwise it falls back to LAN).
+    await loadCustomUrl();
+    const target = await loadSavedTarget();
     if (target && BACKEND_TARGETS[target]) setApiBaseUrl(BACKEND_TARGETS[target].resolve());
   } catch { /* keep the resolved default */ }
   cookieWarning = warnIfCookieHostMismatch(getApiBaseUrl());

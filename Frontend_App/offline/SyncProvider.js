@@ -203,6 +203,20 @@ export function SyncProvider({ children }) {
                     if (__DEV__) console.warn('[sync] assess failed (evidence kept):', e?.message || e);
                   }
                 }
+
+                // Transition inspection from 'draft' to 'submitted'
+                try {
+                  const sigStatus = item.signature_status || item.body?.signature_status || 'signed';
+                  const notes = item.notes || item.body?.notes || '';
+                  await api.post(`/inspections/${serverId}/submit`, {
+                    signature_status: sigStatus,
+                    notes,
+                  });
+                } catch (submitErr) {
+                  if (submitErr?.response?.status !== 409 && __DEV__) {
+                    console.warn('[sync] inspection submit warning:', submitErr?.message || submitErr);
+                  }
+                }
               }
               // Only purge files AFTER all uploads succeed: markSynced is the
               // gate purgeSynced reads, so reaching here means the bytes are
