@@ -202,12 +202,16 @@ def get_settings() -> Settings:
     s = Settings()                      # raises at import if .env is missing JWT_SECRET
     s.EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     s.OUT_DIR.mkdir(parents=True, exist_ok=True)
-    if s.ENV == "prod" and not s.CORS_ORIGIN_REGEX_PROD and "localhost" in s.CORS_ORIGIN_REGEX:
-        import logging
-        logging.getLogger(__name__).warning(
-            "ENV=prod but CORS_ORIGIN_REGEX_PROD is unset: default CORS regex "
-            "still allows localhost origins. Set CORS_ORIGIN_REGEX_PROD to the "
-            "portal domain for a strict prod policy.")
+    if s.ENV == "prod" and not s.CORS_ORIGIN_REGEX_PROD:
+        # Fail CLOSED. The development CORS_ORIGIN_REGEX above still matches
+        # localhost and every private LAN range; booting a public deploy with
+        # it was a logged warning while the permissive regex stayed in force
+        # — fail-open. A prod boot must name its portal origin explicitly.
+        raise ValueError(
+            "ENV=prod requires CORS_ORIGIN_REGEX_PROD (e.g. "
+            "'^https://your-portal-domain\\.example$'). Refusing to boot with "
+            "the development regex, which allows localhost/LAN origins."
+        )
     return s
 
 

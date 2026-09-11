@@ -412,3 +412,24 @@ class ReportRecord(Base):
     __table_args__ = (
         Index("ix_report_created", "created_at"),
     )
+
+
+# --------------------------------------------- 11. idempotency replay store
+class IdempotencyKey(Base):
+    """Durable replay store for offline sync (09 T14, 11 §2.4). One row per
+    accepted Idempotency-Key; a retried POST returns the stored response
+    instead of creating a duplicate inspection/scan. Only 2xx responses are
+    stored — a failed request leaves the key unused for the honest retry.
+    Rows older than the 7-day replay window are pruned opportunistically."""
+    __tablename__ = "idempotency_keys"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(255))   # "POST /inspections"
+    status_code: Mapped[int] = mapped_column(Integer)
+    response_body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        Index("ix_idem_created", "created_at"),
+    )

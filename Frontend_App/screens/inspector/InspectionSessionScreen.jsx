@@ -60,18 +60,24 @@ function buildOfflineFindings({ commodity, brand, batch, hasSticker, isImported,
     { code: 'CHK18', name: 'Penalty Limb & Section 36 Classification', citation: 'Section 36, Legal Metrology Act 2009', required: 'Section 36 tier 1 / tier 2 offense determination', severity: 'critical', defaultObserved: hasSticker ? 'Section 36(1) penalty limb engaged due to sticker alteration' : 'Pending server statutory review', needsOcr: false, verdict: hasSticker ? 'fail' : 'not_assessed', reason: hasSticker ? 'Section 36(1) penalty limb engaged.' : 'Pending complete evidence review.' },
   ];
 
+  // 05_SYSTEM_ARCHITECTURE §1.1 / Backend.md C4: the server is the ONLY
+  // assessor. Offline capture renders the 19 rows as PENDING — these verdict
+  // fields were previously seeded from device flags (CHK03 'pass', CHK05
+  // 'fail' on an empty commodity, CHK13 'fail' on a sticker), which
+  // masqueraded as engine verdicts and rolled the scan up to 'violation'
+  // before any server assessment existed. Observations stay; verdicts wait.
   return master.map((m, idx) => ({
     id: idx + 1,
     check_id: m.code,
     title: m.name,
     citation: m.citation,
-    engine_verdict: m.verdict || 'not_assessed',
-    effective_verdict: m.verdict || 'not_assessed',
+    engine_verdict: 'not_assessed',
+    effective_verdict: 'not_assessed',
     human_verdict: null,
     observed: m.defaultObserved,
     required: m.required,
     severity: m.severity,
-    reason: m.reason || (m.needsOcr ? 'Captured offline — pending server OCR text extraction and statutory rules assessment.' : null),
+    reason: 'Captured offline — pending server OCR and statutory assessment.',
   }));
 }
 
@@ -259,7 +265,6 @@ export default function InspectionSessionScreen({
           isImported,
           isPerishable,
         });
-        const hasFail = offlineFindings.some((f) => f.effective_verdict === 'fail');
         scanItem = {
           id: `pkg-${Date.now()}`,
           commodity_generic: commodity.trim() || 'Unspecified Commodity',
@@ -270,8 +275,12 @@ export default function InspectionSessionScreen({
           is_imported: isImported,
           is_perishable: isPerishable,
           has_sticker: hasSticker,
-          overall_result: hasFail ? 'violation' : 'not_assessed',
-          checks_assessed: offlineFindings.filter((f) => f.effective_verdict !== 'not_assessed').length,
+          // Nothing is assessed until the server says so (C3/C4). A local
+          // rollup must never claim 'violation' from a device flag alone —
+          // the officer's provisional suspicion still reaches the server via
+          // the violationSuspected flag on the queued scan.
+          overall_result: 'not_assessed',
+          checks_assessed: 0,
           checks_total: 19,
           findings: offlineFindings,
           is_offline: true,

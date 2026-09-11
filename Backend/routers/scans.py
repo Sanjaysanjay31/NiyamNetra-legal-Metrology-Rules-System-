@@ -3,7 +3,7 @@ import math
 import os
 import threading
 from datetime import date
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -58,6 +58,7 @@ def _label_for(line) -> str | None:
 @router.post("/{scan_id}/images", status_code=status.HTTP_201_CREATED)
 async def upload_image(
     request: Request,
+    response: Response,
     panel: str = Form(...),
     file: UploadFile = File(...),
     scan: Scan = Depends(owned_scan),
@@ -106,6 +107,26 @@ async def upload_image(
             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"Image exceeds {settings.MAX_UPLOAD_MB} MB",
         )
+
+    # Idempotent re-upload (09 T14): a sync retry that lost its response
+    # re-sends the SAME bytes. scan_images rows are append-only (migration
+    # 0006 even denies DELETE), so the honest reply is the ORIGINAL record
+    # — 200 with its id — instead of a duplicate row for duplicate evidence.
+    import hashlib as _hashlib
+    _sha = _hashlib.sha256(raw).hexdigest()
+    _dup = (db.query(ScanImage)
+              .filter(ScanImage.scan_id == scan.id, ScanImage.sha256 == _sha)
+              .first())
+    if _dup is not None:
+        response.status_code = status.HTTP_200_OK
+        return {
+            "image_id": _dup.id,
+            "sha256": _dup.sha256,
+            "usable": True,
+            "quality_note": "already stored (replayed upload)",
+            "suggested_corners": None,
+            "replayed": True,
+        }
 
     from image_processor import (
         PHASH_BANDS, assess_quality, phash_bands, read_capture_time,
@@ -364,35 +385,15 @@ def _assess_inner(scan: Scan, user: User, db: Session):
     append_audit(db, inspection_id=scan.inspection_id, scan_id=scan.id,
                  user_id=user.id, action="assessed", new_value=verdict.overall_result)
 
-    # Storage minimisation (decided 2026-08-31, narrowed: never purge
-    # not_assessed or violation): only compliant / out_of_scope photos are
-    # discarded; only the assessed record is kept. Images are retained for
-    # violation (the "bad record" an officer may need) AND for not_assessed
-    # (the review queue + append-only trigger need the file). Purging
-    # not_assessed destroys the evidence the reviewer must see. This runs
-    # AFTER assessment, so the front panel was still available to the engine
-    # above; re-assessing a purged scan will read no image.
-    # Retention vs migration: audit_logs stays fully append-only at the DB
-    # level, scan_images blocks UPDATE only (evidence immutability) but
-    # allows DELETE so this purge can run — see alembic 0001 (img_no_update
-    # kept, img_no_delete removed). A purge failure is logged, never fatal.
-    if scan.overall_result in ("compliant", "out_of_scope"):
-        from image_processor import delete_stored_file
-        import logging as _logging
-        imgs = db.query(ScanImage).filter(ScanImage.scan_id == scan.id).all()
-        if imgs:
-            for im in imgs:
-                try:
-                    delete_stored_file(im.file_path, scan.inspection_id, scan.id)
-                except Exception as e:
-                    _logging.getLogger(__name__).warning(
-                        "purge failed for scan %s image %s: %s", scan.id, im.id, e)
-                db.delete(im)
-            db.commit()
-            append_audit(db, inspection_id=scan.inspection_id, scan_id=scan.id,
-                         user_id=user.id, action="images_purged",
-                         old_value=f"{len(imgs)} image(s)",
-                         reason=f"result={scan.overall_result}; evidence retained only for violations")
+    # Evidence retention (06 §9.5): images are kept for EVERY result. An
+    # earlier build auto-purged compliant/out_of_scope photos here, which
+    # made the five-year retention promise impossible to honour and left
+    # GET /scans/{id}/verify reporting mismatches for exactly the records the
+    # report cites. Deletion is now exclusively the documented administrative
+    # operation — drop the img_no_delete trigger (restored by migration
+    # 0006), delete, re-create, audit the range — never a side effect of
+    # assessment. Migration 0006 denies DELETE at the DB level, so this
+    # endpoint physically cannot purge evidence any more.
 
     return _scan_out(db, scan)
 
@@ -666,7 +667,7 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     from pathlib import Path
     import cv2
 
-    from image_processor import assess_quality, compute_scale, rectify
+    from image_processor import assess_quality, compute_scale, detect_panel_quad, rectify
     from ocr_engine import OcrResult, extract_fields, run_ocr
     from rules_engine import CheckContext
 
@@ -716,7 +717,25 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     quality = assess_quality(bgr)
     ctx.image_usable, ctx.image_quality_reason = quality.usable, quality.reason
 
-    shape = getattr(bgr, "shape", None)
+    # Rectification (Backend.md §image_processor): the stored file stays
+    # byte-exact — this is a derived MEASUREMENT copy only. When the panel
+    # quad is detected, the frame is warped onto a fronto-parallel plane so
+    # mm-per-pixel and letter heights are not read across a tilted surface
+    # (rectify used to be imported here and never called). Quality still
+    # describes the RAW capture — a warped copy would score its own blur —
+    # and when no quad is found or warping fails the raw frame is used
+    # exactly as before, so behaviour only changes when a usable quad exists.
+    _measure = bgr
+    try:
+        _quad = detect_panel_quad(bgr)
+        if _quad is not None:
+            _rect, _tilt = rectify(bgr, _quad)
+            if _rect is not None and getattr(_rect, "shape", (0,))[0] > 0:
+                _measure = _rect
+    except Exception:
+        _measure = bgr
+
+    shape = getattr(_measure, "shape", None)
     if shape is None or len(shape) < 1:
         ctx.image_usable = False
         ctx.image_quality_reason = (
@@ -747,7 +766,7 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         try:
             if not Path(_im.file_path).exists():
                 continue
-            _b = cv2.imread(_im.file_path) if _im is not front else bgr
+            _b = cv2.imread(_im.file_path) if _im is not front else _measure
             if _b is None:
                 continue
             _ocr = run_ocr(_b)
@@ -766,7 +785,7 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
                         mean_confidence=_mean, failure_reason=None)
     else:
         # Fall back to the front-panel result for an honest failure reason.
-        ocr = run_ocr(bgr)
+        ocr = run_ocr(_measure)
     ctx.ocr_available = ocr.engine != "none"
     if not ctx.ocr_available:
         ctx.ocr_failure_reason = ocr.failure_reason

@@ -67,6 +67,10 @@ class UserOut(ORMModel):
     role: str
     jurisdiction: str | None = None
     is_active: bool
+    # Device binding (C7). Exposed so the admin roster can show which officer
+    # device is bound (InspectorsScreen reads it); /auth/me returning it to the
+    # officer is harmless — the login body already carries the same value.
+    install_id: str | None = None
 
 
 class LoginResponse(BaseModel):

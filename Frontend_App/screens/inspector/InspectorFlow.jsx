@@ -52,13 +52,19 @@ export default function InspectorFlow({ navigation }) {
 
   const handleSaveFindings = (updatedFindings) => {
     if (!selectedScan || !activeSession) return;
-    const hasFail = updatedFindings.some((f) => f.effective_verdict === 'fail');
+    // Honest rollup — same rule as FindingsScreen and the server (C3/C4):
+    // any fail -> violation; ALL pass -> compliant; any not_assessed left
+    // -> not_assessed. Claiming 'compliant' while checks were never
+    // assessed would invent a verdict the evidence does not carry.
+    const failCount = updatedFindings.filter((f) => f.effective_verdict === 'fail').length;
+    const notAssessed = updatedFindings.filter((f) => f.effective_verdict === 'not_assessed').length;
+    const rollup = failCount > 0 ? 'violation' : (notAssessed === 0 ? 'compliant' : 'not_assessed');
     const updatedScans = (activeSession.scans || []).map((s) =>
       s.id === selectedScan.id
         ? {
             ...s,
             findings: updatedFindings,
-            overall_result: hasFail ? 'violation' : 'compliant',
+            overall_result: rollup,
           }
         : s
     );

@@ -574,7 +574,7 @@ class ScanImage(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     scan_id: Mapped[int] = mapped_column(ForeignKey("scans.id"), index=True)
 
-    panel: Mapped[str] = mapped_column(String(24))   # front|back|side|mrp|batch|other
+    panel: Mapped[str] = mapped_column(String(24))   # front|back|side|mrp|batch|other — plus 'principal' accepted as an alias for front (build_context selects panel in ("front", "principal")); the App maps unknown labels to 'other'
     sequence: Mapped[int] = mapped_column(Integer, default=0)
 
     file_path: Mapped[str] = mapped_column(String(400))

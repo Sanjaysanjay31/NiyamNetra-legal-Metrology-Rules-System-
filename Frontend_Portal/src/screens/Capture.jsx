@@ -68,12 +68,16 @@ import {
   cx,
 } from '../ui'
 
-/* The four panels the engine understands. `front` is the only one it insists on;
-   the rest sharpen a reading without gating it. */
+/* The panels the engine understands. `front` is the only one it insists on;
+    the rest sharpen a reading without gating it. Matches ALLOWED_PANELS in
+    routers/scans.py: front, back, side, mrp, batch, other, principal */
 const PANELS = [
   { key: 'front', required: true },
   { key: 'back', required: false },
+  { key: 'mrp', required: false },
+  { key: 'batch', required: false },
   { key: 'principal', required: false },
+  { key: 'side', required: false },
   { key: 'other', required: false },
 ]
 

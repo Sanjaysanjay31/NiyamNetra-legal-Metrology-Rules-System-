@@ -49,9 +49,10 @@ export async function uploadScanImage(scanId, panel, imageUri) {
     type,
   });
 
-  const { data } = await api.post(`/scans/${scanId}/images`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
+  // Let axios/React Native generate the multipart boundary itself: an explicit
+  // Content-Type arrives without a boundary on some RN builds and the backend
+  // then cannot split the parts (same fix as uploadEvidenceFile in SyncProvider).
+  const { data } = await api.post(`/scans/${scanId}/images`, formData, { timeout: 60000 });
   return data;
 }
 
@@ -71,7 +72,16 @@ export async function fetchScanDetails(scanId) {
 }
 
 export async function overrideFinding(findingId, humanVerdict, overrideReason) {
-  const { data } = await api.patch(`/admin/findings/${findingId}`, {
+  // PATCH /admin/findings/{finding_id} (routers/admin.py, admin-only).
+  // Guard the id so a bad caller gets a clear thrown error instead of a
+  // confusing 404 from the literal path /admin/findings/undefined.
+  const id = Number(findingId);
+  if (!Number.isInteger(id) || id <= 0) {
+    const err = new Error(`overrideFinding: invalid finding id ${JSON.stringify(findingId)}`);
+    err.status = 400;
+    throw err;
+  }
+  const { data } = await api.patch(`/admin/findings/${id}`, {
     human_verdict: humanVerdict,
     override_reason: overrideReason,
   });

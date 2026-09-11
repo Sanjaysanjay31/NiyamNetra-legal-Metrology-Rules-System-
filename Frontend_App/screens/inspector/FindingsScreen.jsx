@@ -200,8 +200,11 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
       let reason = null;
 
       if (m.code === 'CHK13' && hasSticker) {
-        engineVerdict = 'fail';
-        reason = 'Price sticker affixed over original declared MRP. Section 36 violation.';
+        // Suspicion is an observation, never a verdict: the server is the
+        // assessor (05 §1.1). Seeding 'fail' here used to roll the scan up
+        // to a local 'violation' before any server assessment existed.
+        engineVerdict = 'not_assessed';
+        reason = 'Sticker suspected over the original MRP — pending server assessment.';
       }
 
       return {
@@ -240,43 +243,66 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
     }
 
     setSubmittingOverride(true);
+    // Local application of the edit. For a server-backed finding this runs
+    // only AFTER the server confirms; applying it in a catch-all error branch
+    // used to show overrides the audit trail never received.
+    const applyLocal = () => {
+      const updated = findings.map((item) =>
+        item.check_id === selectedFinding.check_id
+          ? {
+              ...item,
+              human_verdict: overrideVerdict,
+              effective_verdict: overrideVerdict,
+              override_reason: overrideReason.trim(),
+            }
+          : item
+      );
+      setFindings(updated);
+      if (onSaveFindings) {
+        onSaveFindings(updated);
+      }
+      setSelectedFinding(null);
+    };
+
     try {
       if (selectedFinding.server_id) {
-        await overrideFinding(selectedFinding.server_id, overrideVerdict, overrideReason.trim());
+        try {
+          await overrideFinding(selectedFinding.server_id, overrideVerdict, overrideReason.trim());
+        } catch (e) {
+          const status = e?.status ?? e?.response?.status;
+          if (status === 403 || e?.code === 'FORBIDDEN') {
+            // PATCH /admin/findings/{id} is admin-only (routers/admin.py).
+            // An inspector override can never succeed silently: say who must
+            // apply it instead of faking a save that the server refused.
+            Alert.alert(
+              'Admin approval required',
+              'Verdict overrides are recorded on the server by an administrator. '
+              + 'Your justification was NOT saved — ask an admin to apply this '
+              + 'override from the portal review queue.',
+            );
+            return;
+          }
+          if (status) {
+            // The server understood and refused (409 frozen inspection, 422
+            // validation, …). A rejected write must not be shown as saved.
+            Alert.alert(
+              'Override rejected',
+              String(e?.response?.data?.detail || e?.message || 'The server refused this override.'),
+            );
+            return;
+          }
+          // No status = network failure/timeout. Keep the override in the
+          // local session (offline-first), but state plainly that it is not
+          // on the server yet.
+          Alert.alert(
+            'Saved on this device only',
+            'The server could not be reached. This override is recorded in the '
+            + 'local session only and will not appear in the audit trail until '
+            + 'it is applied server-side.',
+          );
+        }
       }
-
-      const updated = findings.map((item) =>
-        item.check_id === selectedFinding.check_id
-          ? {
-              ...item,
-              human_verdict: overrideVerdict,
-              effective_verdict: overrideVerdict,
-              override_reason: overrideReason.trim(),
-            }
-          : item
-      );
-      setFindings(updated);
-      if (onSaveFindings) {
-        onSaveFindings(updated);
-      }
-      setSelectedFinding(null);
-    } catch (e) {
-      // Local fallback
-      const updated = findings.map((item) =>
-        item.check_id === selectedFinding.check_id
-          ? {
-              ...item,
-              human_verdict: overrideVerdict,
-              effective_verdict: overrideVerdict,
-              override_reason: overrideReason.trim(),
-            }
-          : item
-      );
-      setFindings(updated);
-      if (onSaveFindings) {
-        onSaveFindings(updated);
-      }
-      setSelectedFinding(null);
+      applyLocal();
     } finally {
       setSubmittingOverride(false);
     }

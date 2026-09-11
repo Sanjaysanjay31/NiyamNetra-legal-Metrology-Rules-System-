@@ -64,24 +64,30 @@ export function AuthProvider({ children }) {
         // silently rehydrate the last access token from SecureStore and set
         // the header before any screen renders.
         try {
-          const saved = await getItem(ACCESS_KEY);
-          if (saved) {
-            setAccessToken(saved);
-            const r = decodeRole(saved);
-            if (r) {
-              setRole(r);
-              setIsLoading(false);
-              // Best-effort refresh in the background to extend the session.
-              api.post('/auth/refresh', undefined, { timeout: 10000 })
-                .then(({ data }) => {
-                  if (data?.access_token) {
-                    setAccessToken(data.access_token);
-                    setItem(ACCESS_KEY, data.access_token);
-                    setRole(decodeRole(data.access_token));
-                  }
-                })
-                .catch(() => {});
-              return;
+          // Web never persisted an access token (memory-only per Backend.md
+          // C8 / 09 §3.2 — secureStore falls back to localStorage on web,
+          // which is XSS-readable). The web session comes from the httpOnly
+          // refresh cookie in the /auth/refresh call below.
+          if (Platform.OS !== 'web') {
+            const saved = await getItem(ACCESS_KEY);
+            if (saved) {
+              setAccessToken(saved);
+              const r = decodeRole(saved);
+              if (r) {
+                setRole(r);
+                setIsLoading(false);
+                // Best-effort refresh in the background to extend the session.
+                api.post('/auth/refresh', undefined, { timeout: 10000 })
+                  .then(({ data }) => {
+                    if (data?.access_token) {
+                      setAccessToken(data.access_token);
+                      setItem(ACCESS_KEY, data.access_token);
+                      setRole(decodeRole(data.access_token));
+                    }
+                  })
+                  .catch(() => {});
+                return;
+              }
             }
           }
         } catch { /* fall through to login */ }
@@ -119,8 +125,13 @@ export function AuthProvider({ children }) {
     await setItem('nn_install_id', data.install_id);
     // Native session restore: the refresh cookie never reaches SecureStore
     // (httpOnly, web-only), so persist the access token for silent rehydrate
-    // on boot (see the bootstrap effect above).
-    await setItem(ACCESS_KEY, data.access_token);
+    // on boot (see the bootstrap effect above). WEB DOES NOT PERSIST: the
+    // fallback store is localStorage (see secureStore.js), which contradicts
+    // the documented memory-only access token (Backend.md C8, 09 T12 XSS) —
+    // on web the httpOnly refresh cookie restores the session instead.
+    if (Platform.OS !== 'web') {
+      await setItem(ACCESS_KEY, data.access_token);
+    }
     // The refresh token is only ever set as an httpOnly cookie by the server —
     // it is never written to SecureStore, which is the point of the cookie.
     setRole(decodeRole(data.access_token));

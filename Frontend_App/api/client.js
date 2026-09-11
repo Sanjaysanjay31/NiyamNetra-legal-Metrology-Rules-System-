@@ -135,6 +135,18 @@ api.interceptors.response.use(null, async (err) => {
   // no err.config) — nothing to do here.
   if (status !== 401 || !orig) return Promise.reject(err);
 
+  // Never run the refresh dance for the auth endpoints themselves:
+  //  • a 401 from /auth/login is wrong credentials — surface it immediately;
+  //    the refresh attempt this used to trigger burned a valid cookie
+  //    round-trip and could emit a bogus session-expired broadcast.
+  //  • a 401 from /auth/refresh must not await its own in-flight promise:
+  //    the retry it schedules IS the request that just failed.
+  const _path = String(orig.url || '');
+  if (_path.includes('/auth/login') || _path.includes('/auth/refresh')) {
+    if (_path.includes('/auth/refresh')) emitSessionExpired();
+    return Promise.reject(err);
+  }
+
   // Already retried once and still 401: the session is dead. Clear it so the
   // app routes to login instead of replaying forever.
   if (orig._retried) {

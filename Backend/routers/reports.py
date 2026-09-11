@@ -340,32 +340,43 @@ def inspection_csv(inspection_id: int, user: User = Depends(get_current_user),
 def _range_blocks_for(db: Session, start: date, end: date,
                       user_ids: list[int] | None):
     """Blocks for every day in [start, end] (cap 31 days). user_ids=None means
-    all inspectors (admin office-wide); otherwise only those users."""
-    from datetime import timedelta as _td
+    all inspectors (admin office-wide); otherwise only those users.
+
+    Two queries total (05 §2.5 no-N+1): one for the period's inspections with
+    scans eager-loaded, one for all their findings. The previous per-day loop
+    ran a findings query PER INSPECTION — a month of work meant hundreds of
+    round-trips. Blocks keep the original day-major, id-ordered layout.
+    """
     from sqlalchemy.orm import joinedload, selectinload
     if (end - start).days > 31 or (end - start).days < 0:
         from fastapi import HTTPException
         raise HTTPException(status_code=422, detail="Range must be 0-31 days")
     from rules_engine import ALL_CHECK_IDS as _IDS5
     _order = {cid: i for i, cid in enumerate(_IDS5)}
-    day, blocks = start, []
-    while day <= end:
-        q = (db.query(Inspection)
-             .options(joinedload(Inspection.store), joinedload(Inspection.inspector),
-                      selectinload(Inspection.scans)))
-        if user_ids is not None:
-            q = q.filter(Inspection.user_id.in_(user_ids))
-        for insp in q.filter(Inspection.inspection_date == day).order_by(Inspection.id).all():
-            live = sorted([s for s in insp.scans if s.duplicate_of is None], key=lambda s: s.id)
-            _sids = [s.id for s in live]
-            _grp: dict[int, list] = {sid: [] for sid in _sids}
-            if _sids:
-                for f in db.query(Finding).filter(Finding.scan_id.in_(_sids)).all():
-                    _grp.setdefault(f.scan_id, []).append(f)
-                for v in _grp.values():
-                    v.sort(key=lambda r: _order.get(r.check_id, 99))
-            blocks.append((insp, live, {s.id: _grp.get(s.id, []) for s in live}))
-        day += _td(days=1)
+
+    q = (db.query(Inspection)
+         .options(joinedload(Inspection.store), joinedload(Inspection.inspector),
+                  selectinload(Inspection.scans))
+         .filter(Inspection.inspection_date >= start,
+                 Inspection.inspection_date <= end)
+         .order_by(Inspection.inspection_date, Inspection.id))
+    if user_ids is not None:
+        q = q.filter(Inspection.user_id.in_(user_ids))
+    inspections = q.all()
+
+    _all_scan_ids = [s.id for i in inspections for s in i.scans
+                     if s.duplicate_of is None]
+    _grp: dict[int, list] = {}
+    if _all_scan_ids:
+        for f in db.query(Finding).filter(Finding.scan_id.in_(_all_scan_ids)).all():
+            _grp.setdefault(f.scan_id, []).append(f)
+        for v in _grp.values():
+            v.sort(key=lambda r: _order.get(r.check_id, 99))
+
+    blocks = []
+    for insp in inspections:
+        live = sorted([s for s in insp.scans if s.duplicate_of is None], key=lambda s: s.id)
+        blocks.append((insp, live, {s.id: _grp.get(s.id, []) for s in live}))
     return blocks
 
 
@@ -436,11 +447,15 @@ def verify_report(inspection: int, head: str, user: User = Depends(get_current_u
     # head is first 16 chars of chain_head embedded in QR
     match = current_head.startswith(head) or head == current_head[:16]
     insp = db.get(Inspection, inspection)
+    # Existence oracle closed (05 §8.2): a record the caller may not see must
+    # not be distinguishable from a missing one. Any authenticated inspector
+    # could previously probe arbitrary inspection ids via inspection_found.
+    may_see = insp is not None and (user.role == "admin" or insp.user_id == user.id)
     return {
         "inspection_id": inspection,
         "head_provided": head,
         "head_current": current_head[:16],
         "match": match,
         "chain_intact": state.get("intact"),
-        "inspection_found": insp is not None,
+        "inspection_found": bool(may_see),
     }

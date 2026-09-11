@@ -61,12 +61,10 @@ async function uploadEvidenceFile(serverScanId, file, index) {
     name: `panel-${panel}-${index}.jpg`,
     type: guessMime(uri),
   });
-  // Let axios set the multipart boundary: passing Content-Type explicitly
-  // without a boundary breaks React Native uploads on some builds.
-  return api.post(`/scans/${serverScanId}/images`, form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000,
-  });
+  // Do NOT set Content-Type here. Letting axios/React Native build it is the
+  // only way the multipart boundary is generated; an explicit value arrives
+  // without a boundary on some RN builds and the backend cannot split parts.
+  return api.post(`/scans/${serverScanId}/images`, form, { timeout: 60000 });
 }
 
 export function SyncProvider({ children }) {
@@ -76,6 +74,11 @@ export function SyncProvider({ children }) {
   // A ref, not the state value: syncNow is held by a 30s interval, and reading
   // isSyncing from a stale closure let two passes overlap.
   const busy = useRef(false);
+  // After a pass where nothing synced, park the automatic 30s timer for a
+  // while so a downed backend is not polled forever. Progressive: 60s, 2min,
+  // 4min … capped at 10min. Manual syncNow() calls are never gated.
+  const backoffUntil = useRef(0);
+  const consecutiveFailures = useRef(0);
 
   const refreshCount = useCallback(async () => {
     try { setPending(await queueSize()); } catch { /* queue unavailable (web) */ }
@@ -299,7 +302,17 @@ export function SyncProvider({ children }) {
       await refreshCount();
       // Only advertise a sync time when at least one item actually synced —
       // otherwise a failed pass looks like a successful one.
-      if (anySuccess) setLastSync(new Date().toISOString());
+      if (anySuccess) {
+        setLastSync(new Date().toISOString());
+        consecutiveFailures.current = 0;
+        backoffUntil.current = 0;
+      } else {
+        // Park the automatic timer (see backoffUntil). A manual pull is not
+        // affected — the gate lives in maybeSync below, not in syncNow.
+        consecutiveFailures.current += 1;
+        const waitMs = Math.min(60000 * 2 ** (consecutiveFailures.current - 1), 600000);
+        backoffUntil.current = Date.now() + waitMs;
+      }
     } finally {
       busy.current = false;
       setIsSyncing(false);
@@ -310,13 +323,17 @@ export function SyncProvider({ children }) {
     // Idempotent startup purge: collect is_synced leftovers from a crash
     // between markSynced and purgeSynced, then count what is truly pending.
     purgeSyncedOnBoot().finally(() => refreshCount());
+    // Automatic attempts only: skip while the failure backoff is running.
+    // Manual syncNow() from SyncStrip always runs immediately.
+    const maybeSync = () => {
+      if (Date.now() < backoffUntil.current) return;
+      isOnline().then((ok) => { if (ok) syncNow(); }).catch(() => {});
+    };
     const sub = AppState.addEventListener('change', (s) => {
       if (s !== 'active') return;
-      isOnline().then((ok) => { if (ok) syncNow(); }).catch(() => {});
+      maybeSync();
     });
-    const interval = setInterval(() => {
-      isOnline().then((ok) => { if (ok) syncNow(); }).catch(() => {});
-    }, 30000);
+    const interval = setInterval(maybeSync, 30000);
     return () => { sub.remove(); clearInterval(interval); };
   }, [refreshCount, syncNow]);
 

@@ -249,6 +249,17 @@ export const endpoints = {
       api.get('/reports/today.xlsx', { params, responseType: 'blob' }).then((r) => r.data),
     todayCsv: (params) =>
       api.get('/reports/today.csv', { params, responseType: 'blob' }).then((r) => r.data),
+    /* Range reports — one document for a month-of-work. Uses /reports/range.{fmt}
+       where fmt is pdf|docx|xlsx|csv. These are the office-wide range documents
+       that cover multiple inspectors (routers/reports.py:350-412). */
+    rangePdf: (params) =>
+      api.get('/reports/range.pdf', { params, responseType: 'blob' }).then((r) => r.data),
+    rangeDocx: (params) =>
+      api.get('/reports/range.docx', { params, responseType: 'blob' }).then((r) => r.data),
+    rangeXlsx: (params) =>
+      api.get('/reports/range.xlsx', { params, responseType: 'blob' }).then((r) => r.data),
+    rangeCsv: (params) =>
+      api.get('/reports/range.csv', { params, responseType: 'blob' }).then((r) => r.data),
     /* Per-inspection documents. These use get_current_user, not
        require_inspector, and check ownership themselves: an inspector may only
        fetch their own, an admin may fetch any. This is the only document route

@@ -283,7 +283,8 @@ export default function LoginScreen() {
             style={{ marginTop: spacing.xs, minHeight: 50 }}
           />
 
-          {/* Quick Demo Credentials Autofill */}
+          {/* Quick Demo Credentials Autofill - DEV ONLY */}
+          {__DEV__ && (
           <View style={{ marginTop: spacing.xl, borderTopWidth: 1, borderTopColor: colors.borderLight, paddingTop: spacing.md }}>
             <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', marginBottom: spacing.xs }}>
               Demo Credentials (Tap to Fill)
@@ -335,6 +336,7 @@ export default function LoginScreen() {
               </Pressable>
             </View>
           </View>
+          )}
 
           {/* Statutory Footer */}
           <Text

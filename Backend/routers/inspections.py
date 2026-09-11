@@ -207,6 +207,18 @@ def create_store(body: CreateStoreRequest, user: User = Depends(require_admin), 
 def create_inspection(body: CreateInspectionRequest, request: Request,
                       user: User = Depends(require_inspector),
                       db: Session = Depends(get_db)):
+    from fastapi.responses import JSONResponse
+    from idempotency import close_idempotent, idempotency_key, replay_or_open
+
+    # Durable idempotent replay (09 T14, 11 §2.4). The App reuses the queue
+    # item id as the key across sync retries; a retry whose first response was
+    # lost on the wire replays the stored 201 instead of creating a duplicate.
+    _idem = idempotency_key(request)
+    _stored, _is_new = replay_or_open(db, request, user.id, _idem)
+    if not _is_new:
+        _sc, _body = _stored
+        return JSONResponse(status_code=_sc, content=_body)
+
     # 11 §2.1 — refuse at gate if evidence disk low, not mid-capture.
     # Disk errors map to 503 (not 500): the store is unavailable, not the code.
     try:
@@ -290,7 +302,9 @@ def create_inspection(body: CreateInspectionRequest, request: Request,
     append_audit(db, inspection_id=insp.id, user_id=user.id,
                  action="inspection_created", new_value=f"store={store.id}",
                  reason=skew_note)
-    return _inspection_dict(insp)
+    _out = _inspection_dict(insp)
+    close_idempotent(db, request, user.id, _idem, status.HTTP_201_CREATED, _out)
+    return _out
 
 
 def _evidence_free_gb() -> float:
@@ -416,6 +430,7 @@ def submit_inspection(body: SubmitInspectionRequest,
 @router.post("/inspections/{inspection_id}/scans",
               status_code=status.HTTP_201_CREATED)
 def create_scan(body: CreateScanRequest,
+                request: Request,
                 insp: Inspection = Depends(owned_inspection),
                 user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
@@ -424,11 +439,24 @@ def create_scan(body: CreateScanRequest,
     The rule-provenance columns are NOT NULL, so they are stamped now with the
     catalogue in force; the assess endpoint overwrites them with the exact set
     it actually ran against.
+
+    Idempotency-Key replay (09 T14): same contract as POST /inspections — the
+    sync queue retries this POST with the same key, so a lost response must
+    not mint a second scan row.
     """
+    from fastapi.responses import JSONResponse
+    from idempotency import close_idempotent, idempotency_key, replay_or_open
     from sqlalchemy.exc import IntegrityError
     if insp.status == "submitted":
         raise HTTPException(status.HTTP_409_CONFLICT,
                             detail="Inspection already submitted; scans are frozen")
+
+    _idem = idempotency_key(request)
+    _stored, _is_new = replay_or_open(db, request, user.id, _idem)
+    if not _is_new:
+        _sc, _body = _stored
+        return JSONResponse(status_code=_sc, content=_body)
+
     from rules_engine import catalog_hash
 
     g = body.geometry
@@ -464,6 +492,8 @@ def create_scan(body: CreateScanRequest,
     append_audit(db, inspection_id=insp.id, scan_id=scan.id, user_id=user.id,
                  action="scan_created",
                  new_value=body.commodity_generic or "unidentified")
-    return {"scan_id": scan.id, "inspection_id": insp.id,
+    _out = {"scan_id": scan.id, "inspection_id": insp.id,
             "overall_result": scan.overall_result,
             "checks_total": scan.checks_total}
+    close_idempotent(db, request, user.id, _idem, status.HTTP_201_CREATED, _out)
+    return _out

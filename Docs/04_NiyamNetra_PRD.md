@@ -182,7 +182,7 @@ Order, with phase 1 first because scope must be settled before anything is asses
 
 | # | Check | Phase | Subject | Provision | Halts |
 |---|---|---|---|---|---|
-| 1 | CHK03 | 1 | Chapter II applicability — over 25 kg/25 L, industrial, institutional (`packed_in_presence` stays IN-SCOPE per `_RETAIL_TYPES`) | Rule 3 | all |
+| 1 | CHK03 | 1 | Chapter II applicability — over 25 kg/25 L, industrial, institutional (`packed_in_presence` is OUT of scope per `_RETAIL_TYPES = {retail_sale}`) | Rule 3 | all |
 | 2 | CHK02 | 1 | Small-package exemption, 10 g / 10 ml, with the tobacco carve-out | Rule 26(a) | all |
 | 3 | CHK14 | 1 | Medical device → Medical Devices Rules 2017 | Rule 2(h) proviso | phase 3 |
 | 4 | CHK01 | 2 | All Rule 6(1)(a)–(g) and 6(2) declarations present | Rule 6 | — |

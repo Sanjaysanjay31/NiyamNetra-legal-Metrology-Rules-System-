@@ -232,8 +232,10 @@ inputs      operator.transaction_type in {retail_sale, wholesale, institutional,
             operator.commodity_group (cement | fertiliser | agri_produce | other)
 precondition  none - always runnable
 logic
-    if transaction_type == packed_in_presence -> IN SCOPE
-       "made up in the purchaser's presence at retail; Chapter II applies (matches _RETAIL_TYPES in routers/inspections.py)"
+    if transaction_type == packed_in_presence -> OUT OF SCOPE
+       "made up in the purchaser's presence, exempt from the pre-packaged
+        commodity rules (matches _RETAIL_TYPES = {retail_sale} in
+        routers/inspections.py and OUT_OF_SCOPE_TRANSACTIONS in rules_engine)"
     if transaction_type in {institutional, industrial} -> EXCLUDED
        "package for {type} consumers; Chapter II does not apply"
     if qty > 25 kg or 25 L:

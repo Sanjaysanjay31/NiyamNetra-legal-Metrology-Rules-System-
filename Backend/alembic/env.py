@@ -23,14 +23,21 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Inject the URL at runtime; the .env is the single source of truth.
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# As a DEFAULT only: a caller that set sqlalchemy.url explicitly (tests pass
+# an isolated database URL via alembic.Config) must get the database it asked
+# for. This line previously overwrote every explicit value unconditionally, so
+# `command.upgrade` in the test suite migrated one database while the tests
+# inspected another — silently empty, and every assertion on real rows was
+# really running against whatever settings.DATABASE_URL happened to be.
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # Metadata that 'autogenerate' compares against.
 target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode, emitting SQL without a DBAPI connection."""
-    url = settings.DATABASE_URL
+    url = config.get_main_option("sqlalchemy.url") or settings.DATABASE_URL
     context.configure(
         url=url,
         target_metadata=target_metadata,
