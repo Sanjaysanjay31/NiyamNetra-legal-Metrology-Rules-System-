@@ -21,10 +21,8 @@
  * decision that belongs in the audit trail with intent attached.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight, Filter, Info, MoreVertical, Pencil, Search, Smartphone, UserPlus } from 'lucide-react'
-import { Link } from 'react-router-dom'
-import { format, parseISO } from 'date-fns'
+import { useMemo, useState } from 'react'
+import { Info, Pencil, Search, Smartphone, UserPlus } from 'lucide-react'
 import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDebounced, useDocumentTitle, useMutation, useResource } from '../lib/hooks'
@@ -34,13 +32,15 @@ import {
   Callout,
   Card,
   Checkbox,
+  DemoChip,
   EmptyState,
   Field,
   Input,
   Modal,
+  PageHeader,
   Pill,
   RadioCards,
-  StatusBadge,
+  SectionTitle,
   Table,
   Td,
   Textarea,
@@ -55,31 +55,6 @@ const ROLE_OPTIONS = [
 ]
 const ROLE_LABEL = { admin: 'Administrator', inspector: 'Inspector' }
 
-const STATUS_OPTIONS = [
-  { value: 'all', label: 'All' },
-  { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'Inactive' },
-]
-
-const AREA_FALLBACK = []
-
-const PAGE_SIZE = 7
-
-function joinedOn(u) {
-  if (u?.joined_on) return u.joined_on
-  if (u?.created_at) return u.created_at
-  return null
-}
-
-function joinLabel(s) {
-  if (!s) return '—'
-  try {
-    return format(parseISO(s), 'd MMM yyyy')
-  } catch {
-    return s
-  }
-}
-
 export default function Inspectors() {
   const { t } = useI18n()
   useDocumentTitle(t('admin.users'))
@@ -91,79 +66,23 @@ export default function Inspectors() {
   })
   const rows = list.data ?? usersFixture
 
-  /* Server-side accepts jurisdiction via /admin/users; area and status filtering
-     here is applied on top so the URL is the source of truth, the table is what
-     the user sees, and live results still narrow correctly. */
   const [qRaw, setQRaw] = useState('')
   const q = useDebounced(qRaw, 200)
-  const [area, setArea] = useState('all')
-  const [status, setStatus] = useState('all')
-
-  const [page, setPage] = useState(1)
-  const [menuFor, setMenuFor] = useState(null)
-
   const [createOpen, setCreateOpen] = useState(false)
   const [editUser, setEditUser] = useState(null)
   const [releaseUser, setReleaseUser] = useState(null)
 
-  const areas = useMemo(() => {
-    const set = new Set(AREA_FALLBACK)
-    rows.forEach((u) => {
-      if (u.jurisdiction) set.add(u.jurisdiction)
-    })
-    return Array.from(set).sort()
-  }, [rows])
-
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    return rows.filter((u) => {
-      if (area !== 'all' && u.jurisdiction !== area) return false
-      if (status === 'active' && !u.is_active) return false
-      if (status === 'inactive' && u.is_active) return false
-      if (!needle) return true
-      return [u.full_name, u.employee_id, u.jurisdiction]
+    if (!needle) return rows
+    return rows.filter((u) =>
+      [u.full_name, u.employee_id, u.jurisdiction]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(needle))
-    })
-  }, [rows, q, area, status])
+    )
+  }, [rows, q])
 
-  /* Reset to the first page when the filter result set shrinks past the
-     current offset, so the footer count never lies. */
-  useEffect(() => {
-    const max = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-    if (page > max) setPage(1)
-  }, [filtered.length, page])
-
-  const pageRows = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE
-    return filtered.slice(start, start + PAGE_SIZE)
-  }, [filtered, page])
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const startIdx = filtered.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
-  const endIdx = Math.min(filtered.length, page * PAGE_SIZE)
-
-  function areaOf(u) {
-    return u.jurisdiction || '—'
-  }
-
-  function inspectionsOf(u) {
-    if (typeof u.inspections === 'number') return u.inspections
-    if (typeof u.inspection_count === 'number') return u.inspection_count
-    return 0
-  }
-
-  function applyFilters(e) {
-    e?.preventDefault?.()
-    setPage(1)
-  }
-
-  function resetFilters() {
-    setQRaw('')
-    setArea('all')
-    setStatus('all')
-    setPage(1)
-  }
+  const active = rows.filter((u) => u.is_active).length
 
   function afterChange(message) {
     list.reload()
@@ -171,202 +90,113 @@ export default function Inspectors() {
   }
 
   return (
-    <div className="nn-admin-page mx-auto max-w-[1200px]">
-      {/* Breadcrumb + title + add action */}
-      <nav className="mb-2 flex items-center gap-1 text-caption text-ink-3" aria-label="Breadcrumb">
-        <Link to="/admin" className="hover:text-ink-2">
-          Dashboard
-        </Link>
-        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
-        <span className="font-medium text-ink-2">Inspectors</span>
-      </nav>
-
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-h1 font-semibold tracking-tight text-ink">Inspectors</h1>
-          <p className="mt-1 text-small text-ink-2">Field officers and administrators with portal access.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button icon={UserPlus} onClick={() => setCreateOpen(true)}>
-            Add Inspector
-          </Button>
-        </div>
-      </div>
-
-      {/* Filter bar */}
-      <Card className="mt-5 p-4 sm:p-5">
-        <form
-          onSubmit={applyFilters}
-          className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-[1fr_180px_180px_auto]"
-        >
-          <Field label="Search by Employee ID / Name">
-            {(props) => (
-              <Input
-                {...props}
-                icon={Search}
-                value={qRaw}
-                onChange={(e) => setQRaw(e.target.value)}
-                placeholder="e.g. INS102 or Ravi"
-              />
-            )}
-          </Field>
-          <Field label="All Areas">
-            {(props) => (
-              <select
-                {...props}
-                value={area}
-                onChange={(e) => setArea(e.target.value)}
-                className="nn-select"
-              >
-                <option value="all">All Areas</option>
-                {areas.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-          <Field label="Status">
-            {(props) => (
-              <select
-                {...props}
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="nn-select"
-              >
-                {STATUS_OPTIONS.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-          <div className="flex items-end gap-2">
-            <Button type="submit" variant="primary" icon={Filter} className="w-full md:w-auto">
-              Apply filters
+    <div className="mx-auto max-w-[1040px] px-4 py-8 sm:px-6">
+      <PageHeader
+        eyebrow={t('nav.inspectors')}
+        title={t('admin.users')}
+        subtitle="Everyone who can sign in, with the account actions the server allows an administrator to take."
+        actions={
+          <div className="flex items-center gap-2">
+            {list.demo && <DemoChip />}
+            <Button icon={UserPlus} onClick={() => setCreateOpen(true)}>
+              {t('admin.addUser')}
             </Button>
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="text-caption font-medium text-ink-3 underline-offset-2 hover:text-ink-2 hover:underline"
-            >
-              Reset
-            </button>
           </div>
-        </form>
-      </Card>
+        }
+      />
 
-      {/* Table */}
-      <Card className="mt-5 p-0">
-        <div className="overflow-x-auto">
-          <Table className="min-w-[860px]" caption={`${filtered.length} inspector${filtered.length === 1 ? '' : 's'}.`}>
-            <thead>
-              <tr>
-                <Th>Employee ID</Th>
-                <Th>Name</Th>
-                <Th>Area</Th>
-                <Th align="right">Inspections</Th>
-                <Th>Joined On</Th>
-                <Th>Status</Th>
-                <Th align="right">Action</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.length === 0 ? (
+      <Card className="mt-6 p-5 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-small text-ink-2">
+            <span className="tabular-nums font-medium text-ink">{active}</span> active of{' '}
+            <span className="tabular-nums">{rows.length}</span>{' '}
+            {rows.length === 1 ? 'account' : 'accounts'}
+          </p>
+          <div className="w-full sm:max-w-xs">
+            <Field label={t('common.search')} hint="Filters this list in the browser by name, ID or jurisdiction.">
+              {(props) => (
+                <Input
+                  {...props}
+                  icon={Search}
+                  value={qRaw}
+                  onChange={(e) => setQRaw(e.target.value)}
+                  placeholder="Name, employee ID, jurisdiction"
+                />
+              )}
+            </Field>
+          </div>
+        </div>
+
+        <div className="mt-5">
+          {filtered.length === 0 ? (
+            <EmptyState
+              title={q.trim() ? 'No matches' : t('common.empty')}
+              body={q.trim() ? 'No account matches that search.' : 'No accounts exist yet.'}
+            />
+          ) : (
+            <Table caption={`${filtered.length} of ${rows.length} accounts.`}>
+              <thead>
                 <tr>
-                  <td colSpan={7}>
-                    <EmptyState
-                      title="No inspectors match"
-                      body="Adjust the search or filters to see officers in the roster."
-                    />
-                  </td>
+                  <Th>Officer</Th>
+                  <Th>{t('admin.role')}</Th>
+                  <Th>{t('admin.jurisdiction')}</Th>
+                  <Th>Status</Th>
+                  <Th align="right">Actions</Th>
                 </tr>
-              ) : (
-                pageRows.map((u) => (
+              </thead>
+              <tbody>
+                {filtered.map((u) => (
                   <Tr key={u.id}>
                     <Td>
-                      <span className="nn-mono text-small text-ink">{u.employee_id}</span>
-                    </Td>
-                    <Td>
                       <span className="block text-small font-medium text-ink">{u.full_name}</span>
-                      <span className="text-caption text-ink-3">{ROLE_LABEL[u.role] ?? u.role}</span>
+                      <span className="nn-mono text-caption text-ink-3">{u.employee_id}</span>
                     </Td>
-                    <Td>{areaOf(u)}</Td>
-                    <Td align="right">
-                      <span className="nn-mono tabular-nums">{inspectionsOf(u)}</span>
-                    </Td>
+                    <Td>{ROLE_LABEL[u.role] ?? u.role}</Td>
+                    <Td>{u.jurisdiction || <span className="text-ink-3">—</span>}</Td>
                     <Td>
-                      <span className="text-small text-ink-2">{joinLabel(joinedOn(u))}</span>
-                    </Td>
-                    <Td>
-                      {u.is_active ? (
-                        <StatusBadge family="pass" label="Active" />
-                      ) : (
-                        <StatusBadge family="na" label="Inactive" />
-                      )}
+                      <Pill family={u.is_active ? 'pass' : 'na'}>
+                        {u.is_active ? 'Active' : 'Inactive'}
+                      </Pill>
                     </Td>
                     <Td align="right">
-                      <RowMenu
-                        user={u}
-                        open={menuFor === u.id}
-                        onOpenChange={(open) => setMenuFor(open ? u.id : null)}
-                        onEdit={() => {
-                          setMenuFor(null)
-                          setEditUser(u)
-                        }}
-                        onRelease={() => {
-                          setMenuFor(null)
-                          setReleaseUser(u)
-                        }}
-                      />
+                      <div className="inline-flex items-center gap-2">
+                        <Button size="sm" variant="secondary" icon={Pencil} onClick={() => setEditUser(u)}>
+                          Edit
+                        </Button>
+                        <Button size="sm" variant="ghost" icon={Smartphone} onClick={() => setReleaseUser(u)}>
+                          Release device
+                        </Button>
+                      </div>
                     </Td>
                   </Tr>
-                ))
-              )}
-            </tbody>
-          </Table>
-        </div>
-
-        {/* Footer */}
-        <div className="flex flex-col items-start justify-between gap-2 border-t border-divider px-4 py-3 text-caption text-ink-2 sm:flex-row sm:items-center">
-          <p>
-            Showing <span className="font-medium text-ink">{startIdx}</span>–
-            <span className="font-medium text-ink">{endIdx}</span> of{' '}
-            <span className="font-medium text-ink">{filtered.length}</span>
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={page <= 1}
-              disabledReason="You are on the first page."
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Previous
-            </Button>
-            <span className="text-caption text-ink-2 tabular-nums">
-              Page {page} of {totalPages}
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={page >= totalPages}
-              disabledReason="You are on the last page."
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-          </div>
+                ))}
+              </tbody>
+            </Table>
+          )}
         </div>
       </Card>
 
-      <Callout family="info" className="mt-5" icon={Info} title="What the list does not show">
-        User records carry no email, phone or device field, so the roster can only
-        offer what the response shape carries. Account deactivation locks the
-        officer out at the next sign-in; their history is preserved either way.
-      </Callout>
+      {/* ---- The honest boundary. ---- */}
+      <Card className="mt-6 p-5 sm:p-6">
+        <SectionTitle>What this roster cannot show or do</SectionTitle>
+        <ul className="mt-3 space-y-2 text-small text-ink-2">
+          <li className="flex gap-2">
+            <Info size={16} strokeWidth={1.8} className="mt-0.5 shrink-0 text-ink-3" aria-hidden="true" />
+            Email and phone are accepted when creating or editing an account, but the roster response
+            does not return them, so they cannot be listed here.
+          </li>
+          <li className="flex gap-2">
+            <Info size={16} strokeWidth={1.8} className="mt-0.5 shrink-0 text-ink-3" aria-hidden="true" />
+            Whether an officer currently has a device bound is not part of the account record, so the
+            release action is always offered rather than reflecting a live binding.
+          </li>
+          <li className="flex gap-2">
+            <Info size={16} strokeWidth={1.8} className="mt-0.5 shrink-0 text-ink-3" aria-hidden="true" />
+            There is no way to set another officer's password, and no delete: an officer with history
+            is deactivated, keeping every audit reference intact.
+          </li>
+        </ul>
+      </Card>
 
       {createOpen && (
         <CreateUserModal
@@ -396,67 +226,6 @@ export default function Inspectors() {
             afterChange('Device binding released')
           }}
         />
-      )}
-    </div>
-  )
-}
-
-/** Three-dot menu anchored to a button; closes on outside click or Escape. */
-function RowMenu({ user, open, onOpenChange, onEdit, onRelease }) {
-  const wrapRef = useRef(null)
-
-  useEffect(() => {
-    if (!open) return
-    function onDoc(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) onOpenChange(false)
-    }
-    function onKey(e) {
-      if (e.key === 'Escape') onOpenChange(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open, onOpenChange])
-
-  return (
-    <div ref={wrapRef} className="relative inline-block">
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`Actions for ${user.full_name}`}
-        onClick={() => onOpenChange(!open)}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-pill text-ink-2 hover:bg-surface-2 hover:text-ink"
-      >
-        <MoreVertical className="h-4 w-4" aria-hidden="true" />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 z-10 mt-1 w-44 origin-top-right rounded-card border border-divider bg-surface shadow-card"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={onEdit}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-small text-ink hover:bg-surface-2"
-          >
-            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-            Edit account
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={onRelease}
-            className="flex w-full items-center gap-2 border-t border-divider px-3 py-2 text-left text-small text-ink hover:bg-surface-2"
-          >
-            <Smartphone className="h-3.5 w-3.5" aria-hidden="true" />
-            Release device
-          </button>
-        </div>
       )}
     </div>
   )
@@ -503,7 +272,7 @@ function CreateUserModal({ onClose, onDone }) {
       description="Creates a sign-in account. The officer sets no password themselves — you set an initial one, and they change it on first sign-in."
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} disabled={create.pending} disabledReason="Saving in progress.">
+          <Button variant="ghost" onClick={onClose} disabled={create.pending}>
             Cancel
           </Button>
           <Button
@@ -611,7 +380,7 @@ function EditUserModal({ user, onClose, onDone }) {
       description={`Employee ID ${user.employee_id}. The employee ID and password cannot be changed here.`}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} disabled={update.pending} disabledReason="Saving in progress.">
+          <Button variant="ghost" onClick={onClose} disabled={update.pending}>
             {t('common.cancel')}
           </Button>
           <Button
@@ -726,7 +495,7 @@ function ReleaseDeviceModal({ user, onClose, onDone }) {
       description={`${user.full_name} · ${user.employee_id}`}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} disabled={release.pending} disabledReason="Releasing in progress.">
+          <Button variant="ghost" onClick={onClose} disabled={release.pending}>
             {t('common.cancel')}
           </Button>
           <Button
@@ -779,3 +548,7 @@ function ReleaseDeviceModal({ user, onClose, onDone }) {
     </Modal>
   )
 }
+
+
+
+

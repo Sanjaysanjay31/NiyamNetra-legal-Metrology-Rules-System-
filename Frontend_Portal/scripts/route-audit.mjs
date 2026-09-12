@@ -33,11 +33,9 @@ function sources(dir = SRC) {
   return out
 }
 
-/* '/a/${x}/b/' → '/a/:_/b' so a template target compares against a param route.
-   Query strings (?store_id=...) are stripped — they are filters, not routes. */
+/* '/a/${x}/b/' → '/a/:_/b' so a template target compares against a param route. */
 function norm(path) {
-  const noQuery = path.split('?')[0]
-  const n = noQuery.replace(/\$\{[^}]*\}/g, ':_').replace(/\/+$/, '')
+  const n = path.replace(/\$\{[^}]*\}/g, ':_').replace(/\/+$/, '')
   return n === '' ? '/' : n
 }
 

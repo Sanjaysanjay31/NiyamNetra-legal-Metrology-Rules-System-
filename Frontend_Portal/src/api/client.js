@@ -203,7 +203,6 @@ export const endpoints = {
 
   inspections: {
     stores: (params) => unwrap(api.get('/stores', { params })),
-    createStore: (body) => unwrap(api.post('/stores', body)),
     list: (params) => unwrap(api.get('/inspections', { params })),
     get: (id) => unwrap(api.get(`/inspections/${id}`)),
     create: (body) => unwrap(api.post('/inspections', body)),
@@ -283,22 +282,6 @@ export const endpoints = {
       unwrap(api.patch(`/admin/findings/${findingId}`, body)),
     audit: (params) => unwrap(api.get('/admin/audit', { params })),
     rules: () => unwrap(api.get('/admin/rules')),
-    /* GET /admin/rule-versions — every gazette version the engine knows, with
-       its effective window. The current version (the one rules_meta.rules_as_at
-       points at) has effective_to: null. */
-    ruleVersions: () => unwrap(api.get('/admin/rule-versions')),
-    /* /admin/violations takes the same date / store / inspector / rule-version
-       parameters the inspections list does, and returns a Top-Violations
-       rollup alongside the per-record list. The list is unpaged on the
-       server; sorting and paging are this device's job, named in the
-       screen caption so the absence of a "page 2" is not silent. */
-    violations: (params) => unwrap(api.get('/admin/violations', { params })),
-    /* /admin/repeat-offenders returns a rollup of manufacturers that have
-       breached the three-store threshold, each with their full per-violation
-       history. The five search modes the UI exposes (manufacturer, brand,
-       shop, region, declaration type) are applied client-side; the live
-       router does not yet accept any of them. */
-    repeatOffenders: (params) => unwrap(api.get('/admin/repeat-offenders', { params })),
   },
 
   health: () => unwrap(api.get('/health')),

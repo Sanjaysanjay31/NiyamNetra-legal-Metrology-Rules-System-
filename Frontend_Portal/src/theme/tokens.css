@@ -1,106 +1,270 @@
 /* ===========================================================================
-   NiyamNetra design tokens — "Registry", a single light government theme
+   NiyamNetra design tokens
    ---------------------------------------------------------------------------
-   One theme, no modes: white surfaces on a quiet neutral canvas, navy ink and
-   navy chrome, and one navy accent for interactive state. Status hues are
-   deliberately subtle — a tinted fill, a hairline border, a dark readable
-   label, and a slightly stronger graphic tone reserved for icons, bars and
-   chart series.
+   Every ratio in this file was computed with the WCAG 2.1 relative-luminance
+   formula by scripts/contrast-test.mjs, which fails the build if any pair
+   regresses. Do not edit a colour without re-running `npm run test:contrast`.
 
-   Every ratio annotated below is recomputed by scripts/contrast-test.mjs,
-   which fails the build if any gated pair regresses. Thresholds:
-     text on its background  >= 4.5:1 (WCAG 1.4.3, normal text)
-     control boundary, chart series, status icon, focus ring
-                             >= 3.0:1 (WCAG 1.4.11, non-text)
-     dividers and badge outlines are exempt — decorative, carry no meaning.
-     State is always carried by icon + word + text colour, never tint alone.
+   Light values are transcribed from 08_UI_DESIGN.md SS2.1 and must not be
+   substituted. Dark values are derived here, from Niyam Blue rather than from
+   neutral grey, so the product reads as the same brand at night. 08 SS6
+   deferred dark mode on the grounds that "the contrast table would need
+   recomputing, and shipping it unmeasured would repeat this document's
+   original mistake" - so it was recomputed. See SS2.1a of that document.
+
+   Thresholds applied:
+     text on its background          >= 4.5:1   (WCAG 1.4.3, normal text)
+     control boundary, chart series,
+     status icon, focus ring         >= 3.0:1   (WCAG 1.4.11, non-text)
+     dividers and badge outlines     exempt - decorative, carry no meaning.
+       The shipped light theme already runs these at 1.25-1.48:1, so the dark
+       theme matches that treatment rather than claiming a ratio it lacks.
+       State is carried by icon + word + text colour, per 08 SS2.4.
    =========================================================================== */
 
 :root {
   /* --- brand ------------------------------------------------------------- */
-  --nn-navy: #0f2a44;              /* 14.63:1 on white — primary ink & fills  */
-  --nn-navy-hover: #0b2138;        /* pressed / hover fill                    */
-  --nn-teal: #0e7490;              /*  5.36:1 on white — secondary accent     */
+  --nn-navy: #0f2a44;              /* 14.63:1 on white */
+  --nn-navy-hover: #0c2236;
+  --nn-teal: #0e7490;              /*  5.36:1 on white */
+  --nn-saffron: #f59e0b;           /*  2.15:1 on white - DECORATION ONLY      */
+  --nn-saffron-on-navy: #f59e0b;   /*  6.81:1 on navy - may carry a label     */
+  --nn-saffron-ink: #0f172a;       /*  8.31:1 on a saffron fill              */
 
   /* --- canvas and surfaces ---------------------------------------------- */
-  --nn-bg: #eef1f6;                /* the app canvas — soft cool grey         */
-  --nn-surface: #fbfcfd;           /* cards, panels, the header — tinted off  */
-  --nn-surface-2: #f3f5f9;         /* raised rows, hover fills                */
-  --nn-surface-sunken: #eaeef4;    /* code/OCR snippet wells, disabled fills  */
-  --nn-rail: #0f2a44;              /* the fixed navigation sidebar            */
-  --nn-rail-hover: #1a3a5f;        /* sidebar hover                           */
-  --nn-rail-label: #b6c2d4;        /*  8.12:1 on the rail                     */
-  --nn-rail-active: #1d4ed8;       /* the active item's blue highlight        */
+  --nn-bg: #f8fafc;
+  --nn-surface: #ffffff;
+  --nn-surface-2: #f8fafc;         /* raised rows, hover fills               */
+  --nn-surface-sunken: #f1f5f9;    /* code/OCR snippet wells                 */
+  --nn-rail: #0f2a44;              /* admin sidebar                          */
+  --nn-rail-hover: #16375a;
+  --nn-rail-label: #cbd5e1;        /*  9.86:1 on the rail                    */
 
   /* --- lines ------------------------------------------------------------- */
-  --nn-divider: #d8dee8;           /* decorative hairlines                    */
-  --nn-control: #7d8da1;           /*  3.39:1 on white — form boundaries      */
+  --nn-divider: #e2e8f0;           /*  1.23:1 - decorative only              */
+  --nn-control: #7e8ea3;           /*  3.34:1 on white - form boundaries     */
 
   /* --- text -------------------------------------------------------------- */
-  --nn-text: #101828;              /* 17.74:1 on white                        */
-  --nn-text-2: #475467;            /*  7.70:1 on white                        */
-  --nn-text-3: #667085;            /*  4.97:1 on white                        */
+  --nn-text: #0f172a;              /* 17.85:1 on white                       */
+  --nn-text-2: #475569;            /*  7.58:1 on white                       */
+  --nn-text-3: #64748b;            /*  4.76:1 on white                       */
   --nn-text-on-dark: #ffffff;
 
-  /* --- semantic verdicts: fill / border / text / graphic ----------------- */
-  --nn-pass-fill: #ecfdf3;
-  --nn-pass-border: #abefc6;       /* decorative                              */
-  --nn-pass-text: #067647;         /*  5.39:1 on its fill                     */
-  --nn-pass-graphic: #039855;      /*  3.74:1 on white — icons, bars          */
+  /* --- semantic states: fill / border / text ---------------------------- */
+  --nn-pass-fill: #ecfdf5;
+  --nn-pass-border: #a7f3d0;       /*  1.28:1 - decorative                   */
+  --nn-pass-text: #047857;         /*  5.21:1 on its fill                    */
+  --nn-pass-graphic: #059669;      /*  3.77:1 on white - icons, bars         */
 
-  --nn-violation-fill: #fef3f2;
-  --nn-violation-border: #fecdca;  /* decorative                              */
-  --nn-violation-text: #b42318;    /*  6.06:1 on its fill                     */
-  --nn-violation-graphic: #d92d20; /*  4.83:1 on white                        */
+  --nn-violation-fill: #fef2f2;
+  --nn-violation-border: #fecaca;  /*  1.45:1 - decorative                   */
+  --nn-violation-text: #b91c1c;    /*  5.91:1 on its fill                    */
+  --nn-violation-graphic: #dc2626; /*  4.83:1 on white                       */
 
-  --nn-review-fill: #fffaeb;
-  --nn-review-border: #fedf89;     /* decorative                              */
-  --nn-review-text: #b54708;       /*  5.20:1 on its fill                     */
-  --nn-review-graphic: #dc6803;    /*  3.49:1 on white                        */
+  --nn-review-fill: #fffbeb;
+  --nn-review-border: #fde68a;     /*  1.25:1 - decorative                   */
+  --nn-review-text: #b45309;       /*  4.84:1 on its fill                    */
+  --nn-review-graphic: #d97706;    /*  3.19:1 on white                       */
 
-  --nn-na-fill: #f2f4f7;
-  --nn-na-border: #e4e7ec;         /* decorative                              */
-  --nn-na-text: #475467;           /*  6.97:1 on its fill                     */
-  --nn-na-graphic: #667085;        /*  4.97:1 on white                        */
+  --nn-na-fill: #f1f5f9;
+  --nn-na-border: #cbd5e1;         /*  1.48:1 - decorative                   */
+  --nn-na-text: #475569;           /*  6.92:1 on its fill                    */
+  --nn-na-graphic: #64748b;        /*  4.76:1 on white                       */
 
-  --nn-info-fill: #eff8ff;
-  --nn-info-border: #b2ddff;       /* decorative                              */
-  --nn-info-text: #175cd3;         /*  5.58:1 on its fill                     */
-  --nn-info-graphic: #2e90fa;      /*  3.24:1 on white                        */
+  --nn-info-fill: #f0f9ff;
+  --nn-info-border: #bae6fd;       /*  1.33:1 - decorative                   */
+  --nn-info-text: #0369a1;         /*  5.57:1 on its fill                    */
+  --nn-info-graphic: #0284c7;      /*  3.84:1 on white                       */
 
-  --nn-offline-fill: #fffaeb;
-  --nn-offline-text: #b54708;      /*  5.20:1 on its fill                     */
+  --nn-offline-fill: #fffbeb;
+  --nn-offline-text: #92400e;      /*  6.84:1 on its fill                    */
 
-  /* --- the interactive accent: navy --------------------------------------- */
-  --nn-accent: #0f2a44;            /* 14.63:1 on white                        */
-  --nn-accent-text: #0f2a44;       /* 14.63:1 on white, on canvas             */
-  --nn-accent-on: #ffffff;         /* 14.63:1 on the accent fill              */
-  --nn-accent-soft: #eef2f6;       /* text on soft: 13.02:1                   */
-  --nn-accent-ring: #2160c4;       /*  5.94:1 on white — the focus ring       */
+  /* --- chart series, all >= 3:1 on white -------------------------------- */
+  --nn-chart-1: #0e7490;
+  --nn-chart-2: #b91c1c;
+  --nn-chart-3: #b45309;
+  --nn-chart-4: #047857;
+  --nn-chart-5: #7c3aed;
+  --nn-chart-grid: #e2e8f0;
 
-  /* --- charts, every series >= 3:1 on white ------------------------------- */
-  --nn-chart-1: #2160c4;           /*  5.94:1 — MRP / blue                    */
-  --nn-chart-2: #039855;           /*  3.74:1 — Consumer care / green        */
-  --nn-chart-3: #dc6803;           /*  3.49:1 — Date / orange                 */
-  --nn-chart-4: #b42318;           /*  6.57:1 — Font / red                    */
-  --nn-chart-5: #6941c6;           /*  6.63:1 — Manufacturer / purple         */
-  --nn-chart-6: #0e7490;           /*  5.36:1 — Net quantity / teal           */
-  --nn-chart-7: #475467;           /*  7.70:1 — Placement / ink-2             */
-  --nn-chart-8: #94a3b8;           /*  3.02:1 — Others / slate                */
-  --nn-chart-grid: #eaecf0;        /* decorative                              */
+  /* --- elevation --------------------------------------------------------- */
+  --nn-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.05);
+  --nn-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.08), 0 10px 25px rgba(15, 42, 68, 0.08);
+  --nn-shadow-modal: 0 20px 50px rgba(0, 0, 0, 0.15);
+  --nn-ring-halo: rgba(14, 116, 144, 0.12);
 
-  /* --- elevation: quiet, paper-like --------------------------------------- */
-  --nn-shadow-card: 0 1px 2px rgba(15, 42, 68, 0.04),
-    0 2px 6px -2px rgba(15, 42, 68, 0.06);
-  --nn-shadow-hover: 0 4px 8px -2px rgba(15, 42, 68, 0.12),
-    0 2px 4px -2px rgba(15, 42, 68, 0.08);
-  --nn-shadow-modal: 0 12px 32px -8px rgba(15, 42, 68, 0.18),
-    0 4px 8px -4px rgba(15, 42, 68, 0.08);
-  --nn-ring-halo: rgba(33, 96, 196, 0.14);
-
-  /* --- shape --------------------------------------------------------------- */
-  --nn-r-sm: 6px;
-  --nn-r-card: 10px;
-  --nn-r-hero: 14px;
+  /* --- radius, per 08 SS2.3 --------------------------------------------- */
+  --nn-r-sm: 8px;
+  --nn-r-card: 12px;
+  --nn-r-hero: 16px;
   --nn-r-pill: 9999px;
+
+  /* --- the login panel gradient ----------------------------------------- */
+  --nn-brand-gradient: linear-gradient(135deg, #0f2a44 0%, #0e7490 100%);
+}
+
+/* ===========================================================================
+   DARK THEME
+   Derived from Niyam Blue, not from neutral grey: the canvas is a deep navy
+   ink so the night interface is recognisably the same product. Measured by
+   scripts/contrast-test.mjs; ratios below are against --nn-surface unless the
+   comment says otherwise.
+   =========================================================================== */
+
+[data-theme='dark'] {
+  --nn-navy: #1b3a5c;
+  --nn-navy-hover: #234a73;
+  --nn-teal: #22b8d4;              /*  7.22:1 on surface                     */
+  --nn-saffron: #f59e0b;           /*  7.95:1 on surface - carries text here */
+  --nn-saffron-on-navy: #fbbf24;
+  --nn-saffron-ink: #0f172a;
+
+  --nn-bg: #0a1120;
+  --nn-surface: #111c2e;
+  --nn-surface-2: #18263c;
+  --nn-surface-sunken: #0d1727;
+  --nn-rail: #0b1524;
+  --nn-rail-hover: #18263c;
+  --nn-rail-label: #b7c4d8;        /* 10.38:1 on the rail                    */
+
+  --nn-divider: #26364f;           /*  1.40:1 - decorative, matches light    */
+  --nn-control: #63779a;           /*  3.77:1 on surface - form boundaries   */
+
+  --nn-text: #e9eff8;              /* 14.78:1 on surface, 16.31:1 on canvas  */
+  --nn-text-2: #b7c4d8;            /*  9.68:1 on surface                     */
+  --nn-text-3: #93a3bc;            /*  6.67:1 on surface, 5.94:1 on raised   */
+  --nn-text-on-dark: #ffffff;
+
+  /* Semantic states invert: a dark tinted fill with a light label. Text is
+     verified against BOTH its own fill and the plain surface, because these
+     colours are also used for inline text outside a badge. */
+  --nn-pass-fill: #0a2a20;
+  --nn-pass-border: #2a7d5e;       /*  3.07:1 on its fill - definition       */
+  --nn-pass-text: #6fe7b6;         /* 10.10:1 on fill, 11.21:1 on surface    */
+  --nn-pass-graphic: #34d399;      /*  8.89:1 on surface                     */
+
+  --nn-violation-fill: #2c1215;
+  --nn-violation-border: #a63a3f;  /*  2.74:1 on its fill - definition       */
+  --nn-violation-text: #fca5a5;    /*  9.19:1 on fill,  9.00:1 on surface    */
+  --nn-violation-graphic: #f87171; /*  6.18:1 on surface                     */
+
+  --nn-review-fill: #2b1d06;
+  --nn-review-border: #a6741c;     /*  4.01:1 on its fill - definition       */
+  --nn-review-text: #fcd34d;       /* 11.37:1 on fill, 11.85:1 on surface    */
+  --nn-review-graphic: #fbbf24;    /* 10.23:1 on surface                     */
+
+  --nn-na-fill: #1b2637;
+  --nn-na-border: #465c79;         /*  2.22:1 on its fill - definition       */
+  --nn-na-text: #c6d1e2;           /*  9.88:1 on fill, 11.08:1 on surface    */
+  --nn-na-graphic: #93a3bc;        /*  6.67:1 on surface                     */
+
+  --nn-info-fill: #0a2334;
+  --nn-info-border: #26709b;       /*  2.97:1 on its fill - definition       */
+  --nn-info-text: #7dd3fc;         /*  9.67:1 on fill, 10.25:1 on surface    */
+  --nn-info-graphic: #38bdf8;      /*  7.97:1 on surface                     */
+
+  --nn-offline-fill: #2b1d06;
+  --nn-offline-text: #fcd34d;      /* 11.37:1 on its fill                    */
+
+  /* Chart series relit for a dark plot area; all >= 3:1 on surface. */
+  --nn-chart-1: #22b8d4;           /*  7.22:1                                */
+  --nn-chart-2: #f87171;           /*  6.18:1                                */
+  --nn-chart-3: #fbbf24;           /* 10.23:1                                */
+  --nn-chart-4: #34d399;           /*  8.89:1                                */
+  --nn-chart-5: #a78bfa;           /*  6.28:1                                */
+  --nn-chart-grid: #26364f;
+
+  /* Shadows do almost nothing on a dark canvas, so elevation is carried by
+     surface lightness. What remains is a hairline top highlight. */
+  --nn-shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 1px 2px rgba(0, 0, 0, 0.4);
+  --nn-shadow-hover: 0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 8px 24px rgba(0, 0, 0, 0.5);
+  --nn-shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.7);
+  --nn-ring-halo: rgba(34, 184, 212, 0.18);
+
+  --nn-brand-gradient: linear-gradient(135deg, #0b1524 0%, #0e4b5e 100%);
+}
+
+/* ===========================================================================
+   ACCENT SETS
+   ---------------------------------------------------------------------------
+   Four accents, each measured in both themes. An accent is not one colour but
+   five roles, because one hex cannot satisfy both thresholds: Saffron clears
+   3:1 as a graphic yet measures 2.15:1 as text on white, which is exactly the
+   failure 08 SS2.1 documents. So every accent declares:
+
+     --nn-accent        graphic tone   >= 3.0:1  (borders, bars, indicators)
+     --nn-accent-text   text tone      >= 4.5:1  (links, active labels)
+     --nn-accent-on     label sitting ON the accent fill      >= 4.5:1
+     --nn-accent-soft   tinted background for selected states
+     --nn-accent-ring   focus ring, 3px at 2px offset         >= 3.0:1
+
+   Teal is the default, so out of the box the focus ring is the #0E7490 at
+   5.36:1 that 08 SS3.1 specifies. The other accents keep that geometry with
+   their own measured tone.
+   =========================================================================== */
+
+/* --- Netra Teal - the default ------------------------------------------- */
+[data-accent='teal'] {
+  --nn-accent: #0e7490;            /*  5.36:1 on white                       */
+  --nn-accent-text: #0e7490;       /*  5.36:1 on white, 5.12:1 on canvas     */
+  --nn-accent-on: #ffffff;         /*  5.36:1 on the accent fill             */
+  --nn-accent-soft: #ecfeff;       /*  text on soft: 5.15:1                  */
+  --nn-accent-ring: #0e7490;
+}
+[data-theme='dark'][data-accent='teal'] {
+  --nn-accent: #22b8d4;            /*  7.22:1 on surface                     */
+  --nn-accent-text: #5fd4ec;       /*  9.85:1 on surface, 10.88:1 on canvas  */
+  --nn-accent-on: #04202b;         /*  7.12:1 on the accent fill             */
+  --nn-accent-soft: #0a2b36;       /*  text on soft: 8.58:1                  */
+  --nn-accent-ring: #38bedc;       /*  8.59:1 on canvas                      */
+}
+
+/* --- Saffron ------------------------------------------------------------- */
+[data-accent='saffron'] {
+  --nn-accent: #d97706;            /*  3.19:1 on white - the deeper amber,   */
+  --nn-accent-text: #b45309;       /*  5.02:1 on white - not #F59E0B, which  */
+  --nn-accent-on: #0f172a;         /*  5.60:1 on fill - is only 2.15 there   */
+  --nn-accent-soft: #fffbeb;       /*  text on soft: 4.84:1                  */
+  --nn-accent-ring: #b45309;       /*  5.02:1 on white                       */
+}
+[data-theme='dark'][data-accent='saffron'] {
+  --nn-accent: #f59e0b;            /*  7.95:1 on surface                     */
+  --nn-accent-text: #fbbf24;       /* 10.23:1 on surface, 11.29:1 on canvas  */
+  --nn-accent-on: #0f172a;         /*  8.31:1 on the accent fill             */
+  --nn-accent-soft: #2b1d06;       /*  text on soft: 9.82:1                  */
+  --nn-accent-ring: #fbbf24;
+}
+
+/* --- Indigo -------------------------------------------------------------- */
+[data-accent='indigo'] {
+  --nn-accent: #7c3aed;            /*  5.70:1 on white                       */
+  --nn-accent-text: #6d28d9;       /*  7.10:1 on white, 6.79:1 on canvas     */
+  --nn-accent-on: #ffffff;         /*  5.70:1 on the accent fill             */
+  --nn-accent-soft: #f5f3ff;       /*  text on soft: 6.48:1                  */
+  --nn-accent-ring: #6d28d9;
+}
+[data-theme='dark'][data-accent='indigo'] {
+  --nn-accent: #a78bfa;            /*  6.28:1 on surface                     */
+  --nn-accent-text: #c4b5fd;       /*  9.25:1 on surface, 10.21:1 on canvas  */
+  --nn-accent-on: #1b0b36;         /*  6.72:1 on the accent fill             */
+  --nn-accent-soft: #1e1440;       /*  text on soft: 9.25:1                  */
+  --nn-accent-ring: #a78bfa;
+}
+
+/* --- Evergreen ----------------------------------------------------------- */
+[data-accent='green'] {
+  --nn-accent: #047857;            /*  5.48:1 on white                       */
+  --nn-accent-text: #047857;       /*  5.48:1 on white, 5.24:1 on canvas     */
+  --nn-accent-on: #ffffff;         /*  5.48:1 on the accent fill             */
+  --nn-accent-soft: #ecfdf5;       /*  text on soft: 5.21:1                  */
+  --nn-accent-ring: #047857;
+}
+[data-theme='dark'][data-accent='green'] {
+  --nn-accent: #10b981;            /*  6.73:1 on surface                     */
+  --nn-accent-text: #4ade80;       /*  9.80:1 on surface, 10.82:1 on canvas  */
+  --nn-accent-on: #04231a;         /*  6.57:1 on the accent fill             */
+  --nn-accent-soft: #06291f;       /*  text on soft: 8.96:1                  */
+  --nn-accent-ring: #34d399;
 }

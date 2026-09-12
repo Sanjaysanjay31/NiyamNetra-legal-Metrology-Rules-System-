@@ -25,13 +25,9 @@ import AdminAnalytics from './screens/AdminAnalytics'
 import AdminDashboard from './screens/AdminDashboard'
 import AdminInspections from './screens/AdminInspections'
 import AdminReports from './screens/AdminReports'
-import AdminScans from './screens/AdminScans'
-import AdminStores from './screens/AdminStores'
-import AdminViolations from './screens/AdminViolations'
-import RepeatOffenders from './screens/RepeatOffenders'
 import Audit from './screens/Audit'
-import Capture from './screens/Capture'
 import InspectionDetail from './screens/InspectionDetail'
+import InspectionRecord from './screens/InspectionRecord'
 import Inspectors from './screens/Inspectors'
 import InspectorHome from './screens/InspectorHome'
 import InspectorInspections from './screens/InspectorInspections'
@@ -39,15 +35,11 @@ import InspectorPerformance from './screens/InspectorPerformance'
 import InspectorProfile from './screens/InspectorProfile'
 import InspectorReports from './screens/InspectorReports'
 import InspectorViolations from './screens/InspectorViolations'
-import InspectionRecord from './screens/InspectionRecord'
-import NewInspection from './screens/NewInspection'
 import NotFound from './screens/NotFound'
 import ReviewQueue from './screens/ReviewQueue'
 import Rules from './screens/Rules'
-import RuleVersions from './screens/RuleVersions'
 import ScanFindings from './screens/ScanFindings'
 import Settings from './screens/Settings'
-import TodaysReport from './screens/TodaysReport'
 
 /** Send an authenticated officer to their own section; anyone else to login. */
 function RootRedirect() {
@@ -105,28 +97,23 @@ export default function App() {
         <Route path="/admin/analytics" element={<AdminRoute><AdminAnalytics /></AdminRoute>} />
         <Route path="/admin/inspections" element={<AdminRoute><AdminInspections /></AdminRoute>} />
         <Route path="/admin/inspections/:id" element={<AdminRoute><InspectionDetail /></AdminRoute>} />
-        <Route path="/admin/stores" element={<AdminRoute><AdminStores /></AdminRoute>} />
-        <Route path="/admin/scans" element={<AdminRoute><AdminScans /></AdminRoute>} />
-        <Route path="/admin/violations" element={<AdminRoute><AdminViolations /></AdminRoute>} />
-        <Route path="/admin/repeat-offenders" element={<AdminRoute><RepeatOffenders /></AdminRoute>} />
         <Route path="/admin/scans/:id" element={<AdminRoute><ScanFindings /></AdminRoute>} />
         <Route path="/admin/review-queue" element={<AdminRoute><ReviewQueue /></AdminRoute>} />
         <Route path="/admin/inspectors" element={<AdminRoute><Inspectors /></AdminRoute>} />
         <Route path="/admin/reports" element={<AdminRoute><AdminReports /></AdminRoute>} />
         <Route path="/admin/rules" element={<AdminRoute><Rules /></AdminRoute>} />
-        <Route path="/admin/rule-versions" element={<AdminRoute><RuleVersions /></AdminRoute>} />
         <Route path="/admin/audit" element={<AdminRoute><Audit /></AdminRoute>} />
 
         {/* --------------------------------------------------- inspector ---- */}
+        {/* The portal is the review surface, not the capture device. Scanning,
+            photography, GPS capture and new inspections belong to the mobile
+            app; every inspector route below only reads, reviews, manages and
+            analyses what the app already recorded. */}
         <Route path="/inspector" element={<InspectorHome />} />
         <Route path="/inspector/inspections" element={<InspectorInspections />} />
-        <Route path="/inspector/inspections/new" element={<NewInspection />} />
         <Route path="/inspector/inspections/:id" element={<InspectionRecord />} />
-        <Route path="/inspector/inspections/:id/capture" element={<Capture />} />
-        <Route path="/inspector/scans/:id" element={<ScanFindings />} />
         <Route path="/inspector/reports" element={<InspectorReports />} />
         <Route path="/inspector/violations" element={<InspectorViolations />} />
-        <Route path="/inspector/today" element={<TodaysReport />} />
         <Route path="/inspector/performance" element={<InspectorPerformance />} />
         <Route path="/inspector/profile" element={<InspectorProfile />} />
 

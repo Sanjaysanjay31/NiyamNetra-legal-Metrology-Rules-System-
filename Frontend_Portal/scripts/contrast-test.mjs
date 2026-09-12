@@ -9,15 +9,15 @@
  *   1. A HARD gate: an explicit table of foreground/background pairs, each with
  *      the WCAG threshold it must clear — 4.5:1 for normal text (1.4.3), 3.0:1
  *      for a control boundary, status graphic, chart series or focus ring
- *      (1.4.11). The portal ships a single light theme, so every pair is
- *      measured once, in that theme. A regression FAILS the build.
+ *      (1.4.11). Every pair is measured in every theme, and every accent in
+ *      both themes. A regression FAILS the build.
  *   2. A SOFT check: every annotated "N.NN:1" must be reproducible against some
- *      real anchor (surface, canvas, rail, navy or the token's own fill). An
- *      annotation that no longer computes is a WARNING — the comment has
- *      drifted from the colour.
+ *      real anchor (surface, canvas, rail, the token's own fill, navy or the
+ *      accent fill). An annotation that no longer computes is a WARNING — the
+ *      comment has drifted from the colour.
  *
- * Dividers and badge borders are exempt by design (state is carried by icon +
- * word + colour), so anything a comment marks "decorative" is not gated.
+ * Dividers and badge borders are exempt by design (08 SS2.4 carries state by
+ * icon + word + colour), so anything a comment marks "decorative" is not gated.
  *
  * Zero dependencies: it runs on bare Node, like every check in this folder.
  */
@@ -46,7 +46,7 @@ function ratio(a, b) {
 }
 const round = (n) => Math.round(n * 100) / 100
 /* ---- parse tokens.css into scopes keyed by selector -------------------- */
-const noComments = RAW.replace(/\/[\s\S]*?\*\//g, '')
+const noComments = RAW.replace(/\/\*[\s\S]*?\*\//g, '')
 const blocks = {}
 for (const m of noComments.matchAll(/([^{}]+)\{([^{}]+)\}/g)) {
   const selector = m[1].split('\n').map((s) => s.trim()).filter(Boolean).pop()
@@ -57,11 +57,15 @@ for (const m of noComments.matchAll(/([^{}]+)\{([^{}]+)\}/g)) {
 
 const isHex = (v) => /^#[0-9a-fA-F]{3,8}$/.test(v)
 
-/** Resolve a variable for a theme ('light') — the cascade base. Kept
- *  parameterised so a second theme can be reintroduced without a rewrite. */
-function getVar(name, theme = 'light') {
+/** Resolve a variable for a theme ('light'|'dark') and optional accent,
+ *  following the cascade base -> theme -> accent -> theme+accent. */
+function getVar(name, theme, accent) {
   const chain = [':root']
   if (theme === 'dark') chain.push("[data-theme='dark']")
+  if (accent) {
+    chain.push(`[data-accent='${accent}']`)
+    if (theme === 'dark') chain.push(`[data-theme='dark'][data-accent='${accent}']`)
+  }
   let val = null
   for (const sel of chain) {
     const v = blocks[sel]?.[name]
@@ -73,10 +77,10 @@ function getVar(name, theme = 'light') {
 const TEXT = 4.5
 const NON = 3.0
 const results = []
-function check(theme, fg, bg, min, label) {
-  const f = getVar(fg, theme)
-  const b = getVar(bg, theme)
-  const scope = theme
+function check(theme, fg, bg, min, label, accent = null) {
+  const f = getVar(fg, theme, accent)
+  const b = getVar(bg, theme, accent)
+  const scope = `${theme}${accent ? '/' + accent : ''}`
   if (!f || !b) {
     results.push({ ok: false, scope, label, detail: `unresolved ${!f ? fg : bg}` })
     return
@@ -86,31 +90,47 @@ function check(theme, fg, bg, min, label) {
 }
 
 const FAMILIES = ['pass', 'violation', 'review', 'na', 'info', 'offline']
-check('light', '--nn-text', '--nn-surface', TEXT, 'text on surface')
-check('light', '--nn-text', '--nn-bg', TEXT, 'text on canvas')
-check('light', '--nn-text-2', '--nn-surface', TEXT, 'text-2 on surface')
-check('light', '--nn-text-3', '--nn-surface', TEXT, 'text-3 on surface')
-check('light', '--nn-rail-label', '--nn-rail', TEXT, 'rail label on rail')
-check('light', '--nn-control', '--nn-surface', NON, 'control boundary')
-for (const fam of FAMILIES) check('light', `--nn-${fam}-text`, `--nn-${fam}-fill`, TEXT, `${fam} text on fill`)
-for (const fam of ['pass', 'violation', 'review', 'na', 'info'])
-  check('light', `--nn-${fam}-graphic`, '--nn-surface', NON, `${fam} graphic`)
-for (let i = 1; i <= 5; i++) check('light', `--nn-chart-${i}`, '--nn-surface', NON, `chart series ${i}`)
-check('light', '--nn-accent', '--nn-surface', NON, 'accent graphic')
-check('light', '--nn-accent-text', '--nn-surface', TEXT, 'accent text')
-check('light', '--nn-accent-on', '--nn-accent', TEXT, 'label on accent fill')
-check('light', '--nn-accent-ring', '--nn-surface', NON, 'focus ring')
-check('light', '--nn-accent-text', '--nn-accent-soft', TEXT, 'accent text on soft')
+for (const theme of ['light', 'dark']) {
+  check(theme, '--nn-text', '--nn-surface', TEXT, 'text on surface')
+  check(theme, '--nn-text', '--nn-bg', TEXT, 'text on canvas')
+  check(theme, '--nn-text-2', '--nn-surface', TEXT, 'text-2 on surface')
+  check(theme, '--nn-text-3', '--nn-surface', TEXT, 'text-3 on surface')
+  check(theme, '--nn-rail-label', '--nn-rail', TEXT, 'rail label on rail')
+  check(theme, '--nn-control', '--nn-surface', NON, 'control boundary')
+  for (const fam of FAMILIES) check(theme, `--nn-${fam}-text`, `--nn-${fam}-fill`, TEXT, `${fam} text on fill`)
+  for (const fam of ['pass', 'violation', 'review', 'na', 'info'])
+    check(theme, `--nn-${fam}-graphic`, '--nn-surface', NON, `${fam} graphic`)
+  for (let i = 1; i <= 5; i++) check(theme, `--nn-chart-${i}`, '--nn-surface', NON, `chart series ${i}`)
+}
+
+const ACCENTS = ['teal', 'saffron', 'indigo', 'green']
+for (const theme of ['light', 'dark']) {
+  for (const a of ACCENTS) {
+    check(theme, '--nn-accent', '--nn-surface', NON, 'accent graphic', a)
+    check(theme, '--nn-accent-text', '--nn-surface', TEXT, 'accent text', a)
+    check(theme, '--nn-accent-on', '--nn-accent', TEXT, 'label on accent fill', a)
+    check(theme, '--nn-accent-ring', '--nn-surface', NON, 'focus ring', a)
+    check(theme, '--nn-accent-text', '--nn-accent-soft', TEXT, 'accent text on soft', a)
+  }
+}
 /* ---- 2. SOFT check: every annotated "N.NN:1" must reproduce ------------
- * Walk tokens.css line by line, tracking which scope we are in. For a line
- * that both sets a hex and carries a "N.NN:1" comment, recompute that ratio
- * against a pool of plausible anchors (white, surface, canvas, rail, navy,
- * teal, the accent fill, the accent-soft bg, and — for a semantic
- * *-text/-graphic/-on token — its own family fill). If no anchor reproduces
- * the claimed figure, the comment has drifted: WARN. */
+ * Walk tokens.css line by line, tracking which theme/accent scope we are in.
+ * For a line that both sets a hex and carries a "N.NN:1" comment, recompute
+ * that ratio against a pool of plausible anchors resolved *in that scope*
+ * (white, surface, canvas, rail, navy, the accent fill, the accent-soft bg,
+ * and — for a semantic *-text/-graphic/-on token — its own family fill). If
+ * no anchor reproduces the claimed figure, the comment has drifted: WARN. */
 const warnings = []
 const LINE = /(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{3,8})\s*;([^\n]*)/
+let curTheme = 'light'
+let curAccent = null
 for (const raw of RAW.split('\n')) {
+  const sel = raw.match(/^\s*([^\n{]*\S)\s*\{/)
+  if (sel) {
+    const s = sel[1]
+    curTheme = /data-theme='dark'/.test(s) ? 'dark' : 'light'
+    curAccent = (s.match(/data-accent='(\w+)'/) || [])[1] || null
+  }
   const dm = raw.match(LINE)
   if (!dm) continue
   const [, name, hex, tail] = dm
@@ -118,22 +138,24 @@ for (const raw of RAW.split('\n')) {
   if (!claims.length) continue
   const anchors = [
     '#ffffff',
-    getVar('--nn-surface'),
-    getVar('--nn-surface-2'),
-    getVar('--nn-bg'),
-    getVar('--nn-rail'),
-    getVar('--nn-navy'),
-    getVar('--nn-teal'),
-    getVar('--nn-accent'),
-    getVar('--nn-accent-soft'),
+    getVar('--nn-surface', curTheme, curAccent),
+    getVar('--nn-surface-2', curTheme, curAccent),
+    getVar('--nn-bg', curTheme, curAccent),
+    getVar('--nn-rail', curTheme, curAccent),
+    getVar('--nn-navy', curTheme, curAccent),
+    getVar('--nn-teal', curTheme, curAccent),
+    getVar('--nn-saffron', curTheme, curAccent),
+    getVar('--nn-saffron-on-navy', curTheme, curAccent),
+    getVar('--nn-accent', curTheme, curAccent),
+    getVar('--nn-accent-soft', curTheme, curAccent),
   ]
   const fam = name.match(/^--nn-([a-z]+)-(?:text|graphic|on|border)$/)
-  if (fam) anchors.push(getVar(`--nn-${fam[1]}-fill`))
+  if (fam) anchors.push(getVar(`--nn-${fam[1]}-fill`, curTheme, curAccent))
   const pool = anchors.filter(isHex)
   /* --nn-accent-soft is annotated by the text that sits ON it ("text on
      soft: N"), so the measured foreground is the accent text, not the soft
      fill itself; the soft fill is already in the anchor pool. */
-  const fgHex = (name === '--nn-accent-soft' && getVar('--nn-accent-text')) || hex
+  const fgHex = (name === '--nn-accent-soft' && getVar('--nn-accent-text', curTheme, curAccent)) || hex
   for (const claim of claims) {
     let best = Infinity
     let got = null
@@ -145,8 +167,9 @@ for (const raw of RAW.split('\n')) {
       }
     }
     if (best > 0.06)
-      warnings.push({ scope: 'light', name, claim, got })
+      warnings.push({ scope: `${curTheme}${curAccent ? '/' + curAccent : ''}`, name, claim, got })
   }
+
 }
 /* ---- report, in the shared OK/FAIL idiom of the other checks ----------- */
 const failed = results.filter((r) => !r.ok)
@@ -164,3 +187,7 @@ for (const w of warnings)
   )
 
 process.exit(failed.length === 0 ? 0 : 1)
+
+
+
+

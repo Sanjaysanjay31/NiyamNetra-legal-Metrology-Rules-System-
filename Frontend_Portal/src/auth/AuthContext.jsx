@@ -24,7 +24,7 @@ import {
   useState,
 } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
-import { endpoints, setAccessToken, setSessionLostHandler } from '../api/client'
+import { endpoints, setAccessToken, setSessionLostHandler, DEMO_DATA } from '../api/client'
 import { Callout, Spinner } from '../ui'
 
 const AuthContext = createContext(null)
@@ -84,6 +84,19 @@ export function AuthProvider({ children }) {
         scheduleRefresh(data.expires_in)
       } catch {
         /* no valid refresh cookie: not signed in */
+        if (DEMO_DATA) {
+          const signedOut = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('nn_signed_out')
+          if (!signedOut && alive) {
+            setUser({
+              id: 'demo-1042',
+              employee_id: 'LM-TG-1042',
+              full_name: 'Inspector One',
+              role: 'inspector',
+              jurisdiction: 'Hyderabad North',
+            })
+            setInstallId('inst-tg-north-1042')
+          }
+        }
       } finally {
         if (alive) setBooting(false)
       }
@@ -96,18 +109,41 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(
     async (employeeId, password) => {
-      const data = await endpoints.auth.login(employeeId, password)
-      setAccessToken(data.access_token)
-      setUser(data.user)
-      setInstallId(data.install_id)
-      setSessionEnded(false)
-      scheduleRefresh(data.expires_in)
-      return data.user
+      try {
+        const data = await endpoints.auth.login(employeeId, password)
+        setAccessToken(data.access_token)
+        setUser(data.user)
+        setInstallId(data.install_id)
+        setSessionEnded(false)
+        scheduleRefresh(data.expires_in)
+        return data.user
+      } catch (err) {
+        if (DEMO_DATA && (err.offline || err.status === 0 || err.status >= 500)) {
+          if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem('nn_signed_out')
+          const role = employeeId.startsWith('LM-ADM') ? 'admin' : 'inspector'
+          const demoUser = {
+            id: 'demo-' + (employeeId || '1042'),
+            employee_id: employeeId || 'LM-TG-1042',
+            full_name: employeeId.startsWith('LM-ADM') ? 'Admin Officer' : 'Inspector One',
+            role,
+            jurisdiction: 'Hyderabad North',
+          }
+          setAccessToken('demo-token-1042')
+          setUser(demoUser)
+          setInstallId('inst-tg-north-1042')
+          setSessionEnded(false)
+          return demoUser
+        }
+        throw err
+      }
     },
     [scheduleRefresh]
   )
 
   const logout = useCallback(async () => {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('nn_signed_out', '1')
+    }
     try {
       await endpoints.auth.logout()
     } catch {

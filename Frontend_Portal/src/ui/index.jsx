@@ -163,9 +163,10 @@ export function MetaStat({ label, value, title }) {
 /* -------------------------------------------------------------------------- */
 
 const BUTTON_VARIANTS = {
-  /* Primary is navy: the brand's own ink at 14.63:1 against its white label,
-     deliberately independent of the accent so the primary action always reads
-     as the heaviest control on the screen. */
+  /* Primary is navy, not accent: the accent is a user preference and the
+     primary action must not change weight because someone picked a lighter
+     hue. Navy measures 14.63:1 against white text in light, and the dark
+     theme lifts it to #1B3A5C which still carries white text. */
   primary:
     'bg-navy text-ink-inverse hover:bg-navy-hover active:translate-y-px shadow-card',
   secondary:
@@ -561,39 +562,6 @@ export function Pill({ children, family, className, icon: Icon }) {
     >
       {Icon && <Icon size={14} strokeWidth={2} aria-hidden="true" />}
       {children}
-    </span>
-  )
-}
-
-/**
- * A small, leading-dot status pill for verdicts and lifecycle states. The dot
- * is non-decorative: a glance reads the family from the dot, the word from the
- * label, and the meaning is carried by both rather than by colour alone.
- *
- *     <StatusBadge family="pass"      label="Compliant" />
- *     <StatusBadge family="violation" label="Violation" />
- *     <StatusBadge family="review"    label="Pending"   />
- *     <StatusBadge family="na"        label="Inactive"  />
- */
-export function StatusBadge({ family = 'na', label, className }) {
-  const f = FAMILY[family] ?? FAMILY.na
-  return (
-    <span
-      className={cx(
-        'inline-flex items-center gap-1.5 rounded-pill px-2 py-0.5 text-caption font-medium',
-        f.fill,
-        f.text,
-        'ring-1 ring-inset',
-        f.border,
-        className
-      )}
-    >
-      <span
-        className="h-1.5 w-1.5 rounded-pill"
-        style={{ background: f.raw }}
-        aria-hidden="true"
-      />
-      {label}
     </span>
   )
 }

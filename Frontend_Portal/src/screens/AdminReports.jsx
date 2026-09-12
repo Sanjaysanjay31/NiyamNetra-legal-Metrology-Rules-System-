@@ -1,852 +1,868 @@
 /**
- * Today's Report — the regulator's view of a single working day.
+ * Reports — where a document actually comes from.
  *
- * The screen reads from the same endpoints the rest of the admin portal uses:
- *   - /reports/today  — the caller's day, scope, counts and per-store rows.
- *   - /inspections    — the per-visit rows behind the area summary, scoped to
- *                       the day the header picker shows.
- *   - /stores         — names and cities for the area roll-up.
+ * The overview answers "how is the jurisdiction doing". This screen answers a
+ * narrower and more procedural question: I need a document, for a particular
+ * visit or a particular day, that a senior officer or a court will accept. So it
+ * is organised by what the server can actually emit rather than by what would
+ * make a tidy reporting page.
  *
- * The "Top Violation Types" list and the donut come from the per-day data when
- * /reports/today returns counts, and from the dashboard's per-period rollup as
- * a sensible fallback when the live endpoint is down. The export action writes
- * a one-day CSV of the rows the screen is currently showing.
+ * The server emits exactly two kinds of document, and neither one is an office
+ * report:
+ *
+ *   - /reports/inspections/{id}.docx|.pdf renders one visit. Ownership is
+ *     checked inside the handler rather than by the role dependency, so an
+ *     administrator may fetch any visit and an inspector only their own. This is
+ *     the one document route that can cover another officer's work.
+ *   - /reports/today.docx|.pdf renders one officer-day, and it is always the
+ *     caller's own. The dependency admits an administrator but the query still
+ *     filters on `user.id`, so an administrator downloading it receives their own
+ *     day — for most administrators, an empty document.
+ *
+ * There is no range document, no office-wide document, and no spreadsheet writer
+ * on the server at all. The period figures at the top therefore come from
+ * /admin/dashboard, which is a real office total, and they are here for context —
+ * to decide which visits to pull — not as something exportable in one piece.
+ *
+ * Two things this screen is careful to say out loud. GET /inspections has no
+ * user_id parameter, so the officer filter is applied in this browser after the
+ * whole window has been fetched, and the count above the table says so. And
+ * report_generator stamps the *caller* into the document's "Inspector:" line, so
+ * an administrator's download of someone else's visit carries the wrong name —
+ * that is flagged where the buttons are, not buried here.
  */
 
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { format, parseISO } from 'date-fns'
+import { useNavigate } from 'react-router-dom'
+import { format, parseISO, subDays } from 'date-fns'
 import {
-  AlertTriangle,
-  Calendar,
   CheckCircle,
-  ChevronDown,
   ChevronRight,
   ClipboardList,
+  Clock,
   Download,
-  Package,
-  Store as StoreIcon,
+  FileSignature,
+  FileSpreadsheet,
+  FileText,
+  HelpCircle,
+  Info,
+  ListChecks,
+  RotateCcw,
+  Search,
+  Sigma,
+  UserRound,
+  Users,
+  X,
   XCircle,
 } from 'lucide-react'
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { endpoints, saveBlob } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
-import { useDocumentTitle, useResource } from '../lib/hooks'
+import { useDebounced, useDocumentTitle, useResource } from '../lib/hooks'
 import {
   adminDashboard,
   inspections as inspectionsFixture,
-  stores as storesFixture,
-  todaysReport as todaysReportFixture,
+  storesById,
+  users as usersFixture,
 } from '../mock/fixtures'
-import { Button, Card, cx, Select, Skeleton, useToast } from '../ui'
+import {
+  Button,
+  Callout,
+  Card,
+  DemoChip,
+  EmptyState,
+  Field,
+  Input,
+  MetaStat,
+  PageHeader,
+  Pill,
+  SectionTitle,
+  Select,
+  Skeleton,
+  StatCard,
+  Table,
+  Td,
+  Th,
+  Tr,
+  cx,
+  useToast,
+} from '../ui'
 
-/* Default to today so the screen shows current data, not a frozen demo date. */
-const DEFAULT_DAY = format(new Date(), 'yyyy-MM-dd')
-
-const AREA_FALLBACK = []
-
-const VIOLATION_PALETTE = [
-  'var(--nn-chart-1)',
-  'var(--nn-chart-6)',
-  'var(--nn-chart-2)',
-  'var(--nn-chart-5)',
-  'var(--nn-chart-3)',
-  'var(--nn-chart-4)',
-  'var(--nn-chart-7)',
-  'var(--nn-chart-8)',
+/* The three windows the dashboard query is cheap enough to serve. `end` is
+   always today, because /admin/dashboard defaults `end` to date.today() and a
+   trailing window is what an administrator actually asks for. */
+const WINDOWS = [
+  { id: '7', label: 'Last 7 days', days: 7 },
+  { id: '30', label: 'Last 30 days', days: 30 },
+  { id: '90', label: 'Last 90 days', days: 90 },
 ]
 
-const RESULT_PALETTE = {
-  pass: 'var(--nn-chart-2)',
-  violation: 'var(--nn-chart-4)',
-  review: 'var(--nn-chart-3)',
-}
+/* Package results, in the order every report reads them. Icons match
+   VERDICT_META so one result never wears two faces. */
+const RESULT_TILES = [
+  { key: 'compliant', family: 'pass', labelKey: 'result.compliant', icon: CheckCircle },
+  { key: 'violation', family: 'violation', labelKey: 'result.violation', icon: XCircle },
+  { key: 'not_assessed', family: 'na', labelKey: 'result.not_assessed', icon: HelpCircle },
+  { key: 'out_of_scope', family: 'na', labelKey: 'result.out_of_scope', icon: Clock },
+]
+
+/* Submitted is the default because a draft is not part of the record. Both are
+   offered, since the document route will happily render a draft and an
+   administrator chasing an incomplete visit has a reason to look. */
+const STATUS_TABS = [
+  { value: 'submitted', label: 'Submitted' },
+  { value: 'draft', label: 'Unfinished' },
+  { value: '', label: 'Both' },
+]
 
 const iso = (d) => format(d, 'yyyy-MM-dd')
 
-function pretty(isoDate) {
-  if (!isoDate) return '—'
+function prettyDay(value) {
+  if (!value) return 'Undated'
   try {
-    return format(parseISO(isoDate), 'd MMM yyyy')
+    return format(parseISO(value), 'd MMM yyyy')
   } catch {
-    return String(isoDate)
+    return String(value)
   }
 }
 
-function share(n, total) {
-  if (!total || n == null) return null
-  return Math.round((n / total) * 1000) / 10
-}
-
-/* ---------------------------------------------------------- breadcrumb --- */
-
-function Breadcrumb() {
-  return (
-    <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[12px] text-ink-3">
-      <Link
-        to="/admin"
-        className="font-medium text-ink-2 transition-colors duration-fast hover:text-ink"
-      >
-        Dashboard
-      </Link>
-      <ChevronRight size={12} strokeWidth={2} aria-hidden="true" className="text-ink-3" />
-      <span className="font-semibold text-ink">Today's Report</span>
-    </nav>
-  )
-}
-
-/* -------------------------------------------------------------- KPI ---- */
-
-function KpiCard({ label, value, icon: Icon, accent = 'navy' }) {
-  const accentClass = {
-    navy: 'bg-navy text-ink-inverse',
-    pass: 'bg-pass-fill text-pass-graphic border border-pass-border',
-    violation: 'bg-violation-fill text-violation-graphic border border-violation-border',
-    review: 'bg-review-fill text-review-graphic border border-review-border',
-  }[accent]
-  return (
-    <Card className="flex flex-col gap-2.5 p-4">
-      <div className="flex items-start justify-between gap-2">
-        <p className="nn-eyebrow text-ink-3">{label}</p>
-        <span
-          className={cx(
-            'grid h-7 w-7 shrink-0 place-items-center rounded-md',
-            accentClass
-          )}
-        >
-          {Icon && <Icon size={14} strokeWidth={1.8} aria-hidden="true" />}
-        </span>
-      </div>
-      <p className="nn-mono text-[26px] font-bold leading-none tracking-[-0.01em] text-ink">
-        {value}
-      </p>
-    </Card>
-  )
-}
-
-/* ----------------------------------------------------- top violation bars --- */
-
-function TopViolations({ rows }) {
-  /* Sort by count desc and show the top 5, like the reference. */
-  const data = useMemo(
-    () =>
-      [...(rows ?? [])]
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5),
-    [rows]
-  )
-  const max = data[0]?.count ?? 0
-  return (
-    <Card className="flex h-full flex-col p-5">
-      <h3 className="text-[15px] font-semibold text-ink">Top Violation Types</h3>
-      <ul className="mt-4 flex flex-1 flex-col gap-3">
-        {data.length === 0 ? (
-          <li className="text-[12px] text-ink-3">No violation findings in this period.</li>
-        ) : (
-          data.map((r, i) => {
-            const pct = max ? (r.count / max) * 100 : 0
-            return (
-              <li key={r.category} className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between text-[12px]">
-                  <span className="truncate font-medium text-ink">{r.category}</span>
-                  <span className="nn-mono font-semibold text-ink">{r.count}</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-2">
-                  <div
-                    className="h-full rounded-pill"
-                    style={{
-                      width: `${pct}%`,
-                      background: VIOLATION_PALETTE[i % VIOLATION_PALETTE.length],
-                    }}
-                    aria-hidden="true"
-                  />
-                </div>
-              </li>
-            )
-          })
-        )}
-      </ul>
-    </Card>
-  )
-}
-
-/* ----------------------------------------------------- area-wise summary --- */
-
-function AreaWiseSummary({ rows }) {
-  return (
-    <Card className="flex h-full flex-col p-5">
-      <h3 className="text-[15px] font-semibold text-ink">Area Wise Summary</h3>
-      <div className="mt-4 -mx-1 flex-1 overflow-x-auto">
-        <table className="w-full border-collapse text-[12px]">
-          <thead>
-            <tr className="border-b border-divider bg-surface-2">
-              <th className="nn-eyebrow px-3 py-2 text-left">Area</th>
-              <th className="nn-eyebrow px-3 py-2 text-right">Stores</th>
-              <th className="nn-eyebrow px-3 py-2 text-right">Inspections</th>
-              <th className="nn-eyebrow px-3 py-2 text-right">Violations</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-3 py-4 text-center text-ink-3">
-                  No inspections in this period.
-                </td>
-              </tr>
-            ) : (
-              rows.map((r) => (
-                <tr key={r.area} className="border-b border-divider last:border-b-0">
-                  <td className="px-3 py-2.5 font-medium text-ink">{r.area}</td>
-                  <td className="nn-mono px-3 py-2.5 text-right text-ink">{r.stores}</td>
-                  <td className="nn-mono px-3 py-2.5 text-right text-ink">{r.inspections}</td>
-                  <td className="nn-mono px-3 py-2.5 text-right text-violation-text">
-                    {r.violations}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  )
-}
-
-/* ----------------------------------------------------- result distribution --- */
-
-function ResultDistribution({ data }) {
-  const total = data.reduce((n, d) => n + d.value, 0)
-  return (
-    <Card className="flex h-full flex-col p-5">
-      <div className="flex items-center justify-between">
-        <h3 className="text-[15px] font-semibold text-ink">Result Distribution</h3>
-        <span className="nn-mono text-[11px] font-medium text-ink-3">Total: {total}</span>
-      </div>
-      <div className="mt-4 flex flex-1 flex-col items-center justify-between gap-4">
-        <div className="relative h-[160px] w-[160px] shrink-0">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Tooltip
-                formatter={(value, name) => [`${value}`, name]}
-                contentStyle={{
-                  borderRadius: 6,
-                  border: '1px solid var(--nn-divider)',
-                  background: 'var(--nn-surface)',
-                  fontSize: 12,
-                }}
-              />
-              <Pie
-                data={data}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                innerRadius={48}
-                outerRadius={72}
-                paddingAngle={2}
-                stroke="var(--nn-surface)"
-                strokeWidth={2}
-              >
-                {data.map((d, i) => (
-                  <Cell key={i} fill={d.color} />
-                ))}
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="pointer-events-none absolute inset-0 grid place-items-center">
-            <div className="text-center">
-              <p className="nn-mono text-[22px] font-bold leading-none text-ink">{total}</p>
-              <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-3">
-                total
-              </p>
-            </div>
-          </div>
-        </div>
-        <ul className="flex w-full flex-col gap-2 rounded-card border border-divider/60 bg-surface-2/50 p-3 text-[12px]">
-          {data.map((d) => (
-            <li key={d.name} className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <span
-                  aria-hidden="true"
-                  className="h-2.5 w-2.5 shrink-0 rounded-pill"
-                  style={{ background: d.color }}
-                />
-                <span className="truncate text-ink-2 font-medium">{d.name}</span>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="nn-mono font-semibold text-ink">{d.value}</span>
-                <span className="nn-mono text-[11px] text-ink-3">
-                  ({share(d.value, total) ?? 0}%)
-                </span>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </Card>
-  )
-}
-
-/* ---------------------------------------------------------- export CSV --- */
-
+/* CSV, written the way a spreadsheet will read it back: CRLF rows, quotes
+   doubled, and a BOM so Excel does not mangle a Devanagari shop name. */
 function csvCell(v) {
   const s = v == null ? '' : String(v)
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
 function toCsv(header, rows) {
-  return '\ufeff' + [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')
+  return '﻿' + [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')
 }
-
-/* -------------------------------------------------------------- screen -- */
 
 export default function AdminReports() {
   const { t } = useI18n()
-  useDocumentTitle(t('nav.reports'))
+  const { user } = useAuth()
+  const navigate = useNavigate()
   const toast = useToast()
+  useDocumentTitle(t('nav.reports'))
 
-  const [day, setDay] = useState(DEFAULT_DAY)
-  const [area, setArea] = useState('all')
-  const [exportFormat, setExportFormat] = useState('csv')
-  const [exporting, setExporting] = useState(false)
+  const today = iso(new Date())
+  const [windowId, setWindowId] = useState('30')
+  /* A picked From date overrides the window preset; choosing a preset clears it. */
+  const [customFrom, setCustomFrom] = useState('')
+  const [status, setStatus] = useState('submitted')
+  const [officerId, setOfficerId] = useState('')
+  const [qRaw, setQRaw] = useState('')
+  const q = useDebounced(qRaw.trim(), 350)
+  /* One key at a time: `pdf:774`, `docx:774`, `own:pdf`. Two documents at once
+     would race the server's per-user output file. */
+  const [busy, setBusy] = useState(null)
 
-  const today = useResource(
-    () => endpoints.reports.today({ day }),
-    {
-      deps: [day],
-      fallback: todaysReportFixture,
-      label: 'reports-today',
-    }
-  )
+  const days = WINDOWS.find((w) => w.id === windowId)?.days ?? 30
+  const from = customFrom || iso(subDays(new Date(), days - 1))
 
-  const dayInspections = useResource(
-    () => endpoints.inspections.list({ date_from: day, date_to: day }),
-    {
-      deps: [day],
-      fallback: inspectionsFixture.filter((i) => i.inspection_date === day),
-      label: 'reports-today-inspections',
-    }
-  )
-
-  const shops = useResource(() => endpoints.inspections.stores(), {
-    fallback: storesFixture,
-    label: 'reports-stores',
+  const summary = useResource(() => endpoints.admin.dashboard({ start: from, end: today }), {
+    deps: [from, today],
+    fallback: adminDashboard,
+    label: t('admin.overview'),
   })
 
-  const dashboard = useResource(
-    () => endpoints.admin.dashboard({ start: day, end: day }),
-    {
-      deps: [day],
-      fallback: adminDashboard,
-      label: 'reports-dashboard',
-    }
-  )
+  /* Only the parameters the endpoint has. There is no user_id here on purpose —
+     it does not exist, and the officer narrowing happens below. */
+  const params = useMemo(() => {
+    const p = { date_from: from }
+    if (status) p.status = status
+    if (q) p.q = q
+    return p
+  }, [from, status, q])
+  const key = JSON.stringify(params)
 
-  const t0 = today.data ?? todaysReportFixture
-  const c0 = t0.counts ?? {}
-  const storesList = t0.stores ?? []
+  const list = useResource(() => endpoints.inspections.list(params), {
+    deps: [key],
+    fallback: inspectionsFixture,
+    label: t('nav.inspections'),
+  })
+  const officers = useResource(() => endpoints.admin.users(), {
+    fallback: usersFixture,
+    label: t('nav.inspectors'),
+  })
+  const shops = useResource(() => endpoints.inspections.stores(), {
+    fallback: Object.values(storesById),
+    label: t('inspection.store'),
+  })
 
-  /* KPI numbers — the per-day endpoint is the source of truth; when it's down
-     we fall back to the dashboard's period rollup. The reference shows six
-     numbers and the screen always renders exactly six. */
-  const storesVisited = storesList.length || 0
-  const totalInspections = t0.inspections ?? 0
-  const productsScanned = c0.total ?? 0
-  const compliant = c0.compliant ?? 0
-  const violations = c0.violation ?? 0
-  const needsReview = c0.not_assessed ?? 0
-
-  /* Top violations — prefer the dashboard's per-period rollup (which the
-     reference uses) and fall back to the today endpoint if needed. */
-  const topViolations = useMemo(() => {
-    const src = dashboard.data?.violations_by_category ?? []
-    if (src.length) return src
-    return [
-      { category: 'MRP Declaration', count: 12 },
-      { category: 'Net Quantity', count: 8 },
-      { category: 'Consumer Care', count: 5 },
-      { category: 'Manufacturer Details', count: 4 },
-      { category: 'Date Declaration', count: 3 },
-    ]
-  }, [dashboard.data])
-
-  /* Area-wise summary — group the day's inspections by their store's city. The
-     reference shows the six canonical areas regardless of which are present;
-     we keep that list, fill in zeros for the missing ones, and rank by
-     inspection count. */
-  const areaRows = useMemo(() => {
+  /* Names live on /stores and /admin/users; the inspection list carries ids. If
+     either lookup fails the rows still render, with the number in place. */
+  const allRows = useMemo(() => {
     const shopById = new Map((shops.data ?? []).map((s) => [s.id, s]))
-    const rollup = new Map()
-    for (const a of AREA_FALLBACK) {
-      rollup.set(a, { area: a, stores: 0, inspections: 0, violations: 0, _stores: new Set() })
-    }
-    for (const i of dayInspections.data ?? []) {
-      const city = shopById.get(i.store_id)?.city
-      if (!city || !rollup.has(city)) continue
-      const row = rollup.get(city)
-      row.inspections += 1
-      row._stores.add(i.store_id)
-      if (i.status === 'submitted' && i.in_scope !== false && i.scan_count > 0) {
-        /* Without per-scan verdicts, the inspection list is a coarse signal —
-           we use the scan count as a stand-in for products scanned. We mark
-           the inspection as a "violation" if it is the violator-of-the-day,
-           but without per-scan data the most honest read is to count submitted
-           inspections with scans. The row reads as the day's total, not a
-           finding count, which is what the reference shows. */
+    const officerById = new Map((officers.data ?? []).map((u) => [u.id, u]))
+    return (list.data ?? []).map((i) => {
+      const shop = shopById.get(i.store_id)
+      const off = officerById.get(i.user_id)
+      return {
+        id: i.id,
+        date: i.inspection_date ?? null,
+        userId: i.user_id,
+        officerName: off?.full_name ?? `Officer #${i.user_id}`,
+        officerCode: off?.employee_id ?? null,
+        shopName: shop?.name ?? `Shop #${i.store_id}`,
+        shopCity: shop?.city ?? null,
+        status: i.status ?? null,
+        scans: i.scan_count ?? 0,
+        inScope: i.in_scope,
+        signature: i.signature_status ?? null,
       }
-    }
-    /* Derive the violations and stores counts the way the reference's table
-       reads: each area's inspections, the distinct stores in it, and the
-       violation count for that day (from the dashboard rollup if available). */
-    const perAreaViolations = new Map(
-      (dashboard.data?.violations_by_area ?? []).map((a) => [a.area, a.count])
-    )
-    const list = Array.from(rollup.values()).map((r) => ({
-      area: r.area,
-      stores: r._stores.size,
-      inspections: r.inspections,
-      violations: perAreaViolations.get(r.area) ?? 0,
-    }))
-    /* If the live data is empty (e.g. demo mode), show the reference example
-       so the screen still looks complete. */
-    if (list.every((r) => r.inspections === 0)) {
-      return [
-        { area: 'Kakinada', stores: 4, inspections: 8, violations: 4 },
-        { area: 'Rajahmundry', stores: 3, inspections: 6, violations: 3 },
-        { area: 'Anakapalli', stores: 2, inspections: 4, violations: 2 },
-        { area: 'Visakhapatnam', stores: 1, inspections: 2, violations: 1 },
-        { area: 'Vijayawada', stores: 3, inspections: 7, violations: 3 },
-        { area: 'Guntur', stores: 2, inspections: 5, violations: 2 },
-      ]
-    }
-    return list.sort((a, b) => b.inspections - a.inspections)
-  }, [dayInspections.data, shops.data, dashboard.data])
+    })
+  }, [list.data, shops.data, officers.data])
 
-  /* Donut data. */
-  const distribution = useMemo(
-    () => [
-      { name: 'Compliant', value: compliant, color: RESULT_PALETTE.pass },
-      { name: 'Violations', value: violations, color: RESULT_PALETTE.violation },
-      { name: 'Needs Review', value: needsReview, color: RESULT_PALETTE.review },
-    ],
-    [compliant, violations, needsReview]
-  )
+  /* The one narrowing the server cannot do. */
+  const rows = useMemo(() => {
+    if (!officerId) return allRows
+    const id = Number(officerId)
+    return allRows.filter((r) => r.userId === id)
+  }, [allRows, officerId])
 
-  async function handleExport() {
-    setExporting(true)
-    const filename = `niyamnetra-daily-report-${day}`
+  const narrowed = officerId !== '' && rows.length !== allRows.length
+  const packages = rows.reduce((n, r) => n + r.scans, 0)
+  const filtered = Boolean(officerId || q) || status !== 'submitted' || windowId !== '30'
+  const demo = summary.demo || list.demo || officers.demo || shops.demo
+
+  const period = summary.data ?? adminDashboard
+  const counts = period.counts ?? {}
+
+  function reset() {
+    setWindowId('30')
+    setStatus('submitted')
+    setOfficerId('')
+    setQRaw('')
+  }
+
+  /* One visit, as a file. The server writes it to inspection_{id}.{ext} and
+     streams it back, so two clicks on the same visit are safe but slow. */
+  async function downloadVisit(row, kind) {
+    setBusy(`${kind}:${row.id}`)
+    const fetcher = {
+      docx: endpoints.reports.inspectionDocx,
+      pdf: endpoints.reports.inspectionPdf,
+      xlsx: endpoints.reports.inspectionXlsx,
+      csv: endpoints.reports.inspectionCsv,
+    }[kind]
     try {
-      if (exportFormat === 'csv') {
-        const csvRows = [
-          ['NIYAMNETRA LEGAL METROLOGY - DAILY REPORT'],
-          ['Date', day],
-          ['Generated At', new Date().toLocaleString()],
-          [],
-          ['EXECUTIVE SUMMARY / KEY METRICS'],
-          ['Metric', 'Value'],
-          ['Stores Visited', storesVisited],
-          ['Total Inspections', totalInspections],
-          ['Products Scanned', productsScanned],
-          ['Compliant Products', compliant],
-          ['Violations Found', violations],
-          ['Pending / Review', needsReview],
-          [],
-          ['AREA-WISE PERFORMANCE SUMMARY'],
-          ['Area', 'Stores', 'Inspections', 'Violations'],
-          ...areaRows.map((r) => [r.area, r.stores, r.inspections, r.violations]),
-          [],
-          ['TOP VIOLATION CATEGORIES'],
-          ['Violation Category', 'Count'],
-          ...topViolations.map((v) => [v.category, v.count]),
-        ]
-        const csv = '\ufeff' + csvRows.map((r) => r.map(csvCell).join(',')).join('\r\n')
-        saveBlob(
-          new Blob([csv], { type: 'text/csv;charset=utf-8' }),
-          `${filename}.csv`
-        )
-        toast.push({
-          family: 'pass',
-          title: 'CSV exported',
-          body: `Exported daily report for ${pretty(day)} as CSV.`,
-        })
-      } else if (exportFormat === 'excel') {
-        const xml = `<?xml version="1.0"?>
-        <?mso-application progid="Excel.Sheet"?>
-        <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
-          xmlns:o="urn:schemas-microsoft-com:office:office"
-          xmlns:x="urn:schemas-microsoft-com:office:excel"
-          xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-          <Worksheet ss:Name="Daily Summary">
-            <Table>
-              <Row><Cell><Data ss:Type="String">NIYAMNETRA LEGAL METROLOGY - DAILY INSPECTION REPORT</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Date: ${pretty(day)}</Data></Cell></Row>
-              <Row />
-              <Row><Cell><Data ss:Type="String">EXECUTIVE SUMMARY</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Metric</Data></Cell><Cell><Data ss:Type="String">Value</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Stores Visited</Data></Cell><Cell><Data ss:Type="Number">${storesVisited}</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Total Inspections</Data></Cell><Cell><Data ss:Type="Number">${totalInspections}</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Products Scanned</Data></Cell><Cell><Data ss:Type="Number">${productsScanned}</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Compliant Products</Data></Cell><Cell><Data ss:Type="Number">${compliant}</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Violations</Data></Cell><Cell><Data ss:Type="Number">${violations}</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Needs Review</Data></Cell><Cell><Data ss:Type="Number">${needsReview}</Data></Cell></Row>
-              <Row />
-              <Row><Cell><Data ss:Type="String">AREA-WISE SUMMARY</Data></Cell></Row>
-              <Row>
-                <Cell><Data ss:Type="String">Area</Data></Cell>
-                <Cell><Data ss:Type="String">Stores</Data></Cell>
-                <Cell><Data ss:Type="String">Inspections</Data></Cell>
-                <Cell><Data ss:Type="String">Violations</Data></Cell>
-              </Row>
-              ${areaRows
-                .map(
-                  (r) => `<Row>
-                    <Cell><Data ss:Type="String">${r.area}</Data></Cell>
-                    <Cell><Data ss:Type="Number">${r.stores}</Data></Cell>
-                    <Cell><Data ss:Type="Number">${r.inspections}</Data></Cell>
-                    <Cell><Data ss:Type="Number">${r.violations}</Data></Cell>
-                  </Row>`
-                )
-                .join('')}
-              <Row />
-              <Row><Cell><Data ss:Type="String">TOP VIOLATION TYPES</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Category</Data></Cell><Cell><Data ss:Type="String">Count</Data></Cell></Row>
-              ${topViolations
-                .map(
-                  (v) => `<Row>
-                    <Cell><Data ss:Type="String">${v.category}</Data></Cell>
-                    <Cell><Data ss:Type="Number">${v.count}</Data></Cell>
-                  </Row>`
-                )
-                .join('')}
-            </Table>
-          </Worksheet>
-        </Workbook>`
-
-        saveBlob(
-          new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' }),
-          `${filename}.xls`
-        )
-        toast.push({
-          family: 'pass',
-          title: 'Excel exported',
-          body: `Exported daily report to Excel (.xls).`,
-        })
-      } else if (exportFormat === 'word') {
-        const docHtml = `
-          <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-          <head><title>NiyamNetra Daily Report</title>
-          <style>
-            body { font-family: Arial, sans-serif; font-size: 10pt; color: #1e293b; margin: 20px; }
-            h1 { color: #0b1f3a; font-size: 18pt; margin-bottom: 4px; }
-            h2 { color: #1e3a8a; font-size: 13pt; margin-top: 20px; margin-bottom: 8px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }
-            .meta { color: #64748b; font-size: 10pt; margin-bottom: 16px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 16px; font-size: 9.5pt; }
-            th { background-color: #0b1f3a; color: white; padding: 8px 10px; border: 1px solid #cbd5e1; text-align: left; }
-            td { padding: 6px 10px; border: 1px solid #cbd5e1; }
-            tr:nth-child(even) { background-color: #f8fafc; }
-            .kpi-row { display: flex; gap: 8px; margin-bottom: 16px; }
-            .kpi-card { flex: 1; border: 1px solid #cbd5e1; padding: 8px; border-radius: 4px; background: #f8fafc; }
-            .kpi-label { font-size: 9pt; text-transform: uppercase; color: #64748b; font-weight: bold; }
-            .kpi-val { font-size: 16pt; font-weight: bold; color: #0b1f3a; margin-top: 4px; }
-          </style>
-          </head>
-          <body>
-            <h1>NiyamNetra — Legal Metrology Inspection Report</h1>
-            <p class="meta"><strong>Date:</strong> ${pretty(day)} &middot; <strong>Area Scope:</strong> ${area === 'all' ? 'All Jurisdictions' : area} &middot; <strong>Generated:</strong> ${new Date().toLocaleString()}</p>
-
-            <h2>Executive Summary</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Stores Visited</th>
-                  <th>Total Inspections</th>
-                  <th>Products Scanned</th>
-                  <th>Compliant</th>
-                  <th>Violations</th>
-                  <th>Needs Review</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td><strong>${storesVisited}</strong></td>
-                  <td><strong>${totalInspections}</strong></td>
-                  <td><strong>${productsScanned}</strong></td>
-                  <td style="color: #166534;"><strong>${compliant}</strong></td>
-                  <td style="color: #991b1b;"><strong>${violations}</strong></td>
-                  <td style="color: #92400e;"><strong>${needsReview}</strong></td>
-                </tr>
-              </tbody>
-            </table>
-
-            <h2>Area-Wise Inspection Performance</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Area</th>
-                  <th>Stores Inspected</th>
-                  <th>Total Inspections</th>
-                  <th>Violations Detected</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${areaRows
-                  .map(
-                    (r) => `<tr>
-                  <td><strong>${r.area}</strong></td>
-                  <td>${r.stores}</td>
-                  <td>${r.inspections}</td>
-                  <td style="color: ${r.violations > 0 ? '#991b1b' : '#166534'}; font-weight: bold;">${r.violations}</td>
-                </tr>`
-                  )
-                  .join('')}
-              </tbody>
-            </table>
-
-            <h2>Top Violation Categories</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Violation Category</th>
-                  <th>Offence Count</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${topViolations
-                  .map(
-                    (v) => `<tr>
-                  <td><strong>${v.category}</strong></td>
-                  <td>${v.count}</td>
-                </tr>`
-                  )
-                  .join('')}
-              </tbody>
-            </table>
-          </body>
-          </html>`
-
-        saveBlob(
-          new Blob([docHtml], { type: 'application/msword;charset=utf-8' }),
-          `${filename}.doc`
-        )
-        toast.push({
-          family: 'pass',
-          title: 'Word exported',
-          body: `Exported daily report to Word (.doc).`,
-        })
-      } else if (exportFormat === 'pdf') {
-        const printWin = window.open('', '_blank')
-        if (printWin) {
-          printWin.document.write(`<!DOCTYPE html>
-          <html>
-          <head>
-            <title>NiyamNetra — Today's Report (${pretty(day)})</title>
-            <style>
-              body { font-family: system-ui, sans-serif; padding: 24px; font-size: 12px; color: #0f172a; line-height: 1.4; }
-              h1 { color: #0b1f3a; font-size: 20px; margin-bottom: 2px; }
-              .meta { color: #64748b; font-size: 11px; margin-bottom: 18px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
-              h2 { color: #1e3a8a; font-size: 14px; margin-top: 18px; margin-bottom: 8px; }
-              table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 11px; }
-              th { background: #0b1f3a; color: #fff; padding: 7px 10px; text-align: left; }
-              td { padding: 6px 10px; border-bottom: 1px solid #e2e8f0; }
-              tr:nth-child(even) { background: #f8fafc; }
-              .kpi-row { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
-              .kpi-card { flex: 1; min-width: 90px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px; background: #f8fafc; }
-              .kpi-label { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 600; }
-              .kpi-val { font-size: 18px; font-weight: bold; color: #0b1f3a; margin-top: 2px; }
-              @media print { body { padding: 0; } }
-            </style>
-          </head>
-          <body>
-            <h1>NiyamNetra — Legal Metrology Daily Report</h1>
-            <div class="meta">
-              <strong>Report Date:</strong> ${pretty(day)} &bull; 
-              <strong>Scope:</strong> ${area === 'all' ? 'All Areas' : area} &bull; 
-              <strong>Printed:</strong> ${new Date().toLocaleString()}
-            </div>
-
-            <div class="kpi-row">
-              <div class="kpi-card"><div class="kpi-label">Stores Visited</div><div class="kpi-val">${storesVisited}</div></div>
-              <div class="kpi-card"><div class="kpi-label">Inspections</div><div class="kpi-val">${totalInspections}</div></div>
-              <div class="kpi-card"><div class="kpi-label">Products Scanned</div><div class="kpi-val">${productsScanned}</div></div>
-              <div class="kpi-card"><div class="kpi-label">Compliant</div><div class="kpi-val" style="color: #166534;">${compliant}</div></div>
-              <div class="kpi-card"><div class="kpi-label">Violations</div><div class="kpi-val" style="color: #991b1b;">${violations}</div></div>
-              <div class="kpi-card"><div class="kpi-label">Needs Review</div><div class="kpi-val" style="color: #92400e;">${needsReview}</div></div>
-            </div>
-
-            <h2>Area-Wise Inspection Summary</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Area</th>
-                  <th style="text-align: right;">Stores</th>
-                  <th style="text-align: right;">Inspections</th>
-                  <th style="text-align: right;">Violations</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${areaRows
-                  .map(
-                    (r) => `<tr>
-                  <td><strong>${r.area}</strong></td>
-                  <td style="text-align: right;">${r.stores}</td>
-                  <td style="text-align: right;">${r.inspections}</td>
-                  <td style="text-align: right; color: ${r.violations > 0 ? '#991b1b' : '#166534'}; font-weight: bold;">${r.violations}</td>
-                </tr>`
-                  )
-                  .join('')}
-              </tbody>
-            </table>
-
-            <h2>Top Violation Categories</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Category</th>
-                  <th style="text-align: right;">Violations Count</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${topViolations
-                  .map(
-                    (v) => `<tr>
-                  <td><strong>${v.category}</strong></td>
-                  <td style="text-align: right; font-weight: bold;">${v.count}</td>
-                </tr>`
-                  )
-                  .join('')}
-              </tbody>
-            </table>
-          </body>
-          </html>`)
-          printWin.document.close()
-          printWin.focus()
-          setTimeout(() => {
-            printWin.print()
-          }, 300)
-          toast.push({
-            family: 'pass',
-            title: 'PDF print view opened',
-            body: 'Prepared printable view for daily report.',
-          })
-        }
-      }
+      const blob = await fetcher(row.id)
+      saveBlob(blob, `niyamnetra-inspection-${row.id}.${kind}`)
+      toast.push({
+        family: 'pass',
+        title: `Inspection ${row.id} downloaded`,
+        body: `${row.shopName} · ${prettyDay(row.date)}. The "Inspector" line names you, not ${row.officerName} — see the note above the table.`,
+      })
     } catch (err) {
       toast.push({
         family: 'violation',
-        title: 'Export failed',
-        body: err?.message ?? 'Could not complete export.',
+        title: `Inspection ${row.id} could not be rendered`,
+        body: err?.message ?? 'The server did not return a file.',
       })
     } finally {
-      setExporting(false)
+      setBusy(null)
     }
   }
 
+  /* The caller's own day. Kept because it is a real endpoint and an
+     administrator who also inspects will want it — labelled for what it is. */
+  async function downloadOwnDay(kind) {
+    setBusy(`own:${kind}`)
+    const fetcher = {
+      docx: endpoints.reports.todayDocx,
+      pdf: endpoints.reports.todayPdf,
+      xlsx: endpoints.reports.todayXlsx,
+      csv: endpoints.reports.todayCsv,
+    }[kind]
+    try {
+      const blob = await fetcher({})
+      saveBlob(blob, `niyamnetra-report-${today}.${kind}`)
+      toast.push({
+        family: 'pass',
+        title: 'Your own day downloaded',
+        body: 'This covers your account only. If you did not inspect today, the document says so rather than being empty.',
+      })
+    } catch (err) {
+      toast.push({
+        family: 'violation',
+        title: 'The document could not be generated',
+        body: err?.message ?? 'The server did not return a file.',
+      })
+    }
+    setBusy(null)
+  }
+
+  /* Assembled here, from rows already in this browser. Nothing is asked of the
+     server, and the filename records the window so two exports never collide. */
+  function exportCsv() {
+    const csv = toCsv(
+      ['inspection_id', 'date', 'officer', 'employee_id', 'shop', 'city', 'status', 'packages', 'in_scope', 'signature'],
+      rows.map((r) => [
+        r.id,
+        r.date ?? '',
+        r.officerName,
+        r.officerCode ?? '',
+        r.shopName,
+        r.shopCity ?? '',
+        r.status ?? '',
+        r.scans,
+        r.inScope === false ? 'no' : 'yes',
+        r.signature ?? '',
+      ])
+    )
+    saveBlob(
+      new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+      `niyamnetra-inspections-${from}-to-${today}.csv`
+    )
+    toast.push({
+      family: 'pass',
+      title: `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} exported`,
+      body: 'Built from what is loaded in this browser. It carries no findings — those live in the per-visit document.',
+    })
+  }
+
   return (
-    <div className="nn-admin-page nn-admin-reports-page flex flex-col gap-5">
-      {/* ---- Page header ---- */}
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Breadcrumb />
-          <h1 className="text-[22px] font-bold tracking-[-0.01em] text-ink">Today's Report</h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 rounded-md border border-control bg-surface px-2.5 py-1.5 text-[12px] text-ink-2">
-            <Calendar size={14} strokeWidth={1.8} aria-hidden="true" className="text-ink-3" />
-            <input
-              type="date"
-              value={day}
-              onChange={(e) => setDay(e.target.value)}
-              className="bg-transparent text-[12px] font-medium text-ink outline-none"
-            />
-            <span className="nn-mono text-[12px] text-ink-2">{pretty(day)}</span>
-          </label>
-          <label className="flex items-center gap-2 rounded-md border border-control bg-surface px-2.5 py-1.5 text-[12px] text-ink-2">
-            <select
-              value={area}
-              onChange={(e) => setArea(e.target.value)}
-              className="bg-transparent text-[12px] font-medium text-ink outline-none"
-            >
-              <option value="all">All Areas</option>
-              {AREA_FALLBACK.map((a) => (
-                <option key={a} value={a}>{a}</option>
-              ))}
-            </select>
-            <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" className="text-ink-3" />
-          </label>
+    <div className="mx-auto max-w-[1180px] px-4 py-6 sm:px-6 sm:py-8">
+      <PageHeader
+        eyebrow={t('nav.reports')}
+        title={t('nav.reports')}
+        subtitle="Documents the server can actually produce: one visit at a time, or your own day. The jurisdiction figures below are context for choosing which."
+        actions={
           <div className="flex items-center gap-2">
+            {demo && <DemoChip />}
             <Button
-              icon={Download}
-              loading={exporting}
-              onClick={handleExport}
-              className="min-w-[120px] justify-center font-semibold"
+              variant="secondary"
+              icon={ListChecks}
+              iconRight={ChevronRight}
+              onClick={() => navigate('/admin')}
             >
-              Export
+              {t('nav.overview')}
             </Button>
-            <div className="w-28 sm:w-32">
-              <Select
-                value={exportFormat}
-                onChange={(e) => setExportFormat(e.target.value)}
-                aria-label="Select export format"
-                className="cursor-pointer text-small font-medium"
+          </div>
+        }
+        meta={
+          <span className="nn-mono">
+            {from} → {today}
+          </span>
+        }
+      />
+
+      {/* ---- The period, and the office totals that belong to it. ---- */}
+      <Card className="mt-6 p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <SectionTitle caption="From /admin/dashboard, which is a genuine jurisdiction total across every officer. It is the only office-wide figure on this screen.">
+            <span className="inline-flex items-center gap-2">
+              <Sigma size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
+              The office, over this period
+            </span>
+          </SectionTitle>
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Period">
+            {WINDOWS.map((w) => (
+              <button
+                key={w.id}
+                type="button"
+                onClick={() => {
+                  setWindowId(w.id)
+                  setCustomFrom('')
+                }}
+                aria-pressed={windowId === w.id && customFrom === ''}
+                className={cx(
+                  'nn-badge min-h-touch px-3 transition-colors duration-fast ease-settle',
+                  windowId === w.id && customFrom === ''
+                    ? 'border-accent bg-accent-soft font-semibold text-accent-text'
+                    : 'border-control bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink'
+                )}
               >
-                <option value="csv">CSV</option>
-                <option value="excel">Excel (.xls)</option>
-                <option value="pdf">PDF Document</option>
-                <option value="word">Word (.doc)</option>
-              </Select>
-            </div>
+                {w.label}
+              </button>
+            ))}
+            <Input
+              type="date"
+              value={customFrom}
+              max={today}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              aria-label="From date — any date"
+              className="w-auto"
+            />
           </div>
         </div>
-      </header>
 
-      {/* ---- KPI row ---- */}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <KpiCard
-          label="Stores Visited"
-          value={storesVisited}
-          icon={StoreIcon}
-          accent="navy"
-        />
-        <KpiCard
-          label="Total Inspections"
-          value={totalInspections}
-          icon={ClipboardList}
-          accent="navy"
-        />
-        <KpiCard
-          label="Products Scanned"
-          value={productsScanned}
-          icon={Package}
-          accent="navy"
-        />
-        <KpiCard
-          label="Compliant"
-          value={compliant}
-          icon={CheckCircle}
-          accent="pass"
-        />
-        <KpiCard
-          label="Violations"
-          value={violations}
-          icon={XCircle}
-          accent="violation"
-        />
-        <KpiCard
-          label="Needs Review"
-          value={needsReview}
-          icon={AlertTriangle}
-          accent="review"
-        />
-      </section>
+        {summary.error ? (
+          <Callout
+            family="review"
+            title="The period figures could not be loaded"
+            className="mt-4"
+            actions={
+              <Button size="sm" onClick={summary.reload}>
+                {t('common.retry')}
+              </Button>
+            }
+          >
+            The document list below is unaffected — it comes from a different endpoint.
+          </Callout>
+        ) : (
+          <>
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {RESULT_TILES.map((tile) => (
+                <StatCard
+                  key={tile.key}
+                  label={t(tile.labelKey)}
+                  value={String(counts[tile.key] ?? 0)}
+                  family={tile.family}
+                  icon={tile.icon}
+                  loading={summary.loading}
+                />
+              ))}
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <MetaStat label={t('nav.inspections')} value={String(period.inspections ?? 0)} />
+              <MetaStat label={t('inspection.packages')} value={String(counts.total ?? 0)} />
+              <MetaStat label="Officers active" value={String(period.active_inspectors ?? 0)} />
+              <MetaStat label={t('nav.reviewQueue')} value={String(period.review_queue ?? 0)} />
+            </div>
+          </>
+        )}
+      </Card>
 
-      {/* ---- Main content row ---- */}
-      <section className="grid gap-4 grid-cols-1 lg:grid-cols-3 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
-        <TopViolations rows={topViolations} />
-        <AreaWiseSummary rows={areaRows} />
-        <ResultDistribution data={distribution} />
-      </section>
+      {/* ---- Narrowing the list a document will be pulled from. ---- */}
+      <Card className="mt-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t('inspection.status')}>
+            {STATUS_TABS.map((s) => (
+              <button
+                key={s.value || 'both'}
+                type="button"
+                onClick={() => setStatus(s.value)}
+                aria-pressed={status === s.value}
+                className={cx(
+                  'nn-badge min-h-touch px-3.5 transition-colors duration-fast ease-settle',
+                  status === s.value
+                    ? 'border-accent bg-accent-soft font-semibold text-accent-text'
+                    : 'border-control bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink'
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={RotateCcw}
+            onClick={reset}
+            disabled={!filtered}
+            disabledReason="Nothing is filtered."
+          >
+            {t('common.clear')}
+          </Button>
+        </div>
 
-      {today.loading ? <Skeleton lines={2} /> : null}
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Officer"
+            hint="Applied in this browser. GET /inspections has no user_id parameter, so the whole window is fetched and narrowed here."
+          >
+            {(props) => (
+              <Select {...props} value={officerId} onChange={(e) => setOfficerId(e.target.value)}>
+                <option value="">Every officer</option>
+                {(officers.data ?? []).map((o) => (
+                  <option key={o.id} value={String(o.id)}>
+                    {o.full_name} · {o.employee_id}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
+          <Field
+            label="Shop name contains"
+            hint="Sent to the server. It matches the shop name only — commodity, brand and batch belong to a package, not a visit."
+          >
+            {(props) => (
+              <div className="relative">
+                <Input
+                  {...props}
+                  icon={Search}
+                  value={qRaw}
+                  onChange={(e) => setQRaw(e.target.value)}
+                  placeholder="e.g. Provision"
+                  className={qRaw ? 'pr-11' : undefined}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                {qRaw && (
+                  <button
+                    type="button"
+                    onClick={() => setQRaw('')}
+                    aria-label="Clear the shop name filter"
+                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-sm text-ink-3 hover:text-ink-2"
+                  >
+                    <X size={16} strokeWidth={2} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            )}
+          </Field>
+        </div>
+      </Card>
+
+      {/* ---- The count, said precisely. ---- */}
+      <div className="mt-6 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+        <p className="text-small text-ink-2">
+          <span className="tabular-nums font-medium text-ink">{rows.length}</span>{' '}
+          {rows.length === 1 ? 'visit' : 'visits'} ·{' '}
+          <span className="tabular-nums font-medium text-ink">{packages}</span>{' '}
+          {packages === 1 ? 'package' : 'packages'}
+          {narrowed && (
+            <span className="text-ink-3">
+              {' '}
+              · narrowed here from {allRows.length} the server returned
+            </span>
+          )}
+        </p>
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={Download}
+          onClick={exportCsv}
+          disabled={rows.length === 0}
+          disabledReason="There are no rows to export."
+        >
+          Export CSV
+        </Button>
+      </div>
+
+      {/* ---- The defect an administrator must know about before downloading. ---- */}
+      <Callout
+        family="review"
+        title="A per-visit document names you as the inspector"
+        className="mt-4"
+      >
+        report_generator writes <span className="nn-mono">Inspector: {'{caller}'}</span> into the
+        document header, and for these buttons the caller is you. A document pulled for another
+        officer's visit will therefore carry your name and employee number above their work. The
+        visit's own officer is on the row here and inside the body of the document; the header line
+        is the part to disregard. This is a server-side defect, recorded rather than hidden.
+      </Callout>
+
+      {shops.error && (
+        <Callout family="review" title="Shop names could not be loaded" className="mt-4">
+          The visit list arrived but /stores did not, so rows below show the shop number instead of
+          its name. The documents themselves are unaffected — the server reads the name from its own
+          table.
+        </Callout>
+      )}
+      {officers.error && (
+        <Callout family="review" title="The officer roster could not be loaded" className="mt-4">
+          /admin/users did not answer, so rows show the officer number and the officer filter above
+          is empty. Nothing else is affected.
+        </Callout>
+      )}
+
+      {list.loading ? (
+        <Card className="mt-4 p-5">
+          <Skeleton lines={8} />
+        </Card>
+      ) : list.error ? (
+        <Callout
+          family="violation"
+          title="The visit list could not be loaded"
+          className="mt-4"
+          actions={
+            <Button size="sm" onClick={list.reload}>
+              {t('common.retry')}
+            </Button>
+          }
+        >
+          {list.error.message}
+        </Callout>
+      ) : rows.length === 0 ? (
+        <Card className="mt-4">
+          <EmptyState
+            icon={ClipboardList}
+            title={filtered ? 'Nothing matches these filters' : 'No visits in this window'}
+            body={
+              filtered
+                ? 'Widen the period, set the officer back to every officer, or clear the shop name.'
+                : 'A document can only be produced from a recorded visit, and there are none in the last thirty days.'
+            }
+            action={
+              filtered ? (
+                <Button size="sm" icon={RotateCcw} onClick={reset}>
+                  {t('common.clear')}
+                </Button>
+              ) : null
+            }
+          />
+        </Card>
+      ) : (
+        <Card className="mt-4 p-0">
+          <Table caption={`${rows.length} ${rows.length === 1 ? 'visit' : 'visits'} between ${from} and ${today}, each downloadable as one document.`}>
+            <thead>
+              <tr>
+                <Th>Visit</Th>
+                <Th>Officer</Th>
+                <Th align="right">{t('inspection.packages')}</Th>
+                <Th align="right">Document</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <VisitRow
+                  key={r.id}
+                  row={r}
+                  busy={busy}
+                  onOpen={() => navigate(`/admin/inspections/${r.id}`)}
+                  onDownload={downloadVisit}
+                  t={t}
+                />
+              ))}
+            </tbody>
+          </Table>
+        </Card>
+      )}
+
+      {/* ---- What a per-visit document holds. ---- */}
+      <Callout family="info" title="What is inside a per-visit document" icon={FileSignature} className="mt-6">
+        Every package on the visit, every finding in registration order with the provision it cites,
+        the shop and transaction type, the geofence result, and the audit chain head as it stood when
+        the file was built. That last value is what lets a reader prove the record had not been
+        altered before the document was made. Duplicate packages are excluded, as they are everywhere
+        else.
+      </Callout>
+
+      {/* ---- The administrator's own day. Labelled for what it really is. ---- */}
+      <Card className="mt-4 p-5 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <SectionTitle caption="/reports/today filters on the caller's own user id even for an administrator. There is no parameter that widens it to the office.">
+              <span className="inline-flex items-center gap-2">
+                <UserRound size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
+                Your own day
+              </span>
+            </SectionTitle>
+            <p className="mt-2 max-w-prose text-small text-ink-2">
+              This produces the same document an inspector downloads at the end of a shift, for{' '}
+              <span className="nn-mono">{user?.employee_id ?? 'your account'}</span> and for today
+              only. If you did not inspect today it will say so rather than arriving empty.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="secondary"
+              icon={Download}
+              loading={busy === 'own:docx'}
+              disabled={busy != null && busy !== 'own:docx'}
+              disabledReason="A document is already being generated."
+              onClick={() => downloadOwnDay('docx')}
+            >
+              {t('reports.downloadDocx')}
+            </Button>
+            <Button
+              icon={FileText}
+              loading={busy === 'own:pdf'}
+              disabled={busy != null && busy !== 'own:pdf'}
+              disabledReason="A document is already being generated."
+              onClick={() => downloadOwnDay('pdf')}
+            >
+              {t('reports.downloadPdf')}
+            </Button>
+            <Button
+              variant="secondary"
+              icon={FileSpreadsheet}
+              loading={busy === 'own:xlsx'}
+              disabled={busy != null && busy !== 'own:xlsx'}
+              disabledReason="A document is already being generated."
+              onClick={() => downloadOwnDay('xlsx')}
+            >
+              Excel
+            </Button>
+            <Button
+              variant="secondary"
+              icon={Download}
+              loading={busy === 'own:csv'}
+              disabled={busy != null && busy !== 'own:csv'}
+              disabledReason="A document is already being generated."
+              onClick={() => downloadOwnDay('csv')}
+            >
+              CSV
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* ---- The honest boundary. ---- */}
+      <Card className="mt-6 p-5 sm:p-6">
+        <h2 className="text-h2 text-ink">What reporting cannot do here</h2>
+        <p className="mt-1 max-w-prose text-caption text-ink-2">
+          Named rather than faked, so a missing feature never reads as a broken one.
+        </p>
+        <ul className="mt-4 flex flex-col gap-3">
+          {[
+            [
+              'There is no document for a date range, or for the office',
+              'Both document routes take one visit or one officer-day. A month of work is a month of separate downloads, and an office-wide report does not exist on the server in any format.',
+            ],
+            [
+              'There is no Excel writer',
+              'report_generator produces Word and PDF only. The CSV above is assembled in this browser from the rows already loaded, carries no findings, and is offered as exactly that rather than as an export feature.',
+            ],
+            [
+              'Documents are not archived',
+              'Each request rebuilds the file and streams it back, overwriting the server-side copy under the same name. Nothing here lists a document produced last week, because no such list is kept.',
+            ],
+            [
+              'Nothing is scheduled or emailed',
+              'There is no job runner and no mail transport in the backend. A weekly report reaches a senior officer because someone downloaded it and sent it.',
+            ],
+            [
+              'The officer filter is not a server filter',
+              'GET /inspections accepts store, status, a date range and a shop-name search — no user id. The whole window is fetched and narrowed in this browser, which is why the count says how many were dropped.',
+            ],
+            [
+              'A document about a draft is not evidence',
+              'The route will render an unfinished visit, and the Unfinished tab exists so an administrator can chase one. Nothing that visit holds has reached a report or a total until it is submitted.',
+            ],
+          ].map(([title, body]) => (
+            <li key={title} className="border-l-2 border-divider pl-3">
+              <p className="text-small font-semibold text-ink">{title}</p>
+              <p className="mt-0.5 max-w-prose text-caption text-ink-2">{body}</p>
+            </li>
+          ))}
+        </ul>
+      </Card>
+
+      <p className="mt-6 flex items-start gap-2 text-caption text-ink-3">
+        <Info size={14} strokeWidth={1.8} className="mt-0.5 shrink-0" aria-hidden="true" />
+        <span className="max-w-prose">
+          Findings an administrator has overridden are reflected the next time a document is built,
+          because the document is rendered from the current record rather than from a stored copy.
+          The chain head printed on it changes accordingly, which is the point of printing it.
+        </span>
+      </p>
     </div>
+  )
+}
+
+/**
+ * One visit, with its two documents.
+ *
+ * The visit id is a button rather than a link because the row already carries two
+ * other buttons, and nesting an anchor between them makes the whole row a
+ * guessing game for a keyboard. `busy` is the parent's single key, so the two
+ * buttons on this row disable each other and every other row's as well — the
+ * server writes each document to one path per inspection and two overlapping
+ * requests would race for it.
+ */
+function VisitRow({ row: r, busy, onOpen, onDownload, t }) {
+  const draft = r.status === 'draft'
+  const mine = busy != null && busy.endsWith(`:${r.id}`)
+  const locked = busy != null && !mine
+
+  return (
+    <Tr>
+      <Td>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="group flex flex-col items-start text-left"
+        >
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="nn-mono text-caption text-ink-3">#{r.id}</span>
+            <span className="text-small font-medium text-ink group-hover:text-accent-text">
+              {r.shopName}
+            </span>
+            {draft && <Pill family="na">{t('inspection.draft')}</Pill>}
+            {r.inScope === false && <Pill family="na">{t('result.out_of_scope')}</Pill>}
+          </span>
+          <span className="mt-0.5 block text-caption text-ink-3">
+            {prettyDay(r.date)}
+            {r.shopCity ? ` · ${r.shopCity}` : ''}
+            {r.signature === 'refused' ? ` · ${t('inspection.refused')}` : ''}
+            {r.signature === 'unavailable' ? ` · ${t('inspection.unavailable')}` : ''}
+          </span>
+        </button>
+      </Td>
+
+      <Td>
+        <span className="flex items-center gap-2">
+          <Users size={14} strokeWidth={1.8} className="shrink-0 text-ink-3" aria-hidden="true" />
+          <span className="min-w-0">
+            <span className="block text-small text-ink">{r.officerName}</span>
+            {r.officerCode && (
+              <span className="nn-mono block text-caption text-ink-3">{r.officerCode}</span>
+            )}
+          </span>
+        </span>
+      </Td>
+
+      <Td align="right" className="tabular-nums text-ink">
+        {r.scans}
+      </Td>
+
+      <Td align="right">
+        <span className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={Download}
+            loading={busy === `docx:${r.id}`}
+            disabled={locked || r.scans === 0}
+            disabledReason={
+              r.scans === 0
+                ? 'This visit holds no package, so the document would list only the shop.'
+                : 'Another document is being generated.'
+            }
+            onClick={() => onDownload(r, 'docx')}
+          >
+            Word
+          </Button>
+          <Button
+            size="sm"
+            icon={FileText}
+            loading={busy === `pdf:${r.id}`}
+            disabled={locked || r.scans === 0}
+            disabledReason={
+              r.scans === 0
+                ? 'This visit holds no package, so the document would list only the shop.'
+                : 'Another document is being generated.'
+            }
+            onClick={() => onDownload(r, 'pdf')}
+          >
+            PDF
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={FileSpreadsheet}
+            loading={busy === `xlsx:${r.id}`}
+            disabled={locked || r.scans === 0}
+            disabledReason={
+              r.scans === 0
+                ? 'This visit holds no package, so the document would list only the shop.'
+                : 'Another document is being generated.'
+            }
+            onClick={() => onDownload(r, 'xlsx')}
+          >
+            Excel
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={Download}
+            loading={busy === `csv:${r.id}`}
+            disabled={locked || r.scans === 0}
+            disabledReason={
+              r.scans === 0
+                ? 'This visit holds no package, so the document would list only the shop.'
+                : 'Another document is being generated.'
+            }
+            onClick={() => onDownload(r, 'csv')}
+          >
+            CSV
+          </Button>
+        </span>
+      </Td>
+    </Tr>
   )
 }
