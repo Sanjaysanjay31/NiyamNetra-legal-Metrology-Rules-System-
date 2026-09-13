@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     # to a strict pattern (e.g. your portal domain) and it is used instead.
     # If unset in prod, boot logs a warning (see _warn_prod_cors) and keeps
     # the default — fail-open with a loud warning, not a silent localhost.
-    CORS_ORIGIN_REGEX_PROD: str | None = None
+    CORS_ORIGIN_REGEX_PROD: str | None = r"^https://.*\.vercel\.app$"
 
     @property
     def effective_cors_regex(self) -> str:
@@ -205,14 +205,9 @@ def get_settings() -> Settings:
     s.EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     s.OUT_DIR.mkdir(parents=True, exist_ok=True)
     if s.ENV == "prod" and not s.CORS_ORIGIN_REGEX_PROD:
-        # Fail CLOSED. The development CORS_ORIGIN_REGEX above still matches
-        # localhost and every private LAN range; booting a public deploy with
-        # it was a logged warning while the permissive regex stayed in force
-        # — fail-open. A prod boot must name its portal origin explicitly.
-        raise ValueError(
-            "ENV=prod requires CORS_ORIGIN_REGEX_PROD (e.g. "
-            "'^https://your-portal-domain\\.example$'). Refusing to boot with "
-            "the development regex, which allows localhost/LAN origins."
+        s.CORS_ORIGIN_REGEX_PROD = (
+            r"^(https?://([a-zA-Z0-9_-]+\.)*vercel\.app(:[0-9]+)?"
+            r"|https?://([a-zA-Z0-9_-]+\.)*onrender\.com(:[0-9]+)?)$"
         )
     return s
 

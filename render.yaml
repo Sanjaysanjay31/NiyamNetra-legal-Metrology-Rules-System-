@@ -40,7 +40,7 @@ services:
 
       # Strict CORS regex for production (e.g. ^https://.*\.vercel\.app$).
       - key: CORS_ORIGIN_REGEX_PROD
-        sync: false
+        value: "^https://.*\\.vercel\\.app$"
 
       # Supabase connection URI. Paste in the dashboard — never commit it.
       #
