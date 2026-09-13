@@ -324,8 +324,17 @@ def _google_vision_ocr(bgr: np.ndarray, why: str) -> OcrResult:
         resp.raise_for_status()
         body = resp.json()
     except Exception as e:
+        detail = ""
+        try:
+            if hasattr(e, "response") and e.response is not None:
+                err_json = e.response.json()
+                msg = err_json.get("error", {}).get("message", "")
+                if msg:
+                    detail = f": {msg}"
+        except Exception:
+            pass
         return OcrResult(engine="none",
-                         failure_reason=f"{why}; Google Vision request failed ({type(e).__name__}).")
+                         failure_reason=f"{why}; Google Vision request failed ({type(e).__name__}{detail}).")
     try:
         responses = (body or {}).get("responses") or [{}]
         first = responses[0] if responses else {}
