@@ -167,12 +167,17 @@ The Web Portal is configured at the root via [`vercel.json`](file:///c:/Skills/P
 ```
 
 ### 5.2 Deploying via Vercel Dashboard
+
+**Recommended Setup (Root Directory = `Frontend_Portal`):**
 1. Log in to [Vercel](https://vercel.com/) and click **Add New Project**.
 2. Import the `NiyamNetra` repository.
-3. Keep **Root Directory** as `./` (the root `vercel.json` coordinates the build).
-4. In **Environment Variables**, configure:
-   - `VITE_API_BASE_URL`: `https://niyamnetra-backend.onrender.com`
-5. Click **Deploy**.
+3. Next to **Root Directory**, click **Edit** and select **`Frontend_Portal`**.
+4. In **Build and Output Settings**:
+   - Leave **Build Command** override **OFF** (or set to `npm run build`). *Do NOT type `cd Frontend_Portal` because Vercel is already in that folder!*
+   - Leave **Output Directory** override **OFF** (Vite automatically outputs to `dist`).
+5. (Optional) In **Environment Variables**:
+   - `VITE_API_URL`: `https://niyamnetra-backend.onrender.com` (already preconfigured in `.env.production`).
+6. Click **Deploy**.
 
 ### 5.3 Verifying Local Build
 Before pushing to Git, verify that the frontend builds cleanly without errors:
