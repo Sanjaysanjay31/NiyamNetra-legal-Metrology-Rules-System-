@@ -163,10 +163,9 @@ export function MetaStat({ label, value, title }) {
 /* -------------------------------------------------------------------------- */
 
 const BUTTON_VARIANTS = {
-  /* Primary is navy, not accent: the accent is a user preference and the
-     primary action must not change weight because someone picked a lighter
-     hue. Navy measures 14.63:1 against white text in light, and the dark
-     theme lifts it to #1B3A5C which still carries white text. */
+  /* Primary is navy: the brand's own ink at 14.63:1 against its white label,
+     deliberately independent of the accent so the primary action always reads
+     as the heaviest control on the screen. */
   primary:
     'bg-navy text-ink-inverse hover:bg-navy-hover active:translate-y-px shadow-card',
   secondary:
@@ -267,7 +266,7 @@ export const IconButton = forwardRef(function IconButton(
         'relative grid h-11 w-11 shrink-0 place-items-center rounded-sm',
         'transition-colors duration-fast ease-settle',
         tone === 'onRail'
-          ? 'text-rail-label hover:bg-rail-hover hover:text-ink-inverse'
+          ? 'text-rail-label hover:bg-rail-hover hover:text-rail-ink'
           : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
         className
       )}
@@ -378,17 +377,17 @@ export function StatCard({
 /* -------------------------------------------------------------------------- */
 
 const VERDICT_META = {
-  pass: { label: 'Pass', family: 'pass', Icon: CheckCircle },
+  pass: { label: 'Compliant', family: 'pass', Icon: CheckCircle },
   fail: { label: 'Violation', family: 'violation', Icon: XCircle },
-  not_assessed: { label: 'Not assessed', family: 'na', Icon: HelpCircle },
-  compliant: { label: 'Success', family: 'pass', Icon: CheckCircle },
+  not_assessed: { label: 'Not Assessed', family: 'na', Icon: HelpCircle },
+  compliant: { label: 'Compliant', family: 'pass', Icon: CheckCircle },
   violation: { label: 'Violation', family: 'violation', Icon: XCircle },
-  out_of_scope: { label: 'Out of scope', family: 'na', Icon: Clock },
-  review: { label: 'Review', family: 'review', Icon: Clock },
-  pending: { label: 'Pending', family: 'review', Icon: Clock },
-  approved: { label: 'Approved', family: 'pass', Icon: CheckCircle },
-  rejected: { label: 'Rejected', family: 'violation', Icon: XCircle },
-  draft: { label: 'Draft', family: 'na', Icon: Clock },
+  out_of_scope: { label: 'Out of Scope', family: 'na', Icon: Clock },
+  review: { label: 'Not Assessed', family: 'na', Icon: HelpCircle },
+  pending: { label: 'Not Assessed', family: 'na', Icon: HelpCircle },
+  approved: { label: 'Compliant', family: 'pass', Icon: CheckCircle },
+  rejected: { label: 'Violation', family: 'violation', Icon: XCircle },
+  draft: { label: 'In Progress', family: 'review', Icon: Clock },
 }
 
 /**
@@ -487,27 +486,29 @@ export function ReasonTag({ reason, className }) {
   )
 }
 
-export function SyncBadge({ state = 'synced', pending = 0, className }) {
-  const map = {
-    synced: { label: 'Synced', family: 'pass', Icon: CheckCircle },
-    syncing: { label: 'Syncing', family: 'info', Icon: Loader2 },
-    offline: { label: pending ? `Offline · ${pending} queued` : 'Offline', family: 'review', Icon: Clock },
-    error: { label: 'Sync failed', family: 'violation', Icon: AlertTriangle },
-  }
-  const m = map[state] ?? map.synced
-  const f = FAMILY[m.family]
-  const { Icon } = m
+export function SyncBadge({ state = 'synced', className }) {
+  const isSynced = state === 'synced' || state === 'Synced' || state === true
+  const label = isSynced ? 'Synced' : 'Not Synced'
+  const family = isSynced ? 'pass' : 'review'
+  const Icon = isSynced ? CheckCircle : Clock
+  const f = FAMILY[family]
   return (
     <span className={cx('nn-badge', f.fill, f.border, f.text, className)}>
-      <Icon
-        size={14}
-        strokeWidth={2}
-        className={state === 'syncing' ? 'animate-spin' : undefined}
-        aria-hidden="true"
-      />
-      {m.label}
+      <Icon size={14} strokeWidth={2} aria-hidden="true" />
+      {label}
     </span>
   )
+}
+
+export function InspectionStatusBadge({ status = 'submitted', className }) {
+  const isSubmitted =
+    status === 'submitted' ||
+    status === 'Submitted' ||
+    status === 'complete' ||
+    status === 'closed'
+  const label = isSubmitted ? 'Submitted' : 'In Progress'
+  const family = isSubmitted ? 'pass' : 'review'
+  return <StatusBadge family={family} label={label} className={className} />
 }
 
 /** A record whose hash chain has been checked. Absence of this is not a claim. */
@@ -533,6 +534,22 @@ export function VerificationBadge({ verified, className }) {
   )
 }
 
+/**
+ * DemoChip. Rendered on any surface filled from fixtures. Without it, an
+ * illustrative number is indistinguishable from an inspection record, which is
+ * precisely the fabrication 08 SS4.1 prohibits.
+ */
+export function DemoChip({ className }) {
+  return (
+    <span
+      className={cx('nn-badge border-info-border bg-info-fill text-info-text', className)}
+      title="Illustrative fixture data — the backend was unreachable. Not an inspection record."
+    >
+      <Sparkles size={14} strokeWidth={2} aria-hidden="true" />
+      Demo data
+    </span>
+  )
+}
 
 export function Pill({ children, family, className, icon: Icon }) {
   const f = family ? FAMILY[family] : null
@@ -550,12 +567,37 @@ export function Pill({ children, family, className, icon: Icon }) {
   )
 }
 
-export function StatusBadge({ family, label, className }) {
-  return <Pill family={family} className={className}>{label}</Pill>
-}
-
-export function DemoChip() {
-  return null
+/**
+ * A small, leading-dot status pill for verdicts and lifecycle states. The dot
+ * is non-decorative: a glance reads the family from the dot, the word from the
+ * label, and the meaning is carried by both rather than by colour alone.
+ *
+ *     <StatusBadge family="pass"      label="Compliant" />
+ *     <StatusBadge family="violation" label="Violation" />
+ *     <StatusBadge family="review"    label="Pending"   />
+ *     <StatusBadge family="na"        label="Inactive"  />
+ */
+export function StatusBadge({ family = 'na', label, className }) {
+  const f = FAMILY[family] ?? FAMILY.na
+  return (
+    <span
+      className={cx(
+        'inline-flex items-center gap-1.5 rounded-pill px-2 py-0.5 text-caption font-medium',
+        f.fill,
+        f.text,
+        'ring-1 ring-inset',
+        f.border,
+        className
+      )}
+    >
+      <span
+        className="h-1.5 w-1.5 rounded-pill"
+        style={{ background: f.raw }}
+        aria-hidden="true"
+      />
+      {label}
+    </span>
+  )
 }
 
 /* -------------------------------------------------------------------------- */

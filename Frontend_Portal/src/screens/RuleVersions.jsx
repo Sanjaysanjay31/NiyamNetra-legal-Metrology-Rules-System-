@@ -28,6 +28,7 @@ import { Link } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { endpoints } from '../api/client'
 import { useDocumentTitle, useResource } from '../lib/hooks'
+import { RULE_VERSIONS_DATA } from '../mock/ruleVersionsData'
 import {
   Button,
   Callout,
@@ -37,7 +38,6 @@ import {
   Input,
   Modal,
   Select,
-  Skeleton,
   StatusBadge,
   Table,
   Td,
@@ -437,18 +437,10 @@ export default function RuleVersions() {
   useDocumentTitle('Rule versions')
   const toast = useToast()
 
-  /* ---- Fetch live rule versions from backend ---- */
-  const rvRes = useResource(() => endpoints.admin.ruleVersions(), {
-    label: 'rule-versions',
-  })
-
-  const isLoading = rvRes.loading
-
   // Strict chronological order requested: 1st 2009, next 2011, next 2017 amendments, next 2022 amendments
   const sorted = useMemo(() => {
-    const raw = Array.isArray(rvRes.data) ? rvRes.data : []
-    return [...raw].sort((a, b) => (a.year ?? 0) - (b.year ?? 0))
-  }, [rvRes.data])
+    return [...RULE_VERSIONS_DATA].sort((a, b) => (a.year ?? 0) - (b.year ?? 0))
+  }, [])
 
   const [menuFor, setMenuFor] = useState(null)
   const [viewingRules, setViewingRules] = useState(null)

@@ -50,12 +50,14 @@ import {
 import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDocumentTitle, useMutation, useResource } from '../lib/hooks'
+import { inspections as inspectionsFixture, storesById } from '../mock/fixtures'
 import CameraCapture from '../ui/CameraCapture'
 import {
   Button,
   Callout,
   Card,
   Checkbox,
+  DemoChip,
   Field,
   Input,
   PageHeader,
@@ -66,16 +68,12 @@ import {
   cx,
 } from '../ui'
 
-/* The panels the engine understands. `front` is the only one it insists on;
-    the rest sharpen a reading without gating it. Matches ALLOWED_PANELS in
-    routers/scans.py: front, back, side, mrp, batch, other, principal */
+/* The four panels the engine understands. `front` is the only one it insists on;
+   the rest sharpen a reading without gating it. */
 const PANELS = [
   { key: 'front', required: true },
   { key: 'back', required: false },
-  { key: 'mrp', required: false },
-  { key: 'batch', required: false },
   { key: 'principal', required: false },
-  { key: 'side', required: false },
   { key: 'other', required: false },
 ]
 
@@ -182,14 +180,16 @@ export default function Capture() {
   useDocumentTitle(t('capture.title'))
   const navigate = useNavigate()
 
+  const fallback = inspectionsFixture.find((i) => String(i.id) === String(id))
   const insp = useResource(() => endpoints.inspections.get(id), {
     deps: [id],
+    fallback,
     label: t('inspection.title'),
   })
   const inspection = insp.data
   const submitted = inspection?.status === 'submitted'
   const storeName = inspection
-    ? inspection.store_name ?? `Shop #${inspection.store_id}`
+    ? storesById[inspection.store_id]?.name ?? `Shop #${inspection.store_id}`
     : null
 
   /* Package identity — every one of these is optional on CreateScanRequest. */
@@ -328,6 +328,7 @@ export default function Capture() {
         subtitle="Describe the package, then photograph its panels. The engine runs on the front panel; the rest make the reading surer."
         actions={
           <div className="flex items-center gap-2">
+            {insp.demo && <DemoChip />}
             <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={() => navigate(`/inspector/inspections/${id}`)}>
               {t('common.back')}
             </Button>

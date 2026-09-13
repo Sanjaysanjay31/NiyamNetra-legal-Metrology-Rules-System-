@@ -6,9 +6,6 @@
  *   ErrorBoundary   outermost, so a crash inside any provider still renders a
  *                   readable page instead of a white screen. A field officer
  *                   with a blank screen has no way to report what happened.
- *   ThemeProvider   sets data-theme/data-accent on <html>. Nothing below it
- *                   should render before the attributes are correct, and
- *                   index.html has already applied them pre-paint.
  *   I18nProvider    the boot screen and the error page both need `t`.
  *   ToastProvider   above the router, so a toast survives navigation. A "queued
  *                   inspection sent" message must not vanish because the officer
@@ -123,19 +120,17 @@ class ErrorBoundary extends React.Component {
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <ThemeProvider>
-        <I18nProvider>
+      <I18nProvider>
+        <ThemeProvider>
           <ToastProvider>
             <BrowserRouter>
               <AuthProvider>
-                <ThemeProvider>
-                  <App />
-                </ThemeProvider>
+                <App />
               </AuthProvider>
             </BrowserRouter>
           </ToastProvider>
-        </I18nProvider>
-      </ThemeProvider>
+        </ThemeProvider>
+      </I18nProvider>
     </ErrorBoundary>
   </React.StrictMode>
 )

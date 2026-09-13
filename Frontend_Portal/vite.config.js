@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
-
 // Portal runs on 5173; the backend listens on 8000 (see .env).
 export default defineConfig({
   plugins: [

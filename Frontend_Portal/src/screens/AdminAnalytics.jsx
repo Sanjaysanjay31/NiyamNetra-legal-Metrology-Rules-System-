@@ -35,7 +35,13 @@ import {
 import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDocumentTitle, useLocalPref, useReducedMotion, useResource } from '../lib/hooks'
-import { Card, PageHeader, SectionTitle, Skeleton, StatCard, Tabs } from '../ui'
+import {
+  adminDashboard,
+  inspections as inspectionsFixture,
+  storesById,
+  usersById,
+} from '../mock/fixtures'
+import { Card, DemoChip, PageHeader, SectionTitle, Skeleton, StatCard, Tabs } from '../ui'
 
 const AXIS = { fontSize: 11, fill: 'var(--nn-text-3)' }
 
@@ -101,16 +107,20 @@ export default function AdminAnalytics() {
 
   const dash = useResource(() => endpoints.admin.dashboard({ start, end }), {
     deps: [start, end],
+    fallback: adminDashboard,
     label: 'admin-dashboard',
   })
   const list = useResource(() => endpoints.inspections.list({ date_from: start, date_to: end }), {
     deps: [start, end],
+    fallback: inspectionsFixture,
     label: 'inspections',
   })
   const shops = useResource(() => endpoints.inspections.stores(), {
+    fallback: Object.values(storesById),
     label: 'stores',
   })
   const officers = useResource(() => endpoints.admin.users(), {
+    fallback: Object.values(usersById),
     label: 'users',
   })
 
@@ -134,9 +144,6 @@ export default function AdminAnalytics() {
         out_of_scope: p.counts?.out_of_scope ?? 0,
       })),
     [d]
-  )
-  const trendHasData = trend.some(
-    (p) => (p.compliant || 0) + (p.violation || 0) + (p.not_assessed || 0) + (p.out_of_scope || 0) > 0
   )
 
   /* ---- Work per inspector. Rows carry user_id + scan_count. ---- */
@@ -177,13 +184,15 @@ export default function AdminAnalytics() {
   ]
   const pieHasData = share.some((s) => s.value > 0)
   const visits = (list.data ?? []).length
+  const demo = dash.demo || list.demo || shops.demo || officers.demo
 
   return (
-    <div className="mx-auto max-w-shell px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto max-w-shell">
       <PageHeader
         eyebrow={t('nav.overview')}
         title={t('nav.analytics')}
         subtitle="Where the work is happening, and who is doing it — derived from the same two endpoints the overview and the list use."
+        actions={demo ? <DemoChip /> : undefined}
         meta={<Tabs tabs={PERIODS} value={days} onChange={setDays} />}
       />
 
@@ -240,10 +249,6 @@ export default function AdminAnalytics() {
         >
           {dash.loading ? (
             <Skeleton className="h-full w-full" />
-          ) : !trendHasData ? (
-            <div className="grid h-full place-items-center text-small text-ink-2">
-              No packages were assessed in this period.
-            </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={trend} margin={{ top: 8, right: 8, bottom: 4, left: -18 }}>

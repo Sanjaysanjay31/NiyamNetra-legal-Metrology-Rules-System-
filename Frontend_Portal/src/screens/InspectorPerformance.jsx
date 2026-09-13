@@ -1,373 +1,342 @@
+/**
+ * My performance — the inspector's own dashboard.
+ *
+ * There is no inspector analytics endpoint on the server, and this screen does
+ * not pretend otherwise: every chart here aggregates GET /inspections, which is
+ * scoped to the signed-in officer by construction. So every figure is the
+ * officer's own work — visits, packages, shops — and none of it is a verdict
+ * tally, because the list carries no per-visit results. That boundary is stated
+ * on the screen rather than smoothed over.
+ */
+
 import { useMemo, useState } from 'react'
+import { format, parseISO, subDays } from 'date-fns'
+import { Activity, CalendarDays, ClipboardList, Clock, Store, Target } from 'lucide-react'
 import {
-  Activity,
-  AlertTriangle,
-  Award,
-  BarChart2,
-  Calendar,
-  CheckCircle,
-  ClipboardList,
-  Clock,
-  PieChart,
-  Scale,
-  TrendingDown,
-  TrendingUp,
-} from 'lucide-react'
-import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
-  Legend,
+  LabelList,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
-import { useAuth } from '../auth/AuthContext'
+import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
-import {
-  monthlyBuckets,
-  statusTally,
-  useInspectorData,
-  violationsByRule,
-} from '../lib/inspector'
-import { useDocumentTitle } from '../lib/hooks'
-import {
-  Card,
-  PageHeader,
-  SectionTitle,
-  Table,
-  Td,
-  Th,
-  Tr,
-} from '../ui'
+import { useDocumentTitle, useLocalPref, useReducedMotion, useResource } from '../lib/hooks'
+import { inspections as inspectionsFixture, storesById } from '../mock/fixtures'
+import { Card, DemoChip, PageHeader, SectionTitle, Skeleton, StatCard, Tabs } from '../ui'
 
 const AXIS = { fontSize: 11, fill: 'var(--nn-text-3)' }
 
-function ChartTip({ active, payload, label }) {
+const PERIODS = [
+  { id: 30, label: '30 days' },
+  { id: 90, label: '90 days' },
+  { id: 180, label: '6 months' },
+]
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+const iso = (d) => format(d, 'yyyy-MM-dd')
+
+function ChartFrame({ title, caption, records, children }) {
+  return (
+    <Card className="flex flex-col p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-h2 text-ink">{title}</h3>
+        {records != null && <span className="nn-mono text-caption text-ink-3">{records}</span>}
+      </div>
+      <p className="mt-1 max-w-prose text-caption text-ink-2">{caption}</p>
+      <div className="mt-4 h-64">{children}</div>
+    </Card>
+  )
+}
+
+function TipBox({ active, payload, label }) {
   if (!active || !payload?.length) return null
   return (
-    <div className="rounded-card border border-divider bg-surface px-3.5 py-2.5 text-caption shadow-modal">
-      <p className="font-semibold text-ink">{label}</p>
+    <div className="rounded-sm border border-divider bg-surface px-3 py-2 text-caption shadow-modal">
+      <p className="nn-mono font-semibold text-ink">{label}</p>
       {payload.map((p) => (
-        <p key={p.dataKey || p.name} className="mt-1 flex items-center gap-2 text-ink-2">
+        <p key={p.dataKey ?? p.name} className="mt-0.5 flex items-center gap-1.5 text-ink-2">
           <span
             aria-hidden="true"
-            className="h-2 w-2 rounded-full"
+            className="h-2 w-2 rounded-pill"
             style={{ background: p.color ?? p.fill }}
           />
-          <span>{p.dataKey || p.name}:</span>
-          <span className="font-bold text-ink">{p.value}</span>
+          {p.name}: <span className="nn-mono font-medium text-ink">{p.value}</span>
         </p>
       ))}
     </div>
   )
 }
 
+/* ------------------------------------------------------------------ screen -- */
+
 export default function InspectorPerformance() {
   const { t } = useI18n()
-  const { user } = useAuth()
-  useDocumentTitle('My Performance · Inspector Portal')
-  const { rows, loading, violationRows } = useInspectorData()
+  useDocumentTitle(t('nav.performance'))
+  const reduced = useReducedMotion()
+  const [days, setDays] = useLocalPref('perf.days', 30)
 
-  const [period, setPeriod] = useState('all')
+  const end = iso(new Date())
+  const start = iso(subDays(new Date(), days - 1))
+  const rangeLabel = `${start} → ${end}`
 
-  const chartData = useMemo(() => monthlyBuckets(rows), [rows])
+  const list = useResource(() => endpoints.inspections.list({ date_from: start, date_to: end }), {
+    deps: [start, end],
+    fallback: inspectionsFixture,
+    label: 'inspections',
+  })
+  const shops = useResource(() => endpoints.inspections.stores(), {
+    fallback: Object.values(storesById),
+    label: 'stores',
+  })
 
-  const filteredRows = useMemo(() => {
-    if (period === 'all') return rows
-    const days = period === '30' ? 30 : 90
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    return rows.filter((r) => (r.inspection_date ?? '') >= cutoff)
-  }, [rows, period])
-
-  const tally = useMemo(() => statusTally(filteredRows), [filteredRows])
-  const totalInspections = tally.total ?? 0
-  const compliantCount = tally.byStatus.compliant ?? 0
-  const nonCompliantCount = tally.byStatus.non_compliant ?? 0
-  const needsReviewCount = tally.byStatus.needs_review ?? 0
-
-  const complianceRate = totalInspections > 0 ? `${Math.round((compliantCount / totalInspections) * 1000) / 10}%` : '0%'
-  const nonComplianceRate = totalInspections > 0 ? `${Math.round((nonCompliantCount / totalInspections) * 1000) / 10}%` : '0%'
-  const reviewRate = totalInspections > 0 ? `${Math.round((needsReviewCount / totalInspections) * 1000) / 10}%` : '0%'
-
-  const ruleBreakdown = useMemo(() => {
-    const list = violationsByRule(violationRows)
-    const total = list.reduce((sum, r) => sum + r.count, 0)
-    const colors = ['#EF4444', '#F97316', '#F59E0B', '#3B82F6', '#8B5CF6', '#10B981']
-    return list.slice(0, 6).map((r, idx) => ({
-      name: `${r.check_id}`,
-      count: r.count,
-      fill: colors[idx % colors.length],
-      rule: r.check_id,
-      citation: r.citation || '—',
-      title: r.title || 'Violation',
-      share: total > 0 ? `${Math.round((r.count / total) * 1000) / 10}%` : '0%',
-      action: r.count > 5 ? 'Section 15 Notice' : 'Statutory Memo',
-      risk: r.count > 5 ? 'High' : (r.count > 2 ? 'Medium' : 'Low'),
+  /* ---- Rows with shop names joined. ---- */
+  const rows = useMemo(() => {
+    const shopById = new Map((shops.data ?? []).map((s) => [s.id, s]))
+    return (list.data ?? []).map((i) => ({
+      id: i.id,
+      date: i.inspection_date ?? null,
+      shopName: shopById.get(i.store_id)?.name ?? `Shop #${i.store_id}`,
+      status: i.status ?? null,
+      scans: i.scan_count ?? 0,
     }))
-  }, [violationRows])
+  }, [list.data, shops.data])
+
+  /* ---- Packages and visits per day. ---- */
+  const byDay = useMemo(() => {
+    const acc = new Map()
+    for (const r of rows) {
+      if (!r.date) continue
+      const row = acc.get(r.date) ?? { day: r.date, visits: 0, packages: 0 }
+      row.visits += 1
+      row.packages += r.scans
+      acc.set(r.date, row)
+    }
+    return [...acc.values()]
+      .sort((a, b) => a.day.localeCompare(b.day))
+      .map((r) => ({
+        ...r,
+        label: (() => {
+          try {
+            return format(parseISO(r.day), 'd MMM')
+          } catch {
+            return r.day
+          }
+        })(),
+      }))
+  }, [rows])
+
+  /* ---- Top shops by packages. ---- */
+  const byShop = useMemo(() => {
+    const acc = new Map()
+    for (const r of rows) {
+      const row = acc.get(r.shopName) ?? { name: r.shopName, visits: 0, packages: 0 }
+      row.visits += 1
+      row.packages += r.scans
+      acc.set(r.shopName, row)
+    }
+    return [...acc.values()].sort((a, b) => b.packages - a.packages).slice(0, 8)
+  }, [rows])
+
+  /* ---- Workload by weekday, Mon..Sun. ---- */
+  const byWeekday = useMemo(() => {
+    const acc = WEEKDAYS.map((label) => ({ label, visits: 0, packages: 0 }))
+    for (const r of rows) {
+      if (!r.date) continue
+      try {
+        // getDay(): 0=Sun..6=Sat → index into the Mon-first array.
+        const idx = (parseISO(r.date).getDay() + 6) % 7
+        acc[idx].visits += 1
+        acc[idx].packages += r.scans
+      } catch {
+        /* an unparseable date is skipped rather than plotted under a guess */
+      }
+    }
+    return acc
+  }, [rows])
+
+  const visits = rows.length
+  const packages = rows.reduce((n, r) => n + r.scans, 0)
+  const drafts = rows.filter((r) => r.status === 'draft').length
+  const shopsVisited = new Set(rows.map((r) => r.shopName)).size
+  const demo = list.demo || shops.demo
 
   return (
-    <div className="flex flex-col gap-6 pb-12">
+    <div className="mx-auto max-w-[880px]">
       <PageHeader
-        eyebrow="Officer Analytics"
-        title="My Performance"
-        subtitle={`Inspection enforcement volume, compliance success rates, and rule-wise contravention frequency${user?.jurisdiction ? ` in ${user.jurisdiction}` : ''}.`}
-        actions={
-          <div className="flex items-center gap-2">
-            <div className="flex rounded-lg border border-divider bg-surface p-0.5 text-small">
-              <button
-                type="button"
-                onClick={() => setPeriod('30')}
-                className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                  period === '30' ? 'bg-accent-soft text-accent-text font-semibold' : 'text-ink-2 hover:text-ink'
-                }`}
-              >
-                Last 30 days
-              </button>
-              <button
-                type="button"
-                onClick={() => setPeriod('90')}
-                className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                  period === '90' ? 'bg-accent-soft text-accent-text font-semibold' : 'text-ink-2 hover:text-ink'
-                }`}
-              >
-                Last 90 days
-              </button>
-              <button
-                type="button"
-                onClick={() => setPeriod('all')}
-                className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                  period === 'all' ? 'bg-accent-soft text-accent-text font-semibold' : 'text-ink-2 hover:text-ink'
-                }`}
-              >
-                Year to date
-              </button>
-            </div>
-          </div>
-        }
+        eyebrow={t('nav.home')}
+        title={t('nav.performance')}
+        subtitle="Your own work over the chosen window, aggregated in this browser from your inspection list. Every figure is yours — the server scopes this data to your account."
+        actions={demo ? <DemoChip /> : undefined}
+        meta={<Tabs tabs={PERIODS} value={days} onChange={setDays} />}
       />
 
-      {/* ------------------------------------------------- top summary cards -- */}
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Card className="p-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400">
-              <ClipboardList size={24} />
-            </span>
-            <div>
-              <p className="text-caption font-medium text-ink-3">Total Inspections</p>
-              <p className="nn-mono text-display font-bold text-ink">{totalInspections}</p>
-            </div>
-          </div>
-          <div className="mt-3 flex items-center gap-1.5 text-caption font-medium text-emerald-600">
-            <TrendingUp size={14} />
-            <span>↑ 12% growth over prior period</span>
-          </div>
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
-              <CheckCircle size={24} />
-            </span>
-            <div>
-              <p className="text-caption font-medium text-ink-3">Compliance Rate</p>
-              <p className="nn-mono text-display font-bold text-emerald-600 dark:text-emerald-400">
-                {complianceRate}
-              </p>
-            </div>
-          </div>
-          <p className="mt-3 text-caption text-ink-3">
-            <span className="font-semibold text-ink">{compliantCount}</span> fully compliant visits
-          </p>
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400">
-              <AlertTriangle size={24} />
-            </span>
-            <div>
-              <p className="text-caption font-medium text-ink-3">Non-Compliance Rate</p>
-              <p className="nn-mono text-display font-bold text-rose-600 dark:text-rose-400">
-                {nonComplianceRate}
-              </p>
-            </div>
-          </div>
-          <p className="mt-3 text-caption text-ink-3">
-            <span className="font-semibold text-ink">{nonCompliantCount}</span> visits with contraventions
-          </p>
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
-              <Clock size={24} />
-            </span>
-            <div>
-              <p className="text-caption font-medium text-ink-3">Needs Review Rate</p>
-              <p className="nn-mono text-display font-bold text-amber-600 dark:text-amber-400">
-                {reviewRate}
-              </p>
-            </div>
-          </div>
-          <p className="mt-3 text-caption text-ink-3">
-            <span className="font-semibold text-ink">{needsReviewCount}</span> visits awaiting officer adjudication
-          </p>
-        </Card>
+      {/* ---- Period tiles. ---- */}
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label={t('nav.inspections')} value={list.loading ? '' : String(visits)} loading={list.loading} icon={ClipboardList} />
+        <StatCard label={t('inspection.packages')} value={list.loading ? '' : String(packages)} loading={list.loading} icon={Target} />
+        <StatCard label="Shops visited" value={list.loading ? '' : String(shopsVisited)} loading={list.loading} icon={Store} />
+        <StatCard
+          label={t('inspection.draft')}
+          value={list.loading ? '' : String(drafts)}
+          loading={list.loading}
+          family="na"
+          icon={Clock}
+        />
       </section>
 
-      {/* ----------------------------------------------------- visual charts -- */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Inspections Over Time */}
-        <Card className="p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-h2 font-bold text-ink">Inspections Over Time</h2>
-              <p className="text-caption text-ink-3">Monthly visit distribution by compliance outcome</p>
+      {/* ---- Charts. ---- */}
+      <section className="mt-8 grid gap-5">
+        <ChartFrame
+          title="Packages per day"
+          caption="Packages recorded each day in the window. Quiet days are gaps, not zeros pretending to be effort."
+          records={`${byDay.length} active days · ${rangeLabel}`}
+        >
+          {list.loading ? (
+            <Skeleton className="h-full w-full" />
+          ) : byDay.length === 0 ? (
+            <div className="grid h-full place-items-center text-small text-ink-2">
+              No visits were recorded in this window.
             </div>
-            <div className="flex items-center gap-3 text-[11px]">
-              <span className="flex items-center gap-1.5 font-medium text-ink-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" /> Compliant
-              </span>
-              <span className="flex items-center gap-1.5 font-medium text-ink-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> Non-Compliant
-              </span>
-              <span className="flex items-center gap-1.5 font-medium text-ink-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Review
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-4 h-64">
+          ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 12, right: 8, bottom: 0, left: -20 }}>
+              <BarChart data={byDay} margin={{ top: 16, right: 8, bottom: 4, left: -18 }}>
+                <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} minTickGap={16} />
+                <YAxis tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
+                <Tooltip content={<TipBox />} cursor={{ fill: 'var(--nn-surface-2)' }} />
+                <Bar
+                  dataKey="packages"
+                  name={t('inspection.packages')}
+                  fill="var(--nn-chart-1)"
+                  radius={[3, 3, 0, 0]}
+                  isAnimationActive={!reduced}
+                >
+                  <LabelList dataKey="packages" position="top" style={AXIS} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartFrame>
+
+        <ChartFrame
+          title="Visits per day"
+          caption="Shops visited each day. A visit with zero packages still counts — it is work, and it is recorded."
+          records={`${visits} visits`}
+        >
+          {list.loading ? (
+            <Skeleton className="h-full w-full" />
+          ) : byDay.length === 0 ? (
+            <div className="grid h-full place-items-center text-small text-ink-2">
+              No visits were recorded in this window.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={byDay} margin={{ top: 8, right: 8, bottom: 4, left: -18 }}>
+                <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} minTickGap={16} />
+                <YAxis tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
+                <Tooltip content={<TipBox />} />
+                <Area
+                  type="monotone"
+                  dataKey="visits"
+                  name={t('nav.inspections')}
+                  stroke="var(--nn-chart-2)"
+                  strokeWidth={1.75}
+                  fill="var(--nn-chart-2)"
+                  fillOpacity={0.2}
+                  isAnimationActive={!reduced}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </ChartFrame>
+
+        <ChartFrame
+          title="Your most-visited shops"
+          caption="The eight shops with the most packages recorded. Coverage, not compliance — this says where you worked, not what you found."
+          records={`${byShop.length} shops`}
+        >
+          {list.loading || shops.loading ? (
+            <Skeleton className="h-full w-full" />
+          ) : byShop.length === 0 ? (
+            <div className="grid h-full place-items-center text-small text-ink-2">
+              No visits were recorded in this window.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={byShop} layout="vertical" margin={{ top: 4, right: 24, bottom: 4, left: 8 }}>
+                <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} width={140} />
+                <Tooltip content={<TipBox />} cursor={{ fill: 'var(--nn-surface-2)' }} />
+                <Bar
+                  dataKey="packages"
+                  name={t('inspection.packages')}
+                  fill="var(--nn-chart-3)"
+                  radius={[0, 3, 3, 0]}
+                  isAnimationActive={!reduced}
+                >
+                  <LabelList dataKey="packages" position="right" style={AXIS} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartFrame>
+
+        <ChartFrame
+          title="Workload by weekday"
+          caption="Where your week actually goes. Useful for planning — and honest about the quiet days."
+          records={`${visits} visits · ${packages} packages`}
+        >
+          {list.loading ? (
+            <Skeleton className="h-full w-full" />
+          ) : visits === 0 ? (
+            <div className="grid h-full place-items-center text-small text-ink-2">
+              No visits were recorded in this window.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={byWeekday} margin={{ top: 16, right: 8, bottom: 4, left: -18 }}>
                 <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="label" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} />
                 <YAxis tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
-                <Tooltip content={<ChartTip />} cursor={{ fill: 'var(--nn-surface-2)' }} />
-                <Bar dataKey="Compliant" stackId="a" fill="#16A34A" />
-                <Bar dataKey="Non-Compliant" stackId="a" fill="#EF4444" />
-                <Bar dataKey="Needs Review" stackId="a" fill="#F59E0B" radius={[3, 3, 0, 0]} />
+                <Tooltip content={<TipBox />} cursor={{ fill: 'var(--nn-surface-2)' }} />
+                <Bar
+                  dataKey="visits"
+                  name={t('nav.inspections')}
+                  fill="var(--nn-chart-4)"
+                  radius={[3, 3, 0, 0]}
+                  isAnimationActive={!reduced}
+                >
+                  <LabelList dataKey="visits" position="top" style={AXIS} />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
-          </div>
-        </Card>
+          )}
+        </ChartFrame>
+      </section>
 
-        {/* Rule-wise Violation Count */}
-        <Card className="p-5">
-          <div>
-            <h2 className="text-h2 font-bold text-ink">Rule-Wise Violation Count</h2>
-            <p className="text-caption text-ink-3">Frequency of breaches categorized by statutory Legal Metrology rule</p>
-          </div>
-
-          <div className="mt-4 h-64">
-            {ruleBreakdown.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-small text-ink-3">
-                No rule violations recorded in this period.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={ruleBreakdown}
-                  layout="vertical"
-                  margin={{ top: 8, right: 24, bottom: 0, left: 16 }}
-                >
-                  <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    tick={AXIS}
-                    stroke="var(--nn-chart-grid)"
-                    tickLine={false}
-                    width={150}
-                  />
-                  <Tooltip content={<ChartTip />} cursor={{ fill: 'var(--nn-surface-2)' }} />
-                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                    {ruleBreakdown.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </Card>
-      </div>
-
-      {/* ------------------------------------------- most frequent violations -- */}
-      <Card className="overflow-x-auto p-5">
-        <div>
-          <h2 className="text-h2 font-bold text-ink">Most Frequent Violations</h2>
-          <p className="text-caption text-ink-3">
-            In-depth breakdown of recurring contraventions and corresponding enforcement recommendations.
-          </p>
-        </div>
-
-        <Table className="mt-4" caption="Rule violations breakdown">
-          <thead>
-            <tr>
-              <Th>Rule</Th>
-              <Th>Statutory Citation</Th>
-              <Th>Violation Description</Th>
-              <Th align="right">Count</Th>
-              <Th align="right">Share</Th>
-              <Th>Enforcement Action</Th>
-              <Th>Risk Tier</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {ruleBreakdown.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="py-8 text-center text-small text-ink-3">
-                  No rule violations recorded in this period.
-                </td>
-              </tr>
-            ) : (
-              ruleBreakdown.map((item) => (
-                <Tr key={item.rule}>
-                  <Td>
-                    <span className="nn-mono font-bold text-ink">{item.rule}</span>
-                  </Td>
-                  <Td>
-                    <span className="nn-mono text-[11px] text-ink-3">{item.citation}</span>
-                  </Td>
-                  <Td>
-                    <span className="font-medium text-ink">{item.title}</span>
-                  </Td>
-                  <Td align="right">
-                    <span className="nn-mono font-bold text-rose-600 dark:text-rose-400">{item.count}</span>
-                  </Td>
-                  <Td align="right">
-                    <span className="nn-mono text-small text-ink-2">{item.share}</span>
-                  </Td>
-                  <Td>
-                    <span className="text-small font-medium text-ink-2">{item.action}</span>
-                  </Td>
-                  <Td>
-                    <span
-                      className={`inline-flex items-center rounded-pill px-2 py-0.5 text-[11px] font-semibold ${
-                        item.risk === 'Critical'
-                          ? 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300'
-                          : item.risk === 'High'
-                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
-                            : item.risk === 'Medium'
-                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                              : 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
-                      }`}
-                    >
-                      {item.risk}
-                    </span>
-                  </Td>
-                </Tr>
-              ))
-            )}
-          </tbody>
-        </Table>
+      <Card className="mt-6 p-5">
+        <SectionTitle caption="The honest boundary of this screen.">What this dashboard is not</SectionTitle>
+        <ul className="mt-3 space-y-2 text-small text-ink-2">
+          <li className="flex gap-2">
+            <Activity size={16} strokeWidth={1.8} className="mt-0.5 shrink-0 text-ink-3" aria-hidden="true" />
+            There is no inspector analytics endpoint, so every chart aggregates your own inspection
+            list in this browser. Nothing here is a jurisdiction total.
+          </li>
+          <li className="flex gap-2">
+            <CalendarDays size={16} strokeWidth={1.8} className="mt-0.5 shrink-0 text-ink-3" aria-hidden="true" />
+            These are workload figures. The list carries no per-visit results, so no chart here is a
+            compliance score — verdicts live on the findings pages, package by package.
+          </li>
+        </ul>
       </Card>
     </div>
   )

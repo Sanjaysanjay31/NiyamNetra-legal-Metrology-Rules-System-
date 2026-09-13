@@ -2,12 +2,10 @@
  * Tailwind is configured as a *thin naming layer over the CSS custom properties
  * in src/theme/tokens.css*, not as a second source of truth.
  *
- * Why: the theme switches by flipping `data-theme` on <html>, which re-resolves
- * every variable at once. If colours lived here instead, every component would
- * need a `dark:` twin for every colour class - roughly doubling the class list
- * and guaranteeing that some element eventually gets a light-only value. With
- * this arrangement `bg-surface text-ink` is correct in both themes, and the
- * accent picker is a single attribute swap with no re-render of class strings.
+ * Why: the palette lives in CSS custom properties, so components style against
+ * semantic names (`bg-surface text-ink`) rather than hex values. Redesigning
+ * the product is a tokens.css edit, not a sweep through every className in the
+ * app.
  *
  * Consequence to remember: opacity modifiers like `bg-surface/50` will not work
  * on these colours, because a var() is not a channel triple. Where translucency
@@ -48,13 +46,8 @@ export default {
         teal: {
           DEFAULT: 'var(--nn-teal)',
         },
-        saffron: {
-          DEFAULT: 'var(--nn-saffron)',
-          'on-navy': 'var(--nn-saffron-on-navy)',
-          ink: 'var(--nn-saffron-ink)',
-        },
 
-        // the user's chosen accent
+        // canvas
         accent: {
           DEFAULT: 'var(--nn-accent)',
           text: 'var(--nn-accent-text)',
@@ -74,6 +67,8 @@ export default {
           DEFAULT: 'var(--nn-rail)',
           hover: 'var(--nn-rail-hover)',
           label: 'var(--nn-rail-label)',
+          ink: 'var(--nn-rail-ink)',
+          border: 'var(--nn-rail-border)',
         },
 
         // lines. `divider` is decorative; `control` is the >= 3:1 form boundary.
@@ -181,10 +176,6 @@ export default {
         hover: 'var(--nn-shadow-hover)',
         modal: 'var(--nn-shadow-modal)',
         halo: '0 0 0 4px var(--nn-ring-halo)',
-      },
-
-      backgroundImage: {
-        brand: 'var(--nn-brand-gradient)',
       },
 
       transitionDuration: {
