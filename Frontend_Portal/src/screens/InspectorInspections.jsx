@@ -38,7 +38,6 @@ import { useDebounced, useDocumentTitle } from '../lib/hooks'
 import {
   Button,
   Card,
-  DemoChip,
   EmptyState,
   Field,
   Input,
@@ -101,7 +100,7 @@ export default function InspectorInspections() {
   const { t } = useI18n()
   const navigate = useNavigate()
   useDocumentTitle(t('nav.inspections'))
-  const { rows, violationRows, loading, demo } = useInspectorData()
+  const { rows, violationRows, loading } = useInspectorData()
 
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
@@ -186,7 +185,6 @@ export default function InspectorInspections() {
         eyebrow={t('nav.inspections')}
         title="Inspection history"
         subtitle="Every visit on your record — search it, filter it, and open the full inspection with its evidence and findings."
-        actions={demo ? <DemoChip /> : undefined}
       />
 
       {/* ------------------------------------------------------ filters -- */}

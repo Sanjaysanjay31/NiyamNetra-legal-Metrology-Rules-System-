@@ -67,7 +67,7 @@ python -c "from paddleocr import PaddleOCR; PaddleOCR(lang='en')"   # cache mode
 cp ../.env.example .env                            # then set JWT_SECRET (below) and the LAN address in CORS_ORIGIN_REGEX
 python -c "import secrets; print(secrets.token_hex(32))"   # paste as JWT_SECRET (required, no default, >=32 chars)
 alembic upgrade head                               # creates tables, CHECK constraints and triggers
-python seed.py                                     # first users, stores, and the out-of-scope fixture
+python seed.py --base                              # base users and stores (--base for clean prod, omit for demo data)
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 # verify: curl -s localhost:8000/health  ->  checks_registered must read 19
 ```
@@ -240,6 +240,8 @@ The `Docs/` set is the single source of truth:
 | `11_working_overflow.md` | Overflow / edge-case handling. |
 | `12_SIH26034_NiyamNetra_loopholes.md` | Ninety loopholes, each with a solution. |
 | `14_env_example.md` | Every environment variable and what breaks without it. |
+| `15_SIH_DEMO_PROPS_AND_SHOWCASE.md` | SIH evaluation scripts, physical mock packages, presentation checklist. |
+| `16_deployment_guide.md` | Production deployment guide (Render backend, Vercel portal, EAS mobile app, Supabase). |
 | `Backend.md` | Backend implementation and the schema of record (§4). |
 | `Frontend_Portal_Prompts.md` | Portal build prompts. |
 | `Frontend_App_prompts.md` | Expo app (APK) build prompts — inspector and admin. |

@@ -2,9 +2,25 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { AppState, Platform } from 'react-native';
 import * as Network from 'expo-network';
 import { api } from '../api/client';
-import { loadQueue, markSynced, markFailed, purgeSynced, purgeSyncedOnBoot, queueSize } from './queue';
+import {
+  loadQueue,
+  markSynced,
+  markFailed,
+  purgeSynced,
+  purgeSyncedOnBoot,
+  queueSize,
+  syncFailedCount,
+  retryFailed,
+} from './queue';
 
-const SyncContext = createContext({ pending: 0, isSyncing: false, syncNow: async () => {}, lastSync: null });
+const SyncContext = createContext({
+  pending: 0,
+  failedCount: 0,
+  isSyncing: false,
+  syncNow: async () => {},
+  retryFailedSync: async () => {},
+  lastSync: null,
+});
 export const useSync = () => useContext(SyncContext);
 
 /**
@@ -19,6 +35,17 @@ async function isOnline() {
     }
     const st = await Network.getNetworkStateAsync();
     return !!st.isConnected;
+  } catch {
+    return false;
+  }
+}
+
+async function isReachable() {
+  try {
+    const net = await isOnline();
+    if (!net) return false;
+    const res = await api.get('/health', { timeout: 4000 });
+    return res?.status >= 200 && res?.status < 300;
   } catch {
     return false;
   }
@@ -69,6 +96,7 @@ async function uploadEvidenceFile(serverScanId, file, index) {
 
 export function SyncProvider({ children }) {
   const [pending, setPending] = useState(0);
+  const [failedCount, setFailedCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
   // A ref, not the state value: syncNow is held by a 30s interval, and reading
@@ -81,7 +109,10 @@ export function SyncProvider({ children }) {
   const consecutiveFailures = useRef(0);
 
   const refreshCount = useCallback(async () => {
-    try { setPending(await queueSize()); } catch { /* queue unavailable (web) */ }
+    try {
+      setPending(await queueSize());
+      setFailedCount(await syncFailedCount());
+    } catch { /* queue unavailable (web) */ }
   }, []);
 
   // Local inspection id → server inspection id, learned from POST /inspections
@@ -319,6 +350,12 @@ export function SyncProvider({ children }) {
     }
   }, [refreshCount]);
 
+  const retryFailedSync = useCallback(async (id) => {
+    await retryFailed(id);
+    await refreshCount();
+    await syncNow();
+  }, [refreshCount, syncNow]);
+
   useEffect(() => {
     // Idempotent startup purge: collect is_synced leftovers from a crash
     // between markSynced and purgeSynced, then count what is truly pending.
@@ -327,7 +364,7 @@ export function SyncProvider({ children }) {
     // Manual syncNow() from SyncStrip always runs immediately.
     const maybeSync = () => {
       if (Date.now() < backoffUntil.current) return;
-      isOnline().then((ok) => { if (ok) syncNow(); }).catch(() => {});
+      isReachable().then((ok) => { if (ok) syncNow(); }).catch(() => {});
     };
     const sub = AppState.addEventListener('change', (s) => {
       if (s !== 'active') return;
@@ -338,7 +375,7 @@ export function SyncProvider({ children }) {
   }, [refreshCount, syncNow]);
 
   return (
-    <SyncContext.Provider value={{ pending, isSyncing, syncNow, refreshCount, lastSync }}>
+    <SyncContext.Provider value={{ pending, failedCount, isSyncing, syncNow, retryFailedSync, refreshCount, lastSync }}>
       {children}
     </SyncContext.Provider>
   );

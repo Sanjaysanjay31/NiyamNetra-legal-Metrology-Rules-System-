@@ -2,6 +2,7 @@
 built to the §8.2 inventory around it.
 """
 import math
+import re
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -20,8 +21,8 @@ from queries import (
 from rbac import require_admin
 from schemas import (
     AdminDashboardResponse, AdminViolationItem, AdminViolationsResponse, AuditEntryOut, CheckTally, CreateUserRequest,
-    OverrideFindingRequest, ResetInstallRequest, ResultCounts, RuleVersionOut, TrendPoint,
-    UpdateUserRequest, UserOut,
+    OverrideFindingRequest, RepeatOffender, RepeatOffenderHistory, RepeatOffendersResponse, ResetInstallRequest,
+    ResultCounts, RuleVersionOut, TrendPoint, UpdateUserRequest, UserOut,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -85,14 +86,109 @@ def repeat_offenders(start: date | None = Query(default=None),
     }
 
 
-@router.get("/repeat-offenders")
+@router.get("/repeat-offenders", response_model=RepeatOffendersResponse)
 def repeat_offenders_alias(start: date | None = Query(default=None),
                            end: date | None = Query(default=None),
                            limit: int = Query(default=20, ge=1, le=100),
                            user: User = Depends(require_admin),
                            db: Session = Depends(get_db)):
-    """Alias for /admin/repeat-violators matching the portal route."""
-    return repeat_offenders(start=start, end=end, limit=limit, user=user, db=db)
+    """Manufacturer-level repeat offenders matching PRD §5.9 and Portal UI."""
+    end = end or date.today()
+    start = start or (end - timedelta(days=29))
+
+    # Backward-compat store rows
+    store_rows = repeat_violators(db, start, end, limit)
+    stores_compat = [
+        {
+            "store_id": r["store_id"],
+            "store_name": r["store_name"],
+            "violations": r["violations"],
+            "last_violation_date": r["last_violation_date"].isoformat()
+            if r["last_violation_date"]
+            else None,
+        }
+        for r in store_rows
+    ]
+
+    # Query all live violation findings in the window
+    violation_rows = admin_violations_list(db, start=start, end=end, limit=500)
+
+    by_mfg: dict[str, dict] = {}
+    for r in violation_rows:
+        brand = (r.get("brand_name") or "").strip()
+        mfg = (r.get("manufacturer") or "").strip()
+        name = brand if (brand and brand != "—") else (mfg if mfg else "Unknown")
+        if not name:
+            name = "Unknown"
+
+        if name not in by_mfg:
+            slug = re.sub(r"[^a-zA-Z0-9]+", "-", name.lower()).strip("-") or "unknown"
+            by_mfg[name] = {
+                "id": slug,
+                "name": name,
+                "violations": 0,
+                "store_ids": set(),
+                "brands": set(),
+                "regions": set(),
+                "last_violation": None,
+                "history": [],
+            }
+        entry = by_mfg[name]
+        entry["violations"] += 1
+        if r.get("store_id"):
+            entry["store_ids"].add(r["store_id"])
+        if brand and brand != "—":
+            entry["brands"].add(brand)
+        if r.get("area") and r["area"] != "—":
+            entry["regions"].add(r["area"])
+
+        v_date = r.get("date")
+        if v_date:
+            if not entry["last_violation"] or v_date > entry["last_violation"]:
+                entry["last_violation"] = v_date
+
+        entry["history"].append(
+            RepeatOffenderHistory(
+                id=r["id"],
+                scan_id=r.get("scan_id"),
+                check_id=r.get("check_id") or "CHK",
+                title=r.get("title") or r.get("reason"),
+                citation=r.get("citation") or r.get("rule"),
+                severity="major",
+                brand=brand if (brand and brand != "—") else None,
+                region=r.get("area"),
+                store_id=r["store_id"],
+                shopName=r.get("store_name"),
+                inspector_id=r.get("inspector_id"),
+                inspector=r.get("inspector"),
+                product=r.get("product_name"),
+                date=r.get("date"),
+            )
+        )
+
+    offenders = []
+    for name, entry in by_mfg.items():
+        offenders.append(
+            RepeatOffender(
+                id=entry["id"],
+                name=entry["name"],
+                violations=entry["violations"],
+                stores=len(entry["store_ids"]),
+                brands=sorted(list(entry["brands"])),
+                regions=sorted(list(entry["regions"])),
+                last_violation=entry["last_violation"],
+                history=sorted(entry["history"], key=lambda h: h.date or "", reverse=True),
+            )
+        )
+
+    offenders.sort(key=lambda o: (o.violations, o.stores, o.last_violation or ""), reverse=True)
+
+    return RepeatOffendersResponse(
+        period_start=start.isoformat(),
+        period_end=end.isoformat(),
+        offenders=offenders[:limit],
+        stores=stores_compat,
+    )
 
 
 @router.get("/violations", response_model=AdminViolationsResponse)

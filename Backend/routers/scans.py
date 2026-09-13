@@ -3,7 +3,7 @@ import math
 import os
 import threading
 from datetime import date
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,7 @@ from config import settings
 from database import get_db
 from models import Finding, Inspection, Scan, ScanImage, User
 from rbac import get_current_user, owned_scan
-from schemas import ScanOut, VerdictCounts
+from schemas import ScanListItemOut, ScanOut, VerdictCounts
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 router = APIRouter(prefix="/scans", tags=["scans"])
@@ -412,6 +412,31 @@ def _scan_out(db: Session, scan: Scan) -> ScanOut:
     out = ScanOut.model_validate(scan)
     out.counts = counts
     return out
+
+
+@router.get("", response_model=list[ScanListItemOut])
+def list_scans(
+    inspection_id: int | None = Query(default=None),
+    store_id: int | None = Query(default=None),
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List live packages scanned during inspections. Admins see all scans; inspectors see own."""
+    from queries import scans_list
+    return scans_list(
+        db,
+        inspection_id=inspection_id,
+        store_id=store_id,
+        status=status,
+        q=q,
+        limit=limit,
+        offset=offset,
+        user=user,
+    )
 
 
 @router.get("/{scan_id}", response_model=ScanOut)

@@ -48,11 +48,11 @@ def _result_counts(col=Scan.overall_result):
     Scan.id keeps total == compliant+violation+not_assessed+out_of_scope.
     """
     return (
-        func.count(Scan.id).label("total"),
-        func.sum(case((col == "compliant", 1), else_=0)).label("compliant"),
-        func.sum(case((col == "violation", 1), else_=0)).label("violation"),
-        func.sum(case((col == "not_assessed", 1), else_=0)).label("not_assessed"),
-        func.sum(case((col == "out_of_scope", 1), else_=0)).label("out_of_scope"),
+        func.coalesce(func.count(Scan.id), 0).label("total"),
+        func.coalesce(func.sum(case((col == "compliant", 1), else_=0)), 0).label("compliant"),
+        func.coalesce(func.sum(case((col == "violation", 1), else_=0)), 0).label("violation"),
+        func.coalesce(func.sum(case((col == "not_assessed", 1), else_=0)), 0).label("not_assessed"),
+        func.coalesce(func.sum(case((col == "out_of_scope", 1), else_=0)), 0).label("out_of_scope"),
     )
 # --- Query 1: today's report for one inspector ---
 def todays_stats(db: Session, user_id: int, day: date):
@@ -105,18 +105,18 @@ def admin_stats(db: Session, start: date, end: date):
     total, comp, viol, na, oos = _result_counts()
     row = db.execute(
         select(
-            func.count(func.distinct(Inspection.id)).label("inspections"),
-            func.count(func.distinct(Inspection.user_id)).label("active_inspectors"),
-            func.count(func.distinct(Inspection.store_id)).label("stores_visited"),
+            func.coalesce(func.count(func.distinct(Inspection.id)), 0).label("inspections"),
+            func.coalesce(func.count(func.distinct(Inspection.user_id)), 0).label("active_inspectors"),
+            func.coalesce(func.count(func.distinct(Inspection.store_id)), 0).label("stores_visited"),
             total, comp, viol, na, oos,
         )
         .select_from(Inspection)
         .outerjoin(Scan, (Scan.inspection_id == Inspection.id) & LIVE)
         .where(Inspection.inspection_date.between(start, end))
     ).one()
-    d = dict(row._mapping)
+    d = {k: (v if v is not None else 0) for k, v in dict(row._mapping).items()}
     # Real count, not the hard-coded 0 that v1.x shipped at line 924.
-    d["review_queue"] = review_queue_size(db)
+    d["review_queue"] = review_queue_size(db) or 0
     return d
 
 
@@ -312,6 +312,8 @@ def admin_violations_list(
         )
         out.append({
             "id": f.id,
+            "scan_id": s.id,
+            "check_id": f.check_id,
             "date": i.inspection_date.isoformat() if i.inspection_date else "",
             "store_id": st.id,
             "store_name": st.name,
@@ -322,8 +324,82 @@ def admin_violations_list(
             "manufacturer": s.brand_name or st.name or "Manufacturer",
             "category": check_category(f.check_id, f.title),
             "rule": f.citation or f"Rule ({f.check_id})",
+            "citation": f.citation or f"Rule ({f.check_id})",
+            "title": f.title,
             "reason": f.reason or f.observed or "Non-compliance observed",
             "result": "violation",
+            "inspector_id": u.id,
             "inspector": u.full_name or u.employee_id,
+        })
+    return out
+
+
+def scans_list(
+    db: Session,
+    inspection_id: int | None = None,
+    store_id: int | None = None,
+    status: str | None = None,
+    q: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+    user: User | None = None,
+) -> list[dict]:
+    """List live scans (duplicate_of is NULL) joined with Inspection, Store, User."""
+    query = (
+        db.query(Scan, Inspection, Store, User)
+        .join(Inspection, Scan.inspection_id == Inspection.id)
+        .join(Store, Inspection.store_id == Store.id)
+        .join(User, Inspection.user_id == User.id)
+        .filter(LIVE)
+    )
+    if user and getattr(user, "role", None) == "inspector":
+        query = query.filter(Inspection.user_id == user.id)
+    if inspection_id is not None:
+        query = query.filter(Inspection.id == inspection_id)
+    if store_id is not None:
+        query = query.filter(Store.id == store_id)
+    if status and status != "all":
+        query = query.filter(Scan.overall_result == status)
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                Scan.brand_name.ilike(term),
+                Scan.commodity_generic.ilike(term),
+                Scan.commodity_category.ilike(term),
+                Scan.batch_number.ilike(term),
+                Scan.barcode.ilike(term),
+                Store.name.ilike(term),
+            )
+        )
+    rows = (
+        query.order_by(Scan.created_at.desc(), Scan.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    out = []
+    for s, i, st, u in rows:
+        out.append({
+            "id": s.id,
+            "inspection_id": i.id,
+            "store_id": st.id,
+            "store_name": st.name or f"Shop #{st.id}",
+            "store_area": st.city or st.district or None,
+            "inspector_id": u.id,
+            "inspector_name": u.full_name or u.employee_id,
+            "commodity_generic": s.commodity_generic,
+            "brand_name": s.brand_name,
+            "commodity_category": s.commodity_category,
+            "batch_number": s.batch_number,
+            "barcode": s.barcode,
+            "net_quantity_value": s.net_quantity_value,
+            "net_quantity_unit": s.net_quantity_unit,
+            "mrp": None,
+            "overall_result": s.overall_result or "not_assessed",
+            "checks_total": s.checks_total or 0,
+            "checks_assessed": s.checks_assessed or 0,
+            "image_count": len(getattr(s, "images", []) or []),
+            "created_at": s.created_at,
         })
     return out

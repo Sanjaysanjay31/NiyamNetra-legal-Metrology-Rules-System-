@@ -533,22 +533,6 @@ export function VerificationBadge({ verified, className }) {
   )
 }
 
-/**
- * DemoChip. Rendered on any surface filled from fixtures. Without it, an
- * illustrative number is indistinguishable from an inspection record, which is
- * precisely the fabrication 08 SS4.1 prohibits.
- */
-export function DemoChip({ className }) {
-  return (
-    <span
-      className={cx('nn-badge border-info-border bg-info-fill text-info-text', className)}
-      title="Illustrative fixture data — the backend was unreachable. Not an inspection record."
-    >
-      <Sparkles size={14} strokeWidth={2} aria-hidden="true" />
-      Demo data
-    </span>
-  )
-}
 
 export function Pill({ children, family, className, icon: Icon }) {
   const f = family ? FAMILY[family] : null
@@ -564,6 +548,14 @@ export function Pill({ children, family, className, icon: Icon }) {
       {children}
     </span>
   )
+}
+
+export function StatusBadge({ family, label, className }) {
+  return <Pill family={family} className={className}>{label}</Pill>
+}
+
+export function DemoChip() {
+  return null
 }
 
 /* -------------------------------------------------------------------------- */

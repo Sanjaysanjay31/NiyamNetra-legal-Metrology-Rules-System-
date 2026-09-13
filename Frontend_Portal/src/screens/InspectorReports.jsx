@@ -27,7 +27,6 @@ import { useDebounced, useDocumentTitle } from '../lib/hooks'
 import {
   Button,
   Card,
-  DemoChip,
   EmptyState,
   Field,
   Input,
@@ -79,7 +78,7 @@ export default function InspectorReports() {
   const navigate = useNavigate()
   const { push } = useToast()
   useDocumentTitle('Reports · Inspector Portal')
-  const { rows, loading, demo } = useInspectorData()
+  const { rows, loading } = useInspectorData()
 
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
@@ -175,7 +174,6 @@ export default function InspectorReports() {
         subtitle="Official statutory inspection records, non-compliance notices, and consolidated daily reports."
         actions={
           <div className="flex items-center gap-2">
-            {demo && <DemoChip />}
             <Button variant="primary" icon={Download} onClick={downloadDailyReport}>
               Download Today’s Report (PDF)
             </Button>

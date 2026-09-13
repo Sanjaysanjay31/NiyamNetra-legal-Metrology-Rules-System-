@@ -44,12 +44,10 @@ import {
 import { endpoints, saveBlob } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDocumentTitle, useResource } from '../lib/hooks'
-import { VIOLATIONS_DATA } from '../mock/violationsData'
 import {
   Button,
   Card,
   cx,
-  DemoChip,
   Field,
   Input,
   Pill,
@@ -473,17 +471,14 @@ export default function AdminViolations() {
   const violRes = useResource(
     () => endpoints.admin.violations({ start: from, end: to }),
     {
-      fallback: { total: VIOLATIONS_DATA.length, violations: VIOLATIONS_DATA, top_violations: [] },
       deps: [from, to],
       label: 'admin-violations',
     }
   )
 
-  const isDemo = violRes.demo
   const isLoading = violRes.loading
 
-  /* Unwrap: live API returns { total, violations: [...], top_violations: [...] }
-     Demo fallback is the raw VIOLATIONS_DATA array */
+  /* Unwrap: live API returns { total, violations: [...], top_violations: [...] } */
   const allViolations = useMemo(() => {
     const d = violRes.data
     if (!d) return []

@@ -241,10 +241,15 @@ def seed_duplicate_pair(db, inspectors, stores):
 
 # ---------------------------------------------------------------- 8 runner
 def main():
+    import sys
+    base_only = "--base" in sys.argv
     db = SessionLocal()
     try:
         seed_users(db)
         seed_stores(db)
+        if base_only:
+            print("Seeded base users and stores only (--base mode). Zero inspections/scans created.")
+            return
         inspectors = (db.query(User).filter(User.role == "inspector")
                       .order_by(User.employee_id).all())
         stores = db.query(Store).order_by(Store.id).all()

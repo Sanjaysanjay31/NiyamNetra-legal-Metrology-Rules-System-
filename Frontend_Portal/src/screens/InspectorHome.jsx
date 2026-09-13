@@ -32,9 +32,6 @@ import { useI18n } from '../i18n'
 import {
   inspectionLabel,
   monthlyBuckets,
-  REFERENCE_OVERVIEW,
-  REFERENCE_STATS,
-  REFERENCE_TOP_VIOLATIONS,
   STATUS_META,
   statusTally,
   useInspectorData,
@@ -45,7 +42,6 @@ import { useDocumentTitle } from '../lib/hooks'
 import {
   Button,
   Card,
-  DemoChip,
   Pill,
   SectionTitle,
   Skeleton,
@@ -175,21 +171,48 @@ export default function InspectorHome() {
   const { user } = useAuth()
   const navigate = useNavigate()
   useDocumentTitle('Home · Inspector Portal')
-  const { rows, loading, demo } = useInspectorData()
+  const { rows, loading, violationRows } = useInspectorData()
 
   const tally = useMemo(() => statusTally(rows), [rows])
+  const trends = useMemo(() => windowTally(rows), [rows])
 
-  // Top summary values matching reference dashboard
-  const displayStats = REFERENCE_STATS
+  const cur = trends.current
+  const prev = trends.previous
+  const calcTrend = (curVal, prevVal) => {
+    if (!prevVal || prevVal === 0) return null
+    const diff = Math.round(((curVal - prevVal) / prevVal) * 100)
+    if (diff > 0) return { label: `↑ ${diff}% from last month`, tone: 'pass' }
+    if (diff < 0) return { label: `↓ ${Math.abs(diff)}% from last month`, tone: 'pass' }
+    return { label: '0% from last month', tone: 'pass' }
+  }
 
-  // Submitted / Finished Inspections (4 rows matching Image 2)
+  const displayStats = useMemo(() => ({
+    total: tally.total ?? 0,
+    compliant: tally.byStatus.compliant ?? 0,
+    nonCompliant: tally.byStatus.non_compliant ?? 0,
+    needsReview: tally.byStatus.needs_review ?? 0,
+    trends: {
+      total: calcTrend(cur.total, prev.total),
+      compliant: calcTrend(cur.byStatus.compliant, prev.byStatus.compliant),
+      nonCompliant: calcTrend(cur.byStatus.non_compliant, prev.byStatus.non_compliant),
+      needsReview: calcTrend(cur.byStatus.needs_review, prev.byStatus.needs_review),
+    },
+  }), [tally, cur, prev])
+
+  // Submitted / Finished Inspections (4 rows)
   const recentSubmitted = useMemo(() => {
     const submitted = rows.filter((r) => r.status !== 'draft')
     return submitted.slice(0, 4)
   }, [rows])
 
   const chartData = useMemo(() => monthlyBuckets(rows), [rows])
-  const topViolations = REFERENCE_TOP_VIOLATIONS
+  const topViolations = useMemo(() => {
+    return violationsByRule(violationRows).slice(0, 5)
+  }, [violationRows])
+
+  const hour = new Date().getHours()
+  const timeOfDay = greeting(hour)
+  const todayFormatted = format(new Date(), 'EEEE, d MMMM yyyy')
 
   return (
     <div className="flex flex-col gap-6 pb-8">
@@ -197,18 +220,18 @@ export default function InspectorHome() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-display font-bold tracking-tight text-ink">
-            Good morning, Inspector
+            {t(`common.greeting_${timeOfDay}`, `Good ${timeOfDay}`)}, {user?.full_name || 'Inspector'}
           </h1>
           <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-small text-ink-2">
-            <span className="nn-mono font-semibold text-ink">{user?.employee_id || 'LM-TG-1042'}</span>
+            <span className="nn-mono font-semibold text-ink">{user?.employee_id || '—'}</span>
             <span aria-hidden="true" className="text-ink-3">·</span>
             <MapPin size={14} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
-            <span>{user?.jurisdiction || 'Hyderabad North'}</span>
+            <span>{user?.jurisdiction || '—'}</span>
           </p>
         </div>
         <div className="flex items-center gap-2 rounded-card border border-divider bg-surface px-3.5 py-2 text-small font-medium text-ink shadow-sm">
           <CalendarDays size={16} strokeWidth={1.8} className="text-ink-2" aria-hidden="true" />
-          <span>Tuesday, 8 September 2026</span>
+          <span>{todayFormatted}</span>
         </div>
       </div>
 
@@ -370,21 +393,25 @@ export default function InspectorHome() {
               </Link>
             </div>
 
-            <ul className="mt-4 flex flex-col divide-y divide-divider">
-              {topViolations.map((r) => (
-                <li key={r.check_id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
-                  <span className="nn-mono shrink-0 rounded-sm bg-rose-50 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
-                    {r.ruleNumber}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-small text-ink-2" title={r.title}>
-                    {r.title}
-                  </span>
-                  <span className="nn-mono grid h-6 min-w-6 place-items-center rounded-pill bg-rose-50 px-1.5 text-caption font-bold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
-                    {r.count}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            {topViolations.length === 0 ? (
+              <p className="mt-4 text-small text-ink-3">No violations recorded.</p>
+            ) : (
+              <ul className="mt-4 flex flex-col divide-y divide-divider">
+                {topViolations.map((r) => (
+                  <li key={r.check_id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
+                    <span className="nn-mono shrink-0 rounded-sm bg-rose-50 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                      {r.check_id}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-small text-ink-2" title={r.title}>
+                      {r.title || r.citation || 'Violation'}
+                    </span>
+                    <span className="nn-mono grid h-6 min-w-6 place-items-center rounded-pill bg-rose-50 px-1.5 text-caption font-bold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                      {r.count}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
 
           {/* Quick Actions Card */}

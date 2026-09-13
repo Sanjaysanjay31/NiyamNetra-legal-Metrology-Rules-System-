@@ -294,3 +294,29 @@ export async function queueSize() {
   const q = await loadQueue();
   return q.filter(x => !x.is_synced && !x.syncFailed).length;
 }
+
+export async function syncFailedCount() {
+  const q = await loadQueue();
+  return q.filter(x => x.syncFailed).length;
+}
+
+export async function retryFailed(id) {
+  const q = await loadQueue();
+  if (id) {
+    const item = q.find(x => x.id === id);
+    if (item) {
+      delete item.syncFailed;
+      delete item.syncError;
+      item.is_synced = false;
+    }
+  } else {
+    for (const item of q) {
+      if (item.syncFailed) {
+        delete item.syncFailed;
+        delete item.syncError;
+        item.is_synced = false;
+      }
+    }
+  }
+  await saveQueue(q);
+}

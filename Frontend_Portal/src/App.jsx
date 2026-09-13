@@ -17,7 +17,6 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AdminRoute, ProtectedRoute, PublicOnlyRoute, useAuth } from './auth/AuthContext'
 import { endpoints } from './api/client'
 import { useResource } from './lib/hooks'
-import { reviewQueue as reviewQueueFixture } from './mock/fixtures'
 import Layout from './shell/Layout'
 
 import Login from './screens/Login'
@@ -59,7 +58,6 @@ function Shell() {
   const { isAdmin } = useAuth()
   const { data } = useResource(() => endpoints.admin.reviewQueue({ limit: 100 }), {
     enabled: isAdmin,
-    fallback: reviewQueueFixture,
     label: 'review-queue-count',
   })
   /* GET /admin/review-queue returns `{count: n}` - a number, not rows. The

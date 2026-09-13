@@ -122,6 +122,12 @@ def _inspection_dict(insp: Inspection) -> dict:
         "notes": insp.notes,
         "submitted_at": insp.submitted_at.isoformat() if insp.submitted_at else None,
         "scan_count": len(insp.scans),
+        "scanned_count": len(live),
+        "scanned_at": (
+            max((s.created_at for s in live if getattr(s, "created_at", None)), default=None).isoformat()
+            if any(getattr(s, "created_at", None) for s in live)
+            else (insp.submitted_at.isoformat() if insp.submitted_at else (insp.inspection_date.isoformat() if insp.inspection_date else None))
+        ),
         # Rollup aliases — every name the clients filter on resolves.
         "overall_result": rollup, "result": rollup, "verdict": rollup,
         "result_counts": {

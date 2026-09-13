@@ -26,7 +26,6 @@ import { Info, Pencil, Search, Smartphone, UserPlus } from 'lucide-react'
 import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDebounced, useDocumentTitle, useMutation, useResource } from '../lib/hooks'
-import { users as usersFixture } from '../mock/fixtures'
 import {
   Button,
   Callout,
@@ -61,10 +60,9 @@ export default function Inspectors() {
   const toast = useToast()
 
   const list = useResource(() => endpoints.admin.users(), {
-    fallback: usersFixture,
     label: t('admin.users'),
   })
-  const rows = list.data ?? usersFixture
+  const rows = list.data ?? []
 
   const [qRaw, setQRaw] = useState('')
   const q = useDebounced(qRaw, 200)

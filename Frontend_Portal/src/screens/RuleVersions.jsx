@@ -28,13 +28,11 @@ import { Link } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { endpoints } from '../api/client'
 import { useDocumentTitle, useResource } from '../lib/hooks'
-import { RULE_VERSIONS_DATA } from '../mock/ruleVersionsData'
 import {
   Button,
   Callout,
   Card,
   cx,
-  DemoChip,
   EmptyState,
   Input,
   Modal,
@@ -441,11 +439,9 @@ export default function RuleVersions() {
 
   /* ---- Fetch live rule versions from backend ---- */
   const rvRes = useResource(() => endpoints.admin.ruleVersions(), {
-    fallback: RULE_VERSIONS_DATA,
     label: 'rule-versions',
   })
 
-  const isDemo = rvRes.demo
   const isLoading = rvRes.loading
 
   // Strict chronological order requested: 1st 2009, next 2011, next 2017 amendments, next 2022 amendments
@@ -474,7 +470,6 @@ export default function RuleVersions() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-h1 font-semibold tracking-tight text-ink">Rule Versions</h1>
-          {isDemo && <DemoChip />}
           <p className="mt-1 text-small text-ink-2">
             Gazette readings and statutory frameworks governing Legal Metrology inspections.
           </p>

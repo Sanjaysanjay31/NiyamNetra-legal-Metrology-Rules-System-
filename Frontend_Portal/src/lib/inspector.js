@@ -5,9 +5,7 @@
  * inspector dashboard shows is assembled in this browser from the endpoints
  * that DO exist: GET /inspections (scoped to the signed-in officer by the
  * router), GET /inspections/{id} (six summary fields per scan) and GET
- * /scans/{id} (findings and evidence). When the backend is unreachable the
- * fixtures in mock/fixtures.js stand in and useResource flags the screen with
- * its "Demo data" chip — the same contract the rest of the portal follows.
+ * /scans/{id} (findings and evidence). All data is strictly live from the server.
  *
  * The one derived judgement this file makes is `statusOfInspection`: a visit
  * carries several packages, each with its own result, and an officer reading a
@@ -24,12 +22,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { endpoints } from '../api/client'
 import { DERIVED_CHECK, verdictOf } from './checks'
 import { useResource } from './hooks'
-import {
-  inspections as inspectionsFixture,
-  scansById as scansFixture,
-  scansForInspection,
-  storesById as storesFixture,
-} from '../mock/fixtures'
 
 /* ------------------------------------------------------------- statuses ---- */
 
@@ -147,23 +139,20 @@ export function buildRows(inspections, shops, scansFor) {
  */
 export function useInspectorData({ maxDetails = 60, maxFullScans = 24 } = {}) {
   const list = useResource(() => endpoints.inspections.list(), {
-    fallback: inspectionsFixture,
     label: 'inspections',
   })
   const shops = useResource(() => endpoints.inspections.stores(), {
-    fallback: Object.values(storesFixture),
     label: 'stores',
   })
 
-  /* Live mode only: inspection details (scan summaries) + full scans for the
-     packages whose findings a review surface needs. Demo mode uses the fixture
-     joins and fetches nothing. */
+  /* Live mode: inspection details (scan summaries) + full scans for the
+     packages whose findings a review surface needs. */
   const [liveSummaries, setLiveSummaries] = useState(null)
   const [liveScans, setLiveScans] = useState(null)
 
   useEffect(() => {
     let alive = true
-    if (list.demo || !Array.isArray(list.data)) {
+    if (!Array.isArray(list.data)) {
       setLiveSummaries(null)
       setLiveScans(null)
       return undefined
@@ -205,36 +194,24 @@ export function useInspectorData({ maxDetails = 60, maxFullScans = 24 } = {}) {
     return () => {
       alive = false
     }
-  }, [list.data, list.demo, maxDetails, maxFullScans])
-
-  const demo = list.demo || shops.demo || (!list.loading && Array.isArray(list.data) && list.data.length === 0)
+  }, [list.data, maxDetails, maxFullScans])
 
   const scansFor = useMemo(() => {
-    if (demo || !liveSummaries || Object.keys(liveSummaries).length === 0) return (id) => scansForInspection(id)
     const map = liveSummaries ?? {}
-    return (id) => map[id] ?? null
-  }, [demo, liveSummaries])
+    return (id) => map[id] ?? []
+  }, [liveSummaries])
 
   const rows = useMemo(() => {
-    const rawInspections =
-      !list.loading && Array.isArray(list.data) && list.data.length > 0
-        ? list.data
-        : inspectionsFixture
-    const rawShops =
-      !shops.loading && Array.isArray(shops.data) && shops.data.length > 0
-        ? shops.data
-        : Object.values(storesFixture)
+    const rawInspections = Array.isArray(list.data) ? list.data : []
+    const rawShops = Array.isArray(shops.data) ? shops.data : []
     return buildRows(rawInspections, rawShops, scansFor)
-  }, [list.loading, list.data, shops.loading, shops.data, scansFor])
+  }, [list.data, shops.data, scansFor])
 
   const fullScans = useMemo(() => {
-    if (demo || !liveScans || Object.keys(liveScans).length === 0) return scansFixture
     return liveScans ?? {}
-  }, [demo, liveScans])
+  }, [liveScans])
 
-  /* One violation row per failing finding across all inspections, newest
-     first. In live mode this covers the most recent packages that carry a
-     violation; the bound is stated on the screens that use it. */
+  /* One violation row per failing finding across all inspections, newest first. */
   const violationRows = useMemo(() => {
     const out = []
     for (const row of rows) {
@@ -261,9 +238,9 @@ export function useInspectorData({ maxDetails = 60, maxFullScans = 24 } = {}) {
   const loading =
     list.loading ||
     shops.loading ||
-    (!demo && liveSummaries == null && Array.isArray(list.data) && list.data.length > 0)
+    (liveSummaries == null && Array.isArray(list.data) && list.data.length > 0)
 
-  return { rows, shops: shops.data, fullScans, violationRows, loading, demo, reload: list.reload }
+  return { rows, shops: shops.data ?? [], fullScans, violationRows, loading, demo: false, reload: list.reload }
 }
 
 /* ------------------------------------------------------------- aggregates -- */
@@ -339,42 +316,33 @@ export function violationsByRule(violationRows = []) {
   return [...map.values()].sort((a, b) => b.count - a.count)
 }
 
-export const REFERENCE_OVERVIEW = [
-  { label: 'Mar', Compliant: 10, 'Non-Compliant': 2, 'Needs Review': 1 },
-  { label: 'Apr', Compliant: 12, 'Non-Compliant': 3, 'Needs Review': 1 },
-  { label: 'May', Compliant: 14, 'Non-Compliant': 4, 'Needs Review': 1 },
-  { label: 'Jun', Compliant: 15, 'Non-Compliant': 4, 'Needs Review': 1 },
-  { label: 'Jul', Compliant: 15, 'Non-Compliant': 5, 'Needs Review': 1 },
-  { label: 'Aug', Compliant: 16, 'Non-Compliant': 5, 'Needs Review': 1 },
-  { label: 'Sep', Compliant: 12, 'Non-Compliant': 4, 'Needs Review': 1 },
-]
-
-export const REFERENCE_TOP_VIOLATIONS = [
-  { check_id: 'CHK01', ruleNumber: 'Rule 6', title: 'Mandatory declarations missing', count: 12 },
-  { check_id: 'CHK06', ruleNumber: 'Rule 7', title: 'Font size requirement not met', count: 8 },
-  { check_id: 'CHK04', ruleNumber: 'Rule 26', title: 'Net quantity / MRP issues', count: 5 },
-  { check_id: 'CHK05', ruleNumber: 'Rule 3', title: 'Weight / quantity error', count: 4 },
-  { check_id: 'OTHERS', ruleNumber: 'Others', title: 'Additional violations', count: 3 },
-]
-
-export const REFERENCE_STATS = {
-  total: 128,
-  compliant: 94,
-  non_compliant: 20,
-  nonCompliant: 20,
-  needs_review: 14,
-  needsReview: 14,
-  trends: {
-    total: { label: '↑ 12% from last month', tone: 'pass' },
-    compliant: { label: '↑ 18% from last month', tone: 'pass' },
-    nonCompliant: { label: '↑ 5% from last month', tone: 'violation' },
-    needsReview: { label: '↓ 3% from last month', tone: 'pass' },
-  },
-}
-
-/** Group submitted rows into monthly buckets. Returns reference overview for complete trend representation. */
-export function monthlyBuckets(rows = []) {
-  return REFERENCE_OVERVIEW
+/** Group submitted rows into monthly buckets, zero-filled for months with no visits. */
+export function monthlyBuckets(rows = [], months = 6, now = new Date()) {
+  const buckets = []
+  const curYear = now.getFullYear()
+  const curMonth = now.getMonth()
+  for (let i = months - 1; i >= 0; i -= 1) {
+    const d = new Date(curYear, curMonth - i, 1)
+    const label = d.toLocaleDateString('en-IN', { month: 'short' })
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    buckets.push({ ym, label, Compliant: 0, 'Non-Compliant': 0, 'Needs Review': 0 })
+  }
+  for (const r of rows) {
+    if (r.status === 'draft' || r.status === 'out_of_scope') continue
+    if (!r.inspection_date) continue
+    const ym = String(r.inspection_date).slice(0, 7)
+    const b = buckets.find((x) => x.ym === ym)
+    if (!b) continue
+    if (r.status === 'compliant') b.Compliant += 1
+    else if (r.status === 'non_compliant') b['Non-Compliant'] += 1
+    else b['Needs Review'] += 1
+  }
+  return buckets.map(({ label, Compliant, 'Non-Compliant': nc, 'Needs Review': nr }) => ({
+    label,
+    Compliant,
+    'Non-Compliant': nc,
+    'Needs Review': nr,
+  }))
 }
 
 /* ----------------------------------------------------------------- format -- */

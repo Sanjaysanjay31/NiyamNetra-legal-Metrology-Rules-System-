@@ -56,14 +56,12 @@ import {
   statusOfInspection,
 } from '../lib/inspector'
 import { useDocumentTitle, useMutation, useResource } from '../lib/hooks'
-import { inspectionDetail, inspectionDetailsById, scansById, storesById } from '../mock/fixtures'
 import { CheckRibbon, ResultSeal } from '../ui/signature'
 import {
   Button,
   Callout,
   Card,
   ConfidenceBadge,
-  DemoChip,
   EmptyState,
   Eyebrow,
   MetaStat,
@@ -178,11 +176,10 @@ function productLine(scan) {
 /** One package: product details, OCR declarations, the nineteen checks, the
     violations and the evidence that supports them. Fetches its own full scan
     (the inspection detail carries only the six summary fields per scan). */
-function ScanRecordCard({ scan, demo }) {
+function ScanRecordCard({ scan }) {
   const [openImage, setOpenImage] = useState(null)
   const full = useResource(() => endpoints.scans.get(scan.id), {
     deps: [scan.id],
-    fallback: scansById[scan.id] ?? null,
     label: `scan-${scan.id}`,
   })
 
@@ -512,17 +509,15 @@ export default function InspectionRecord() {
 
   const record = useResource(() => endpoints.inspections.get(id), {
     deps: [id],
-    fallback: inspectionDetailsById[id] ?? inspectionDetail,
     label: `inspection-${id}`,
   })
 
   const shops = useResource(() => endpoints.inspections.stores(), {
-    fallback: Object.values(storesById),
     label: 'stores',
   })
 
-  const data = record.data ?? inspectionDetailsById[id] ?? inspectionDetail
-  const shop = (shops.data ?? Object.values(storesById)).find((s) => s.id === data.store_id) ?? storesById[data.store_id]
+  const data = record.data ?? {}
+  const shop = (shops.data ?? []).find((s) => s.id === data.store_id)
   const scans = data?.scans ?? []
   const overallStatus = statusOfInspection(data, scans)
 
@@ -561,7 +556,6 @@ export default function InspectionRecord() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-display font-bold text-ink">{inspectionLabel(id)}</h1>
-              {record.demo && <DemoChip />}
             </div>
             <p className="mt-1 text-small text-ink-2">
               <span className="font-semibold text-ink">{shopName}</span> · {shop?.city || 'Hyderabad North'}
@@ -598,7 +592,7 @@ export default function InspectionRecord() {
           <p className="mt-1 text-caption text-ink-2">{shopAddress}</p>
           <div className="mt-2 flex items-center gap-1.5 text-caption font-medium text-emerald-600 dark:text-emerald-400">
             <ShieldCheck size={14} />
-            <span>{geofenceMeta.label} ({data?.geofence_distance_m ?? 12.0}m from store location)</span>
+            <span>{geofenceMeta.label}{data?.geofence_distance_m != null ? ` (${Math.round(data.geofence_distance_m)}m from store location)` : ''}</span>
           </div>
         </Card>
 

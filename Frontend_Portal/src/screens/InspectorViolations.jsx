@@ -17,7 +17,6 @@ import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
 import {
   inspectionLabel,
-  REFERENCE_TOP_VIOLATIONS,
   useInspectorData,
   violationsByRule,
 } from '../lib/inspector'
@@ -25,7 +24,6 @@ import { useDebounced, useDocumentTitle } from '../lib/hooks'
 import {
   Button,
   Card,
-  DemoChip,
   EmptyState,
   Field,
   Input,
@@ -73,7 +71,7 @@ export default function InspectorViolations() {
   const { t } = useI18n()
   const navigate = useNavigate()
   useDocumentTitle('Violations · Inspector Portal')
-  const { violationRows, loading, demo } = useInspectorData()
+  const { violationRows, loading } = useInspectorData()
 
   const [query, setQuery] = useState('')
   const [selectedRule, setSelectedRule] = useState('')
@@ -81,83 +79,8 @@ export default function InspectorViolations() {
 
   const debouncedQuery = useDebounced(query, 250)
 
-  // Curated demo violations if violationRows is small
   const allViolations = useMemo(() => {
-    if (violationRows && violationRows.length >= 6) return violationRows
-    return [
-      {
-        check_id: 'CHK01',
-        title: 'Mandatory declarations missing',
-        citation: 'Rule 6(1)(a) — Name & address of manufacturer / packer absent',
-        severity: 'major',
-        product: 'Rice (1kg)',
-        shopName: 'Anand General Store',
-        shopCity: 'Secunderabad',
-        inspection_id: 1023,
-        date: '2026-09-08',
-        effective_verdict: 'fail',
-      },
-      {
-        check_id: 'CHK06',
-        title: 'Font size requirement not met',
-        citation: 'Rule 7, Table 1 — Minimum numeral height under threshold',
-        severity: 'major',
-        product: 'Rice (1kg)',
-        shopName: 'Anand General Store',
-        shopCity: 'Secunderabad',
-        inspection_id: 1023,
-        date: '2026-09-08',
-        effective_verdict: 'fail',
-      },
-      {
-        check_id: 'CHK04',
-        title: 'Net quantity / MRP issues',
-        citation: 'Rule 26 / Rule 6(1)(e) — Absence of inclusive of all taxes wording',
-        severity: 'moderate',
-        product: 'Sugar (1kg)',
-        shopName: 'Ramesh Provision Store',
-        shopCity: 'Karkhana',
-        inspection_id: 1018,
-        date: '2026-09-05',
-        effective_verdict: 'fail',
-      },
-      {
-        check_id: 'CHK05',
-        title: 'Weight / quantity qualification error',
-        citation: 'Rule 3 / Rule 5 — Qualifier asterisk used alongside net weight',
-        severity: 'minor',
-        product: 'Basmati Rice (1kg)',
-        shopName: 'Vasavi Wholesale Depot',
-        shopCity: 'Bowenpally',
-        inspection_id: 780,
-        date: '2026-08-24',
-        effective_verdict: 'fail',
-      },
-      {
-        check_id: 'CHK12',
-        title: 'Country of origin missing',
-        citation: 'Rule 6(1)(g) — Country of origin missing on imported consignment',
-        severity: 'major',
-        product: 'Tea (250g)',
-        shopName: 'Ganraj Supermart',
-        shopCity: 'Hyderabad North',
-        inspection_id: 777,
-        date: '2026-08-27',
-        effective_verdict: 'fail',
-      },
-      {
-        check_id: 'CHK01',
-        title: 'Manufacturer address absent',
-        citation: 'Rule 6(1)(a) — Packaged commodity without packer contact',
-        severity: 'major',
-        product: 'Toor Dal (1kg)',
-        shopName: 'Sai Provision Mart',
-        shopCity: 'Hyderabad North',
-        inspection_id: 782,
-        date: '2026-08-25',
-        effective_verdict: 'fail',
-      },
-    ]
+    return violationRows ?? []
   }, [violationRows])
 
   const filtered = useMemo(() => {
@@ -184,10 +107,13 @@ export default function InspectorViolations() {
 
   const ruleOptions = useMemo(() => {
     const set = new Set(allViolations.map((v) => ruleName(v.check_id)))
-    return ['Rule 6', 'Rule 7', 'Rule 26', 'Rule 3', ...set].filter(
-      (value, index, self) => self.indexOf(value) === index
-    )
+    return Array.from(set)
   }, [allViolations])
+
+  const byRule = useMemo(() => violationsByRule(allViolations), [allViolations])
+  const topRule = byRule[0] ?? null
+  const affectedStores = useMemo(() => new Set(allViolations.map((v) => v.shopName).filter(Boolean)).size, [allViolations])
+  const affectedScans = useMemo(() => new Set(allViolations.map((v) => v.scan_id || v.id).filter(Boolean)).size, [allViolations])
 
   return (
     <div className="flex flex-col gap-6 pb-12">
@@ -195,7 +121,6 @@ export default function InspectorViolations() {
         eyebrow="Statutory Enforcement"
         title="Detected Violations"
         subtitle="Contraventions and breaches detected under the Legal Metrology (Packaged Commodities) Rules 2011 across your inspections."
-        actions={demo && <DemoChip />}
       />
 
       {/* ------------------------------------------------ summary metrics -- */}
@@ -203,29 +128,33 @@ export default function InspectorViolations() {
         <Card className="p-4">
           <p className="text-caption font-medium text-ink-3">Total Violations</p>
           <p className="nn-mono mt-1 text-display font-bold text-rose-600 dark:text-rose-400">
-            {allViolations.length > 25 ? allViolations.length : 32}
+            {allViolations.length}
           </p>
           <p className="mt-1 text-caption text-ink-3">Recorded on official visits</p>
         </Card>
 
         <Card className="p-4">
           <p className="text-caption font-medium text-ink-3">Most Frequent Breach</p>
-          <p className="mt-1 text-h2 font-bold text-ink">Rule 6</p>
-          <p className="mt-1 text-caption text-ink-3">Mandatory declarations missing</p>
+          <p className="mt-1 text-h2 font-bold text-ink">{topRule ? (topRule.rule || topRule.check_id) : '—'}</p>
+          <p className="mt-1 text-caption text-ink-3">{topRule ? (topRule.title || `${topRule.count} occurrences`) : 'No breaches'}</p>
         </Card>
 
         <Card className="p-4">
           <p className="text-caption font-medium text-ink-3">Non-Compliant Packages</p>
-          <p className="nn-mono mt-1 text-display font-bold text-ink">27</p>
-          <p className="mt-1 text-caption text-ink-3">Across 6 commercial stores</p>
+          <p className="nn-mono mt-1 text-display font-bold text-ink">{affectedScans}</p>
+          <p className="mt-1 text-caption text-ink-3">
+            {allViolations.length > 0 ? `Across ${affectedStores} commercial store${affectedStores === 1 ? '' : 's'}` : 'No stores affected'}
+          </p>
         </Card>
 
         <Card className="p-4">
           <p className="text-caption font-medium text-ink-3">Action Recommended</p>
           <p className="mt-1 text-h2 font-bold text-amber-600 dark:text-amber-400">
-            Sec. 15 Notice
+            {allViolations.length > 0 ? 'Statutory Notice' : '—'}
           </p>
-          <p className="mt-1 text-caption text-ink-3">Improvement &amp; compounding</p>
+          <p className="mt-1 text-caption text-ink-3">
+            {allViolations.length > 0 ? 'Improvement & compounding' : 'No action needed'}
+          </p>
         </Card>
       </section>
 

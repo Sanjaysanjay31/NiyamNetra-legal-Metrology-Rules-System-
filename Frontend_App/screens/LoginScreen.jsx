@@ -22,11 +22,6 @@ export default function LoginScreen() {
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const fillCredentials = (id, pw) => {
-    setId(id);
-    setPw(pw);
-    setErr(null);
-  };
 
   const submit = async () => {
     if (!employee_id.trim() || !password) {
@@ -283,60 +278,6 @@ export default function LoginScreen() {
             style={{ marginTop: spacing.xs, minHeight: 50 }}
           />
 
-          {/* Quick Demo Credentials Autofill - DEV ONLY */}
-          {__DEV__ && (
-          <View style={{ marginTop: spacing.xl, borderTopWidth: 1, borderTopColor: colors.borderLight, paddingTop: spacing.md }}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', marginBottom: spacing.xs }}>
-              Demo Credentials (Tap to Fill)
-            </Text>
-            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-              <Pressable
-                onPress={() => fillCredentials('LM-TG-1042', 'NiyamNetra@2026')}
-                accessibilityRole="button"
-                accessibilityLabel="Fill Inspector credentials"
-                style={{
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: colors.white,
-                  borderWidth: 1.2,
-                  borderColor: colors.border,
-                  borderRadius: radius.md,
-                  paddingVertical: 9,
-                  paddingHorizontal: 6,
-                  ...shadows.sm,
-                }}
-              >
-                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.niyamBlue }}>
-                  👤 Inspector (LM-TG-1042)
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => fillCredentials('LM-ADM-001', 'NiyamNetra@2026')}
-                accessibilityRole="button"
-                accessibilityLabel="Fill Admin credentials"
-                style={{
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: colors.white,
-                  borderWidth: 1.2,
-                  borderColor: colors.border,
-                  borderRadius: radius.md,
-                  paddingVertical: 9,
-                  paddingHorizontal: 6,
-                  ...shadows.sm,
-                }}
-              >
-                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.netraTeal }}>
-                  🛡️ Admin (LM-ADM-001)
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-          )}
 
           {/* Statutory Footer */}
           <Text

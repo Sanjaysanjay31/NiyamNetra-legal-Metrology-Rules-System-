@@ -33,11 +33,9 @@ import {
   REGISTRATION_ORDER,
 } from '../lib/checks'
 import { useDocumentTitle, useResource } from '../lib/hooks'
-import { rulesMeta } from '../mock/fixtures'
 import {
   Callout,
   Card,
-  DemoChip,
   MetaStat,
   PageHeader,
   Pill,
@@ -68,10 +66,9 @@ export default function Rules() {
   useDocumentTitle(t('admin.rulesTitle'))
 
   const rules = useResource(() => endpoints.admin.rules(), {
-    fallback: rulesMeta,
     label: t('admin.rulesTitle'),
   })
-  const data = rules.data ?? rulesMeta
+  const data = rules.data ?? {}
 
   const unverified = REGISTRATION_ORDER.filter((id) => CHECKS[id].unverified)
   const gaps = SCHEDULE_GAPS.filter((g) => data[g.flag] === false)

@@ -224,6 +224,29 @@ class ScanOut(ORMModel):
     images: list[ScanImageOut]
 
 
+class ScanListItemOut(BaseModel):
+    id: int
+    inspection_id: int
+    store_id: int
+    store_name: str
+    store_area: str | None = None
+    inspector_id: int
+    inspector_name: str
+    commodity_generic: str | None = None
+    brand_name: str | None = None
+    commodity_category: str | None = None
+    batch_number: str | None = None
+    barcode: str | None = None
+    net_quantity_value: float | None = None
+    net_quantity_unit: str | None = None
+    mrp: float | None = None
+    overall_result: ScanResult
+    checks_total: int
+    checks_assessed: int
+    image_count: int
+    created_at: datetime
+
+
 # ---------------------------------------------------------------- reports
 class ResultCounts(BaseModel):
     """The four scan results. Required in every report and dashboard payload."""
@@ -293,6 +316,41 @@ class AdminViolationsResponse(BaseModel):
     total: int
     violations: list[AdminViolationItem]
     top_violations: list[dict] = []
+
+
+class RepeatOffenderHistory(BaseModel):
+    id: int
+    scan_id: int | None = None
+    check_id: str
+    title: str | None = None
+    citation: str | None = None
+    severity: str | None = None
+    brand: str | None = None
+    region: str | None = None
+    store_id: int
+    shopName: str | None = None
+    inspector_id: int | None = None
+    inspector: str | None = None
+    product: str | None = None
+    date: str | None = None
+
+
+class RepeatOffender(BaseModel):
+    id: str | None = None
+    name: str
+    violations: int
+    stores: int
+    brands: list[str] = []
+    regions: list[str] = []
+    last_violation: str | None = None
+    history: list[RepeatOffenderHistory] = []
+
+
+class RepeatOffendersResponse(BaseModel):
+    period_start: str
+    period_end: str
+    offenders: list[RepeatOffender] = []
+    stores: list[dict] = []
 
 
 class RuleVersionOut(BaseModel):

@@ -28,15 +28,13 @@ import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
 import {
   monthlyBuckets,
-  REFERENCE_OVERVIEW,
-  REFERENCE_STATS,
-  REFERENCE_TOP_VIOLATIONS,
+  statusTally,
   useInspectorData,
+  violationsByRule,
 } from '../lib/inspector'
 import { useDocumentTitle } from '../lib/hooks'
 import {
   Card,
-  DemoChip,
   PageHeader,
   SectionTitle,
   Table,
@@ -46,62 +44,6 @@ import {
 } from '../ui'
 
 const AXIS = { fontSize: 11, fill: 'var(--nn-text-3)' }
-
-const RULE_BREAKDOWN_DATA = [
-  { name: 'Rule 6 (Declarations)', count: 12, fill: '#EF4444' },
-  { name: 'Rule 7 (Font size)', count: 8, fill: '#F97316' },
-  { name: 'Rule 26 (MRP/Tax)', count: 5, fill: '#F59E0B' },
-  { name: 'Rule 3 (Weight/Ceiling)', count: 4, fill: '#3B82F6' },
-  { name: 'Section 36 (Penalty Tier)', count: 3, fill: '#8B5CF6' },
-]
-
-const VIOLATION_TABLE = [
-  {
-    rule: 'Rule 6',
-    citation: 'Rule 6(1)(a) & 6(1)(b)',
-    title: 'Mandatory declarations missing on package',
-    count: 12,
-    share: '37.5%',
-    action: 'Section 15 Improvement Notice',
-    risk: 'High',
-  },
-  {
-    rule: 'Rule 7',
-    citation: 'Rule 7, Table 1',
-    title: 'Numeral & letter height below minimum statutory threshold',
-    count: 8,
-    share: '25.0%',
-    action: 'Rectification Notice',
-    risk: 'Medium',
-  },
-  {
-    rule: 'Rule 26',
-    citation: 'Rule 26 / Rule 6(1)(e)',
-    title: 'Retail sale price declaration without inclusive of all taxes',
-    count: 5,
-    share: '15.6%',
-    action: 'Compounding Notice',
-    risk: 'High',
-  },
-  {
-    rule: 'Rule 3',
-    citation: 'Rule 3, Chapter II',
-    title: 'Standard units qualifier / weight expression error',
-    count: 4,
-    share: '12.5%',
-    action: 'Advisory Warning',
-    risk: 'Low',
-  },
-  {
-    rule: 'Section 36',
-    citation: 'Legal Metrology Act, Sec 36(1)',
-    title: 'Multiple repeated offences on commercial consignment',
-    count: 3,
-    share: '9.4%',
-    action: 'Provisional Seizure',
-    risk: 'Critical',
-  },
-]
 
 function ChartTip({ active, payload, label }) {
   if (!active || !payload?.length) return null
@@ -127,31 +69,54 @@ export default function InspectorPerformance() {
   const { t } = useI18n()
   const { user } = useAuth()
   useDocumentTitle('My Performance · Inspector Portal')
-  const { rows, loading, demo } = useInspectorData()
+  const { rows, loading, violationRows } = useInspectorData()
 
   const [period, setPeriod] = useState('all')
 
   const chartData = useMemo(() => monthlyBuckets(rows), [rows])
 
-  // Rates
-  const totalInspections = 128
-  const compliantCount = 94
-  const nonCompliantCount = 27
-  const needsReviewCount = 7
+  const filteredRows = useMemo(() => {
+    if (period === 'all') return rows
+    const days = period === '30' ? 30 : 90
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    return rows.filter((r) => (r.inspection_date ?? '') >= cutoff)
+  }, [rows, period])
 
-  const complianceRate = '73.4%'
-  const nonComplianceRate = '21.1%'
-  const reviewRate = '5.5%'
+  const tally = useMemo(() => statusTally(filteredRows), [filteredRows])
+  const totalInspections = tally.total ?? 0
+  const compliantCount = tally.byStatus.compliant ?? 0
+  const nonCompliantCount = tally.byStatus.non_compliant ?? 0
+  const needsReviewCount = tally.byStatus.needs_review ?? 0
+
+  const complianceRate = totalInspections > 0 ? `${Math.round((compliantCount / totalInspections) * 1000) / 10}%` : '0%'
+  const nonComplianceRate = totalInspections > 0 ? `${Math.round((nonCompliantCount / totalInspections) * 1000) / 10}%` : '0%'
+  const reviewRate = totalInspections > 0 ? `${Math.round((needsReviewCount / totalInspections) * 1000) / 10}%` : '0%'
+
+  const ruleBreakdown = useMemo(() => {
+    const list = violationsByRule(violationRows)
+    const total = list.reduce((sum, r) => sum + r.count, 0)
+    const colors = ['#EF4444', '#F97316', '#F59E0B', '#3B82F6', '#8B5CF6', '#10B981']
+    return list.slice(0, 6).map((r, idx) => ({
+      name: `${r.check_id}`,
+      count: r.count,
+      fill: colors[idx % colors.length],
+      rule: r.check_id,
+      citation: r.citation || '—',
+      title: r.title || 'Violation',
+      share: total > 0 ? `${Math.round((r.count / total) * 1000) / 10}%` : '0%',
+      action: r.count > 5 ? 'Section 15 Notice' : 'Statutory Memo',
+      risk: r.count > 5 ? 'High' : (r.count > 2 ? 'Medium' : 'Low'),
+    }))
+  }, [violationRows])
 
   return (
     <div className="flex flex-col gap-6 pb-12">
       <PageHeader
         eyebrow="Officer Analytics"
         title="My Performance"
-        subtitle="Inspection enforcement volume, compliance success rates, and rule-wise contravention frequency in Hyderabad North."
+        subtitle={`Inspection enforcement volume, compliance success rates, and rule-wise contravention frequency${user?.jurisdiction ? ` in ${user.jurisdiction}` : ''}.`}
         actions={
           <div className="flex items-center gap-2">
-            {demo && <DemoChip />}
             <div className="flex rounded-lg border border-divider bg-surface p-0.5 text-small">
               <button
                 type="button"
@@ -300,30 +265,36 @@ export default function InspectorPerformance() {
           </div>
 
           <div className="mt-4 h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={RULE_BREAKDOWN_DATA}
-                layout="vertical"
-                margin={{ top: 8, right: 24, bottom: 0, left: 16 }}
-              >
-                <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  tick={AXIS}
-                  stroke="var(--nn-chart-grid)"
-                  tickLine={false}
-                  width={150}
-                />
-                <Tooltip content={<ChartTip />} cursor={{ fill: 'var(--nn-surface-2)' }} />
-                <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                  {RULE_BREAKDOWN_DATA.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            {ruleBreakdown.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-small text-ink-3">
+                No rule violations recorded in this period.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={ruleBreakdown}
+                  layout="vertical"
+                  margin={{ top: 8, right: 24, bottom: 0, left: 16 }}
+                >
+                  <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    tick={AXIS}
+                    stroke="var(--nn-chart-grid)"
+                    tickLine={false}
+                    width={150}
+                  />
+                  <Tooltip content={<ChartTip />} cursor={{ fill: 'var(--nn-surface-2)' }} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                    {ruleBreakdown.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </Card>
       </div>
@@ -350,43 +321,51 @@ export default function InspectorPerformance() {
             </tr>
           </thead>
           <tbody>
-            {VIOLATION_TABLE.map((item) => (
-              <Tr key={item.rule}>
-                <Td>
-                  <span className="nn-mono font-bold text-ink">{item.rule}</span>
-                </Td>
-                <Td>
-                  <span className="nn-mono text-[11px] text-ink-3">{item.citation}</span>
-                </Td>
-                <Td>
-                  <span className="font-medium text-ink">{item.title}</span>
-                </Td>
-                <Td align="right">
-                  <span className="nn-mono font-bold text-rose-600 dark:text-rose-400">{item.count}</span>
-                </Td>
-                <Td align="right">
-                  <span className="nn-mono text-small text-ink-2">{item.share}</span>
-                </Td>
-                <Td>
-                  <span className="text-small font-medium text-ink-2">{item.action}</span>
-                </Td>
-                <Td>
-                  <span
-                    className={`inline-flex items-center rounded-pill px-2 py-0.5 text-[11px] font-semibold ${
-                      item.risk === 'Critical'
-                        ? 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300'
-                        : item.risk === 'High'
-                          ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
-                          : item.risk === 'Medium'
-                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                            : 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
-                    }`}
-                  >
-                    {item.risk}
-                  </span>
-                </Td>
-              </Tr>
-            ))}
+            {ruleBreakdown.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="py-8 text-center text-small text-ink-3">
+                  No rule violations recorded in this period.
+                </td>
+              </tr>
+            ) : (
+              ruleBreakdown.map((item) => (
+                <Tr key={item.rule}>
+                  <Td>
+                    <span className="nn-mono font-bold text-ink">{item.rule}</span>
+                  </Td>
+                  <Td>
+                    <span className="nn-mono text-[11px] text-ink-3">{item.citation}</span>
+                  </Td>
+                  <Td>
+                    <span className="font-medium text-ink">{item.title}</span>
+                  </Td>
+                  <Td align="right">
+                    <span className="nn-mono font-bold text-rose-600 dark:text-rose-400">{item.count}</span>
+                  </Td>
+                  <Td align="right">
+                    <span className="nn-mono text-small text-ink-2">{item.share}</span>
+                  </Td>
+                  <Td>
+                    <span className="text-small font-medium text-ink-2">{item.action}</span>
+                  </Td>
+                  <Td>
+                    <span
+                      className={`inline-flex items-center rounded-pill px-2 py-0.5 text-[11px] font-semibold ${
+                        item.risk === 'Critical'
+                          ? 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300'
+                          : item.risk === 'High'
+                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                            : item.risk === 'Medium'
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                              : 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                      }`}
+                    >
+                      {item.risk}
+                    </span>
+                  </Td>
+                </Tr>
+              ))
+            )}
           </tbody>
         </Table>
       </Card>

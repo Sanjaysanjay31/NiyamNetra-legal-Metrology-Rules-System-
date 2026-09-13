@@ -20,7 +20,7 @@
 import axios from 'axios'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
-export const DEMO_DATA = String(import.meta.env.VITE_DEMO_DATA) === 'true'
+export const DEMO_DATA = false
 
 /* ---------------------------------------------------------------- token ---- */
 
@@ -211,6 +211,7 @@ export const endpoints = {
   },
 
   scans: {
+    list: (params) => unwrap(api.get('/scans', { params })),
     get: (id) => unwrap(api.get(`/scans/${id}`)),
     verify: (id) => unwrap(api.get(`/scans/${id}/verify`)),
     assess: (id, body) => unwrap(api.post(`/scans/${id}/assess`, body ?? {})),

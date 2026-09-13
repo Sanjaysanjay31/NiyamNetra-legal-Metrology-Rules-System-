@@ -200,7 +200,7 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
         ) : (
           recentInspections.map((item) => {
             const dateStr = item.date || item.created_at || item.local_created_at || '';
-            const verdict = item.overall_result || item.result || 'compliant';
+            const verdict = item.overall_result || item.result || 'not_assessed';
             return (
               <Card key={item.id || item.client_uuid} padding="md" style={styles.inspectionCard}>
                 <View style={styles.rowBetween}>

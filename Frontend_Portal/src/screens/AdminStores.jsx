@@ -21,10 +21,6 @@ import { Link } from 'react-router-dom'
 import { endpoints } from '../api/client'
 import { useDebounced, useDocumentTitle, useResource } from '../lib/hooks'
 import {
-  inspections as inspectionsFixture,
-  stores as storesFixture,
-} from '../mock/fixtures'
-import {
   Button,
   Card,
   EmptyState,
@@ -142,11 +138,9 @@ export default function AdminStores() {
   useDocumentTitle('Stores')
 
   const stores = useResource(() => endpoints.inspections.stores(), {
-    fallback: storesFixture,
     label: 'stores',
   })
   const inspections = useResource(() => endpoints.inspections.list({}), {
-    fallback: inspectionsFixture,
     label: 'inspections',
   })
 
@@ -161,10 +155,10 @@ export default function AdminStores() {
   const [customStores, setCustomStores] = useState([])
 
   const storeList = useMemo(() => {
-    const remote = stores.data ?? storesFixture
+    const remote = stores.data ?? []
     return [...customStores, ...remote]
   }, [customStores, stores.data])
-  const inspectionList = inspections.data ?? inspectionsFixture
+  const inspectionList = inspections.data ?? []
 
   const areas = useMemo(() => {
     const set = new Set(AREA_FALLBACK)

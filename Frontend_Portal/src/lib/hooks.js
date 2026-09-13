@@ -10,7 +10,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEMO_DATA } from '../api/client'
 
 /* ---------------------------------------------------------------- motion --- */
 
@@ -56,14 +55,11 @@ export function useOnlineStatus() {
 
 /**
  * @param fetcher  async () => data. Must be stable or listed in `deps`.
- * @param options  { fallback, deps, enabled, label }
+ * @param options  { deps, enabled, label }
  *
- * Returns { data, error, loading, demo, reload }.
- *
- * `demo` is true only when a fixture was actually substituted, never merely
- * because VITE_DEMO_DATA is on. A screen that reached the backend shows no chip.
+ * Returns { data, error, loading, demo: false, reload }.
  */
-export function useResource(fetcher, { fallback, deps = [], enabled = true, label } = {}) {
+export function useResource(fetcher, { deps = [], enabled = true, label } = {}) {
   const [state, setState] = useState({ data: undefined, error: null, loading: enabled, demo: false })
   const [nonce, setNonce] = useState(0)
   const alive = useRef(true)
@@ -89,22 +85,7 @@ export function useResource(fetcher, { fallback, deps = [], enabled = true, labe
         setState({ data, error: null, loading: false, demo: false })
       } catch (err) {
         if (cancelled || !alive.current) return
-        /* Fixtures stand in only for a connection or server failure. A 401, 403
-           or 422 is a real answer from a reachable backend and must be shown as
-           itself; papering over a permission error with plausible data is how a
-           reviewer forms a false impression of what works. */
-        const substitutable =
-          DEMO_DATA && fallback !== undefined && (err.offline || err.status === 0 || err.status >= 500)
-        if (substitutable) {
-          if (import.meta.env.DEV) {
-            console.info(
-              `[demo] ${label ?? 'resource'}: backend unreachable, showing fixture data.`
-            )
-          }
-          setState({ data: fallback, error: null, loading: false, demo: true })
-        } else {
-          setState({ data: undefined, error: err, loading: false, demo: false })
-        }
+        setState({ data: undefined, error: err, loading: false, demo: false })
       }
     })()
     return () => {

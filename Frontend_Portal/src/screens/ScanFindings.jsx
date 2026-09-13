@@ -66,13 +66,11 @@ import {
   verdictOf,
 } from '../lib/checks'
 import { useDocumentTitle, useLocalPref, useMutation, useResource } from '../lib/hooks'
-import { scanViolation, scansById } from '../mock/fixtures'
 import {
   Button,
   Callout,
   Card,
   ConfidenceBadge,
-  DemoChip,
   Eyebrow,
   FAMILY,
   Field,
@@ -693,11 +691,9 @@ export default function ScanFindings() {
     data: scan,
     error,
     loading,
-    demo,
     reload,
   } = useResource(() => endpoints.scans.get(id), {
     deps: [id],
-    fallback: scansById[id] ?? scanViolation,
     label: `scan-${id}`,
   })
 
@@ -835,19 +831,12 @@ export default function ScanFindings() {
             <p className="nn-mono mt-1 text-caption text-ink-3">{when(scan.created_at)}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {demo && <DemoChip />}
             {scan.duplicate_of && (
               <Pill family="review">Duplicate of scan {scan.duplicate_of}</Pill>
             )}
           </div>
         </div>
       </div>
-
-      {demo && (
-        <Callout family="info" icon={Info} title={t('common.demoData')}>
-          {t('common.demoDataHint')}
-        </Callout>
-      )}
 
       {/* ------------------------------------------------------ instrument -- */}
       <Card className="p-5 sm:p-6">

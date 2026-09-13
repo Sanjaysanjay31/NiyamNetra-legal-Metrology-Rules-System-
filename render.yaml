@@ -38,6 +38,10 @@ services:
       - key: PUBLIC_BASE_URL
         sync: false
 
+      # Strict CORS regex for production (e.g. ^https://.*\.vercel\.app$).
+      - key: CORS_ORIGIN_REGEX_PROD
+        sync: false
+
       # Supabase connection URI. Paste in the dashboard — never commit it.
       #
       # THE ONE THING THAT BREAKS A FIRST DEPLOY: the local .env uses the DIRECT

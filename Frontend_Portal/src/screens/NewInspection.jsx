@@ -66,7 +66,6 @@ import { useI18n } from '../i18n'
 import { useAuth } from '../auth/AuthContext'
 import { useDebounced, useDocumentTitle, useMutation, useResource } from '../lib/hooks'
 import { CHECKS } from '../lib/checks'
-import { stores as storesFixture } from '../mock/fixtures'
 import {
   Button,
   Callout,
@@ -199,7 +198,6 @@ export default function NewInspection() {
   }, [])
 
   const shops = useResource(() => endpoints.inspections.stores(), {
-    fallback: storesFixture,
     label: t('inspection.store'),
   })
 
