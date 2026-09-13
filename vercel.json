@@ -1,7 +1,0 @@
-{
-  "buildCommand": "cd Frontend_Portal && npm run build:render",
-  "outputDirectory": "Frontend_Portal/dist",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
-}
