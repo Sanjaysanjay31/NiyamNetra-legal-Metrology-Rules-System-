@@ -16,8 +16,10 @@
 # lines — a trailing "# ..." would become part of the pattern and silently break it.
 !.env.example
 !.env.render
+!.env.production
 !*/.env.example
 !*/.env.render
+!*/.env.production
 
 # python
 __pycache__/
