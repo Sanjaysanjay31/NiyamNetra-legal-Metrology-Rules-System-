@@ -64,7 +64,7 @@
   },
 
   "result": {
-    "compliant": "सफल",
+    "compliant": "अनुपालित",
     "violation": "उल्लंघन",
     "not_assessed": "आकलन नहीं हो सका",
     "out_of_scope": "क्षेत्र से बाहर",

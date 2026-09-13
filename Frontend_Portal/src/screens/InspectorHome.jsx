@@ -182,33 +182,10 @@ export default function InspectorHome() {
   // Top summary values matching reference dashboard
   const displayStats = REFERENCE_STATS
 
-  // Submitted / Finished Inspections
+  // Submitted / Finished Inspections (4 rows matching Image 2)
   const recentSubmitted = useMemo(() => {
     const submitted = rows.filter((r) => r.status !== 'draft')
-    return submitted.slice(0, 6)
-  }, [rows])
-
-  // Unfinished / Draft Inspections
-  const unfinishedInspections = useMemo(() => {
-    const drafts = rows.filter((r) => r.status === 'draft')
-    if (drafts.length > 0) return drafts.slice(0, 4)
-    // Fallback if none in current filter
-    return [
-      {
-        id: 1017,
-        shopName: 'Srinivasa Stores',
-        productLabel: 'Turmeric Powder (100g)',
-        updatedTime: '05 Sep 2026, 01:12 PM',
-        status: 'draft',
-      },
-      {
-        id: 1016,
-        shopName: 'Lakshmi Supermarket',
-        productLabel: 'Masala (50g)',
-        updatedTime: '04 Sep 2026, 05:27 PM',
-        status: 'draft',
-      },
-    ]
+    return submitted.slice(0, 4)
   }, [rows])
 
   const chartData = useMemo(() => monthlyBuckets(rows), [rows])
@@ -346,72 +323,6 @@ export default function InspectorHome() {
                 </tbody>
               </Table>
             )}
-          </Card>
-
-          {/* Unfinished Inspections Table */}
-          <Card className="overflow-x-auto p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <PenLine size={18} className="text-ink-2" />
-                <h2 className="text-h2 font-bold text-ink">Unfinished Inspections</h2>
-              </div>
-              <Link
-                to="/inspector/inspections"
-                className="flex items-center gap-1 text-small font-semibold text-accent-text hover:underline"
-              >
-                View all <ArrowRight size={14} strokeWidth={2} aria-hidden="true" />
-              </Link>
-            </div>
-
-            <Table className="mt-2" caption="Unfinished draft inspections">
-              <thead>
-                <tr>
-                  <Th>Inspection ID</Th>
-                  <Th>Shop Name</Th>
-                  <Th>Product</Th>
-                  <Th>Last Updated</Th>
-                  <Th>Status</Th>
-                  <Th align="right">Action</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {unfinishedInspections.map((r) => (
-                  <Tr key={r.id} onClick={() => navigate(`/inspector/inspections/${r.id}`)}>
-                    <Td>
-                      <span className="nn-mono text-small font-semibold text-accent-text">
-                        {inspectionLabel(r.id)}
-                      </span>
-                    </Td>
-                    <Td>
-                      <span className="text-small font-medium text-ink">{r.shopName}</span>
-                    </Td>
-                    <Td>
-                      <span className="text-small text-ink-2">{r.productLabel || 'Package Draft'}</span>
-                    </Td>
-                    <Td className="text-small text-ink-2">
-                      {r.updatedTime || prettyDateTime(r) || '05 Sep 2026, 01:12 PM'}
-                    </Td>
-                    <Td>
-                      <span className="inline-flex items-center rounded-pill bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                        Draft
-                      </span>
-                    </Td>
-                    <Td align="right">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          navigate(`/inspector/inspections/${r.id}`)
-                        }}
-                      >
-                        View
-                      </Button>
-                    </Td>
-                  </Tr>
-                ))}
-              </tbody>
-            </Table>
           </Card>
         </div>
 

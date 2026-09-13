@@ -98,9 +98,9 @@
   --nn-r-card: 12px;
   --nn-r-hero: 16px;
   --nn-r-pill: 9999px;
-
   /* --- the login panel gradient ----------------------------------------- */
   --nn-brand-gradient: linear-gradient(135deg, #0f2a44 0%, #0e7490 100%);
+  --nn-rail-active: #2563eb;
 }
 
 /* ===========================================================================
@@ -126,6 +126,7 @@
   --nn-rail: #0b1524;
   --nn-rail-hover: #18263c;
   --nn-rail-label: #b7c4d8;        /* 10.38:1 on the rail                    */
+  --nn-rail-active: #2563eb;
 
   --nn-divider: #26364f;           /*  1.40:1 - decorative, matches light    */
   --nn-control: #63779a;           /*  3.77:1 on surface - form boundaries   */

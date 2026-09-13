@@ -63,7 +63,7 @@
   },
 
   "result": {
-    "compliant": "Success",
+    "compliant": "Compliant",
     "violation": "Violation",
     "not_assessed": "Not assessed",
     "out_of_scope": "Out of scope",

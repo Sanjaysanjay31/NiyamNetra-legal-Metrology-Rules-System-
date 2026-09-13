@@ -2,21 +2,13 @@
  * The application shell: rail, header, appearance popover and the mobile drawer,
  * all in one file.
  *
- * Three decisions worth keeping:
+ * One shell, every screen. Supports tailored branding, navigation, and header
+ * controls for both Admin and Inspector portals.
  *
- * 1. The active rail item is marked by a 3px saffron border *and* semibold text,
- *    not by a filled background. The obvious fill (#1E3A5F on the #0B1524 rail)
- *    measures 1.27:1, which is invisible to a large share of users and to anyone
- *    outdoors in sunlight - which is where this portal is actually used. The
- *    saffron edge runs 5.9:1 against the rail and the weight change survives
- *    greyscale, so state is carried twice over.
- *
- * 2. The rail collapses to 64px rather than disappearing. An officer who has
- *    learned that Review queue is fourth from the top keeps that muscle memory;
- *    a hamburger menu discards it.
- *
- * 3. Appearance lives in one popover - theme, accent, language. Scattering three
- *    separate controls across a 64px header is how a header becomes a toolbar.
+ * Three key design principles:
+ * 1. The active rail item is marked by a 3px indicator and semibold text.
+ * 2. The rail collapses smoothly on desktop while preserving muscle memory.
+ * 3. Appearance controls provide instant, flash-free theme and accent customisation.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -24,20 +16,26 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import {
   Activity,
   AlertTriangle,
+  Bell,
   BookOpen,
   ChevronLeft,
   ClipboardList,
   FileText,
+  Gauge,
   HelpCircle,
   Home,
   LayoutDashboard,
   ListChecks,
   LogOut,
   Menu,
+  Moon,
+  Package,
   Palette,
   Scale,
   Settings as SettingsIcon,
   ShieldCheck,
+  Store,
+  Sun,
   TrendingUp,
   UserRound,
   Users,
@@ -47,61 +45,41 @@ import { useAuth } from '../auth/AuthContext'
 import { LanguageSwitcher, useI18n } from '../i18n'
 import { useDismissOnOutside, useLocalPref, useOnlineStatus } from '../lib/hooks'
 import { onQueueChange, queueSummary, startAutoFlush } from '../lib/queue'
-import { AccentPicker, ThemeSwitcher } from '../theme/ThemeContext'
+import { useTheme, AccentPicker, ThemeSwitcher } from '../theme/ThemeContext'
 import { IconButton, SyncBadge, cx, useToast } from '../ui'
 
 const RULES_AS_AT = import.meta.env.VITE_RULES_AS_AT ?? '2026-07-01'
 const ENGINE_VERSION = import.meta.env.VITE_ENGINE_VERSION ?? '2.0.0'
 
-/* ------------------------------------------------------------------- nav ---- */
+/* ------------------------------------------------------------------- marks --- */
 
-function navFor(role, t) {
-  if (role === 'admin') {
-    return [
-      {
-        heading: null,
-        items: [
-          { to: '/admin', label: t('nav.overview'), icon: LayoutDashboard, end: true },
-          { to: '/admin/inspections', label: t('nav.inspections'), icon: ClipboardList },
-          { to: '/admin/analytics', label: t('nav.analytics'), icon: TrendingUp },
-          { to: '/admin/review-queue', label: t('nav.reviewQueue'), icon: ListChecks, badge: 'review' },
-          { to: '/admin/reports', label: t('nav.reports'), icon: FileText },
-        ],
-      },
-      {
-        heading: 'Administration',
-        items: [
-          { to: '/admin/inspectors', label: t('nav.inspectors'), icon: Users },
-          { to: '/admin/rules', label: t('nav.rules'), icon: BookOpen },
-          { to: '/admin/audit', label: t('nav.audit'), icon: ShieldCheck },
-        ],
-      },
-    ]
-  }
-  return [
-    {
-      heading: null,
-      items: [
-        { to: '/inspector', label: 'Home', icon: Home, end: true },
-        { to: '/inspector/inspections', label: 'Inspections', icon: ClipboardList },
-        { to: '/inspector/reports', label: 'Reports', icon: FileText },
-        { to: '/inspector/violations', label: 'Violations', icon: AlertTriangle },
-        { to: '/inspector/performance', label: 'My Performance', icon: TrendingUp },
-        { to: '/inspector/profile', label: 'Profile', icon: UserRound },
-      ],
-    },
-  ]
+/** Admin Emblem: Balance Scale */
+function ScaleMark({ size = 28, className }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M16 4.5v19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="16" cy="4" r="1.2" fill="currentColor" />
+      <path d="M5 9.5h22" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="16" cy="9.5" r="1" fill="currentColor" />
+      <path d="M6 9.5l-2 6h6l-2-6" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M3 17c0 1.7 1.6 3 3.5 3s3.5-1.3 3.5-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M26 9.5l-2 6h6l-2-6" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M23 17c0 1.7 1.6 3 3.5 3s3.5-1.3 3.5-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M11 26h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M9.5 28h13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
 }
 
-/* ------------------------------------------------------------------ brand --- */
-
-/**
- * The mark: an eye rendered as a caliper. Two arms closing on an iris - the
- * product's whole premise in 24px, and it survives being drawn in one colour on
- * the rail. Inline SVG rather than a file, so it inherits currentColor and the
- * theme switch costs nothing.
- */
-function Mark({ size = 26, className }) {
+/** Inspector Emblem: Eye Caliper */
+function CaliperMark({ size = 26, className }) {
   return (
     <svg
       width={size}
@@ -118,35 +96,104 @@ function Mark({ size = 26, className }) {
         strokeLinejoin="round"
       />
       <circle cx="16" cy="16" r="4.4" stroke="currentColor" strokeWidth="2" />
-      <path d="M16 1.8v3.4M16 26.8v3.4" stroke="var(--nn-saffron)" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M16 1.8v3.4M16 26.8v3.4" stroke="#f59e0b" strokeWidth="2.2" strokeLinecap="round" />
     </svg>
   )
 }
 
-function Brand({ collapsed }) {
+const Mark = CaliperMark
+
+/* ------------------------------------------------------------------- nav ---- */
+
+function navFor(role, t) {
+  if (role === 'admin') {
+    return [
+      {
+        heading: null,
+        items: [
+          { to: '/admin', label: t('nav.overview') || t('nav.dashboard') || 'Dashboard', icon: LayoutDashboard, end: true },
+          { to: '/admin/inspections', label: t('nav.inspections') || 'Inspections', icon: ClipboardList },
+          { to: '/admin/analytics', label: t('nav.analytics') || 'Analytics', icon: TrendingUp },
+          { to: '/admin/review-queue', label: t('nav.reviewQueue') || 'Review queue', icon: ListChecks, badge: 'review' },
+          { to: '/admin/reports', label: t('nav.reports') || 'Reports', icon: FileText },
+        ],
+      },
+      {
+        heading: 'Administration',
+        items: [
+          { to: '/admin/inspectors', label: t('nav.inspectors') || 'Inspectors', icon: Users },
+          { to: '/admin/rules', label: t('nav.rules') || 'Rules', icon: BookOpen },
+          { to: '/admin/audit', label: t('nav.audit') || 'Audit logs', icon: ShieldCheck },
+          { to: '/settings', label: t('nav.settings') || 'Settings', icon: SettingsIcon },
+        ],
+      },
+    ]
+  }
+  return [
+    {
+      heading: null,
+      items: [
+        { to: '/inspector', label: 'Home', icon: Home, end: true },
+        { to: '/inspector/inspections', label: 'Inspections', icon: ClipboardList },
+        { to: '/inspector/reports', label: 'Reports', icon: FileText },
+        { to: '/inspector/violations', label: 'Violations', icon: AlertTriangle },
+        { to: '/inspector/performance', label: 'My Performance', icon: Activity },
+        { to: '/inspector/profile', label: 'Profile', icon: UserRound },
+        { to: '/settings', label: 'Settings', icon: SettingsIcon },
+      ],
+    },
+  ]
+}
+
+/* ------------------------------------------------------------------ brand --- */
+
+function Brand({ collapsed, role }) {
+  const isAdmin = role === 'admin'
+  const destination = isAdmin ? '/admin' : '/inspector'
+
+  if (collapsed) {
+    return (
+      <Link
+        to={destination}
+        className="flex h-16 items-center justify-center border-b border-white/10 text-white focus-visible:outline-offset-[-3px]"
+      >
+        {isAdmin ? <ScaleMark size={24} className="text-white" /> : <CaliperMark size={24} className="text-white" />}
+        <span className="sr-only-nn">NiyamNetra</span>
+      </Link>
+    )
+  }
+
   return (
     <Link
-      to="/"
-      className="flex h-16 items-center gap-3 px-4 text-ink-inverse focus-visible:outline-offset-[-3px]"
+      to={destination}
+      className="flex h-16 items-center gap-2.5 border-b border-white/10 px-4 text-white focus-visible:outline-offset-[-3px]"
     >
-      <Mark className="shrink-0 text-saffron-on-navy" />
-      {!collapsed && (
-        <span className="min-w-0">
-          <span className="block truncate text-body font-bold leading-5 tracking-[-0.01em]">
-            NiyamNetra
-          </span>
-          <span className="nn-eyebrow block text-rail-label">Compliance portal</span>
+      {isAdmin ? (
+        <span className="nn-mono grid h-9 w-9 shrink-0 place-items-center rounded-md bg-white/10 text-white">
+          <ScaleMark size={20} className="text-white" />
+        </span>
+      ) : (
+        <span className="shrink-0 text-white">
+          <CaliperMark size={26} className="text-white" />
         </span>
       )}
+      <div className="min-w-0 leading-tight">
+        <p className="truncate text-[15px] font-bold tracking-[-0.01em] text-white">NiyamNetra</p>
+        <p className="truncate text-[9px] font-semibold uppercase tracking-[0.12em] text-rail-label">
+          {isAdmin ? 'LEGAL METROLOGY DEPARTMENT' : 'COMPLIANCE PORTAL'}
+        </p>
+      </div>
     </Link>
   )
 }
 
 /* ------------------------------------------------------------------- rail --- */
 
-function RailItem({ item, collapsed, badgeValue, onNavigate }) {
+function RailItem({ item, collapsed, badgeValue, onNavigate, role }) {
   const { icon: Icon, label, to, end } = item
-  const n = item.badge === 'review' ? badgeValue : null
+  const n = item.badge === 'review' && badgeValue > 0 ? badgeValue : null
+  const isAdmin = role === 'admin'
+
   return (
     <NavLink
       to={to}
@@ -155,18 +202,22 @@ function RailItem({ item, collapsed, badgeValue, onNavigate }) {
       title={collapsed ? label : undefined}
       className={({ isActive }) =>
         cx(
-          'relative flex min-h-touch items-center gap-3 rounded-sm py-2.5 pr-3 text-small',
-          'transition-colors duration-fast ease-settle',
-          collapsed ? 'justify-center px-0' : 'pl-4',
-          isActive
-            ? 'bg-rail-hover font-semibold text-ink-inverse'
-            : 'font-medium text-rail-label hover:bg-rail-hover hover:text-ink-inverse'
+          'group relative flex items-center gap-3 text-[13px] transition-colors duration-fast ease-settle',
+          isAdmin ? 'h-9 rounded-md px-3' : 'h-10 rounded-sm',
+          !isAdmin && (collapsed ? 'justify-center px-0' : 'pl-3.5 pr-3'),
+          collapsed && isAdmin && 'justify-center px-0',
+          isAdmin
+            ? isActive
+              ? 'bg-[var(--nn-rail-active)] font-semibold text-white shadow-[inset_2px_0_0_0_rgba(255,255,255,0.85)]'
+              : 'font-medium text-rail-label hover:bg-white/[0.06] hover:text-white'
+            : isActive
+              ? 'bg-white/[0.08] font-semibold text-white'
+              : 'font-medium text-rail-label hover:bg-white/[0.04] hover:text-white'
         )
       }
     >
       {({ isActive }) => (
         <>
-          {/* The state marker. Saffron at 3px, full item height, flush left. */}
           <span
             aria-hidden="true"
             className={cx(
@@ -174,7 +225,7 @@ function RailItem({ item, collapsed, badgeValue, onNavigate }) {
               isActive ? 'bg-saffron opacity-100' : 'opacity-0'
             )}
           />
-          <Icon size={19} strokeWidth={isActive ? 2.1 : 1.8} aria-hidden="true" className="shrink-0" />
+          <Icon size={isAdmin ? 17 : 18} strokeWidth={isActive ? 2 : 1.7} aria-hidden="true" className="shrink-0" />
           {!collapsed && <span className="min-w-0 flex-1 truncate">{label}</span>}
           {!collapsed && n ? (
             <span className="nn-mono rounded-pill bg-saffron px-1.5 py-0.5 text-[11px] font-bold leading-4 text-saffron-ink">
@@ -196,11 +247,25 @@ function RailItem({ item, collapsed, badgeValue, onNavigate }) {
 function Rail({ collapsed, onToggle, onNavigate, reviewCount, inDrawer = false }) {
   const { user } = useAuth()
   const { t } = useI18n()
-  const groups = navFor(user?.role, t)
+  const role = user?.role
+  const isAdmin = role === 'admin'
+  const groups = navFor(role, t)
+  const navigate = useNavigate()
+
+  const displayName = user?.full_name || (isAdmin ? 'A. Deshmukh' : 'Inspector One')
+  const initials =
+    displayName
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((s) => s[0])
+      .join('')
+      .toUpperCase() || (isAdmin ? 'AD' : 'IO')
+
+  const roleLabel = isAdmin ? 'Super Administrator' : 'Inspector'
 
   return (
     <div className="flex h-full flex-col bg-rail">
-      <Brand collapsed={collapsed} />
+      <Brand collapsed={collapsed} role={role} />
 
       <nav className="flex-1 overflow-y-auto px-2 pb-4" aria-label="Sections">
         {groups.map((g, gi) => (
@@ -217,6 +282,7 @@ function Rail({ collapsed, onToggle, onNavigate, reviewCount, inDrawer = false }
                   collapsed={collapsed}
                   badgeValue={reviewCount}
                   onNavigate={onNavigate}
+                  role={role}
                 />
               ))}
             </div>
@@ -224,10 +290,45 @@ function Rail({ collapsed, onToggle, onNavigate, reviewCount, inDrawer = false }
         ))}
       </nav>
 
-      {/* Provenance, on every screen, permanently. A finding is only meaningful
-          against a stated rule version; putting this in an about page means the
-          version is absent from every screenshot that ever gets attached to a
-          file. */}
+      {/* Admin profile block — bottom of rail for admin */}
+      {isAdmin && !inDrawer && (
+        <div className="border-t border-white/10 p-2">
+          <button
+            type="button"
+            onClick={() => navigate('/settings')}
+            className={cx(
+              'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left',
+              'transition-colors duration-fast ease-settle hover:bg-white/[0.06]',
+              collapsed && 'justify-center px-0'
+            )}
+            title={collapsed ? displayName : undefined}
+          >
+            <span className="nn-mono grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/10 text-[12px] font-bold text-white">
+              {initials}
+            </span>
+            {!collapsed && (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-semibold leading-4 text-white">
+                  {displayName}
+                </span>
+                <span className="block truncate text-[10px] font-medium uppercase tracking-[0.1em] text-rail-label">
+                  {roleLabel}
+                </span>
+              </span>
+            )}
+            {!collapsed && (
+              <ChevronLeft
+                size={14}
+                strokeWidth={2}
+                aria-hidden="true"
+                className="shrink-0 -rotate-180 text-rail-label"
+              />
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Provenance stamp */}
       <div className="border-t border-[rgba(255,255,255,0.1)] px-4 py-3">
         {collapsed ? (
           <p className="nn-mono text-center text-[10px] text-rail-label" title={`Rules as at ${RULES_AS_AT} · engine ${ENGINE_VERSION}`}>
@@ -242,6 +343,7 @@ function Rail({ collapsed, onToggle, onNavigate, reviewCount, inDrawer = false }
         )}
       </div>
 
+      {/* Collapse button */}
       {!inDrawer && (
         <div className="border-t border-[rgba(255,255,255,0.1)] p-2">
           <button
@@ -331,6 +433,7 @@ function UserMenu() {
   const { user, logout } = useAuth()
   const { t } = useI18n()
   const navigate = useNavigate()
+  const isAdmin = user?.role === 'admin'
 
   const signOut = async () => {
     setOpen(false)
@@ -338,15 +441,15 @@ function UserMenu() {
     navigate('/login', { replace: true })
   }
 
-  const displayName = user?.full_name || 'Inspector One'
-  const displayId = user?.employee_id || 'LM-TG-1042'
+  const displayName = user?.full_name || (isAdmin ? 'A. Deshmukh' : 'Inspector One')
+  const displayId = user?.employee_id || (isAdmin ? 'LM-ADM-001' : 'LM-TG-1042')
   const initials =
     displayName
       .split(/\s+/)
       .slice(0, 2)
       .map((s) => s[0])
       .join('')
-      .toUpperCase() || 'IO'
+      .toUpperCase() || (isAdmin ? 'AD' : 'IO')
 
   return (
     <div className="relative">
@@ -376,16 +479,18 @@ function UserMenu() {
         </p>
         <p className="mt-1 text-small font-semibold text-ink">{displayName}</p>
         <p className="nn-mono text-caption text-ink-3">{displayId}</p>
-        <p className="mt-1 text-caption text-ink-2">{user?.jurisdiction ?? 'Hyderabad North'}</p>
+        {user?.jurisdiction && <p className="mt-1 text-caption text-ink-2">{user.jurisdiction}</p>}
         <div className="nn-rule-line my-3" />
-        <Link
-          to="/inspector/profile"
-          onClick={() => setOpen(false)}
-          className="flex min-h-touch items-center gap-2.5 rounded-sm px-2 text-small font-medium text-ink-2 hover:bg-surface-2 hover:text-ink"
-        >
-          <UserRound size={17} strokeWidth={1.8} aria-hidden="true" />
-          {t('nav.profile')}
-        </Link>
+        {!isAdmin && (
+          <Link
+            to="/inspector/profile"
+            onClick={() => setOpen(false)}
+            className="flex min-h-touch items-center gap-2.5 rounded-sm px-2 text-small font-medium text-ink-2 hover:bg-surface-2 hover:text-ink"
+          >
+            <UserRound size={17} strokeWidth={1.8} aria-hidden="true" />
+            {t('nav.profile')}
+          </Link>
+        )}
         <Link
           to="/settings"
           onClick={() => setOpen(false)}
@@ -466,6 +571,9 @@ function Header({ onOpenDrawer, reviewCount }) {
   const { t } = useI18n()
   const { user } = useAuth()
   const { state, pending } = useSyncState()
+  const { isDark, toggleTheme } = useTheme()
+  const role = user?.role
+  const isAdmin = role === 'admin'
 
   return (
     <header className="sticky top-0 z-header flex h-16 items-center gap-2 border-b border-divider bg-surface px-3 sm:px-5">
@@ -476,25 +584,50 @@ function Header({ onOpenDrawer, reviewCount }) {
         className="lg:hidden"
       />
 
+      {/* Compact brand for the collapsed rail on mobile */}
+      <span className="flex items-center gap-2 lg:hidden">
+        {isAdmin ? (
+          <ScaleMark size={20} className="text-navy" />
+        ) : (
+          <CaliperMark size={20} className="text-navy" />
+        )}
+        <span className="text-small font-bold tracking-[-0.01em] text-ink">NiyamNetra</span>
+      </span>
+
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <span className="lg:hidden">
-          <Mark size={22} className="text-navy" />
-        </span>
         <SyncBadge state={state} pending={pending} className="hidden sm:inline-flex" />
       </div>
 
-      {user?.role === 'admin' && reviewCount > 0 && (
+      {/* Admin specific review queue action */}
+      {isAdmin && reviewCount > 0 && (
         <Link
           to="/admin/review-queue"
           className="hidden min-h-touch items-center gap-2 rounded-pill border border-review-border bg-review-fill px-3 text-small font-semibold text-review-text sm:inline-flex"
         >
           <ListChecks size={15} strokeWidth={2} aria-hidden="true" />
-          {reviewCount} {t('admin.reviewQueueCount').toLowerCase()}
+          {reviewCount} {t('admin.reviewQueueCount') || 'in review'}
         </Link>
       )}
 
-      <IconButton icon={HelpCircle} label="Help & Documentation" onClick={() => {}} />
+      {/* Direct sun/moon theme toggle */}
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+        title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+        className="grid h-9 w-9 place-items-center rounded-md text-ink-2 transition-colors duration-fast hover:bg-surface-2 hover:text-ink"
+      >
+        {isDark ? (
+          <Sun size={17} strokeWidth={1.8} className="text-amber-500" />
+        ) : (
+          <Moon size={17} strokeWidth={1.8} />
+        )}
+      </button>
+
+      {/* Appearance popover (accent, mode, language) */}
       <AppearanceMenu />
+
+      {/* User profile dropdown */}
       <UserMenu />
     </header>
   )
@@ -509,8 +642,6 @@ export default function Layout({ reviewCount = 0 }) {
   const { t } = useI18n()
   const mainRef = useRef(null)
 
-  /* Close the drawer on navigation, and move focus to the main region so a
-     keyboard user is not returned to the top of the rail on every route change. */
   useEffect(() => {
     setDrawer(false)
   }, [location.pathname])

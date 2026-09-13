@@ -122,9 +122,25 @@ export function ThemeProvider({ children }) {
     setMode((m) => (m === 'light' ? 'dark' : m === 'dark' ? 'system' : 'light'))
   }, [])
 
+  const toggleTheme = useCallback(() => {
+    setMode((prev) => {
+      const current = prev === 'system' ? (prefersDark() ? 'dark' : 'light') : prev
+      return current === 'dark' ? 'light' : 'dark'
+    })
+  }, [])
+
   const value = useMemo(
-    () => ({ mode, setMode, cycle, accent, setAccent, resolved, isDark: resolved === 'dark' }),
-    [mode, cycle, accent, resolved]
+    () => ({
+      mode,
+      setMode,
+      cycle,
+      toggleTheme,
+      accent,
+      setAccent,
+      resolved,
+      isDark: resolved === 'dark',
+    }),
+    [mode, cycle, toggleTheme, accent, resolved]
   )
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
@@ -132,7 +148,22 @@ export function ThemeProvider({ children }) {
 
 export function useTheme() {
   const ctx = useContext(ThemeContext)
-  if (!ctx) throw new Error('useTheme must be used inside <ThemeProvider>')
+  if (!ctx) {
+    return {
+      mode: 'light',
+      resolved: 'light',
+      isDark: false,
+      cycle: () => {},
+      toggleTheme: () => {
+        const root = document.documentElement
+        const cur = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'
+        root.setAttribute('data-theme', cur)
+      },
+      setMode: () => {},
+      accent: 'teal',
+      setAccent: () => {},
+    }
+  }
   return ctx
 }
 

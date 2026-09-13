@@ -90,6 +90,8 @@ class Settings(BaseSettings):
         r"|https?://10\.\d{1,3}\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)"
         r"|https?://192\.168\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)"
         r"|https?://172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}:(3000|5173|8081|19006)"
+        r"|https?://([a-zA-Z0-9_-]+\.)*vercel\.app(:[0-9]+)?"
+        r"|https?://([a-zA-Z0-9_-]+\.)*onrender\.com(:[0-9]+)?"
         r"|exp://.*)$"
     )
     # Prod override: when ENV=prod the default above still allows localhost

@@ -207,21 +207,28 @@ export function useInspectorData({ maxDetails = 60, maxFullScans = 24 } = {}) {
     }
   }, [list.data, list.demo, maxDetails, maxFullScans])
 
-  const demo = list.demo || shops.demo
+  const demo = list.demo || shops.demo || (!list.loading && Array.isArray(list.data) && list.data.length === 0)
 
   const scansFor = useMemo(() => {
-    if (demo) return (id) => scansForInspection(id)
+    if (demo || !liveSummaries || Object.keys(liveSummaries).length === 0) return (id) => scansForInspection(id)
     const map = liveSummaries ?? {}
     return (id) => map[id] ?? null
   }, [demo, liveSummaries])
 
-  const rows = useMemo(
-    () => buildRows(list.data ?? inspectionsFixture, shops.data, scansFor),
-    [list.data, shops.data, scansFor]
-  )
+  const rows = useMemo(() => {
+    const rawInspections =
+      !list.loading && Array.isArray(list.data) && list.data.length > 0
+        ? list.data
+        : inspectionsFixture
+    const rawShops =
+      !shops.loading && Array.isArray(shops.data) && shops.data.length > 0
+        ? shops.data
+        : Object.values(storesFixture)
+    return buildRows(rawInspections, rawShops, scansFor)
+  }, [list.loading, list.data, shops.loading, shops.data, scansFor])
 
   const fullScans = useMemo(() => {
-    if (demo) return scansFixture
+    if (demo || !liveScans || Object.keys(liveScans).length === 0) return scansFixture
     return liveScans ?? {}
   }, [demo, liveScans])
 
@@ -353,8 +360,10 @@ export const REFERENCE_TOP_VIOLATIONS = [
 export const REFERENCE_STATS = {
   total: 128,
   compliant: 94,
-  non_compliant: 27,
-  needs_review: 7,
+  non_compliant: 20,
+  nonCompliant: 20,
+  needs_review: 14,
+  needsReview: 14,
   trends: {
     total: { label: '↑ 12% from last month', tone: 'pass' },
     compliant: { label: '↑ 18% from last month', tone: 'pass' },

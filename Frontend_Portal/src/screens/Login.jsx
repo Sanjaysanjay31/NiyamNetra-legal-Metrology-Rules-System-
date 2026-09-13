@@ -316,6 +316,38 @@ export default function Login() {
             >
               {pending ? t('auth.signingIn') : t('auth.signIn')}
             </Button>
+
+            <div className="mt-6 pt-4 border-t border-border">
+              <p className="text-xs font-semibold uppercase tracking-wider text-ink-3 mb-2.5 text-center">
+                Demo Credentials (Click to Fill)
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmployeeId('LM-ADM-001')
+                    setPassword('NiyamNetra@2026')
+                    setError(null)
+                  }}
+                  className="px-3 py-2 text-xs font-medium text-navy bg-surface hover:bg-surface-2 border border-border rounded-md shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span className="inline-block w-2 h-2 rounded-full bg-accent" />
+                  Admin (LM-ADM-001)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmployeeId('LM-TG-1042')
+                    setPassword('NiyamNetra@2026')
+                    setError(null)
+                  }}
+                  className="px-3 py-2 text-xs font-medium text-ink-2 bg-surface hover:bg-surface-2 border border-border rounded-md shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span className="inline-block w-2 h-2 rounded-full bg-pass-graphic" />
+                  Inspector (LM-TG-1042)
+                </button>
+              </div>
+            </div>
           </form>
 
           <p className="mt-5 text-caption text-ink-3">{t('auth.deviceBound')}</p>

@@ -128,7 +128,9 @@ createRoot(document.getElementById('root')).render(
           <ToastProvider>
             <BrowserRouter>
               <AuthProvider>
-                <App />
+                <ThemeProvider>
+                  <App />
+                </ThemeProvider>
               </AuthProvider>
             </BrowserRouter>
           </ToastProvider>
