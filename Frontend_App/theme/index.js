@@ -112,6 +112,7 @@ export const scanResultConfig = {
   violation: { label: 'Violation', ...colors.violation, icon: '✗' },
   not_assessed: { label: 'Not assessed', ...colors.notAssessed, icon: '—' },
   out_of_scope: { label: 'Out of scope', ...colors.info, icon: '○' },
+  refused: { label: 'Refused', fill: '#FFFBEB', border: '#FDE68A', text: '#B45309', icon: '🚫' },
 };
 
 // Verdict helpers - §2.4 three verdicts, never two
@@ -123,4 +124,5 @@ export const verdictConfig = {
   violation: { label: 'Violation', ...colors.violation, icon: '✗' },
   out_of_scope: { label: 'Out of scope', ...colors.info, icon: '○' },
   review: { label: 'Review', ...colors.review, icon: '!' },
+  refused: { label: 'Refused', fill: '#FFFBEB', border: '#FDE68A', text: '#B45309', icon: '🚫' },
 };

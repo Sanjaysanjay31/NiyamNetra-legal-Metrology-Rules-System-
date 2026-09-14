@@ -82,7 +82,7 @@ export default function MoreScreen({ navigation }) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Header title={t.more} />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}>
         {/* Profile card */}
         <Card padding="lg" style={{ marginBottom: spacing.md }}>
           {loading ? (

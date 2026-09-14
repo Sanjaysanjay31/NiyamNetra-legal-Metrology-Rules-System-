@@ -188,6 +188,11 @@ class Scan(Base):
 
     ocr_confidence_mean: Mapped[float | None] = mapped_column(Float)
     ocr_text: Mapped[str | None] = mapped_column(Text)
+    # OCR cache: SHA-256 of the sorted (panel, sha256) image set at last OCR.
+    # If the image set is unchanged on re-assess, the cached OcrLines are
+    # rehydrated instead of re-running cloud OCR. None = never cached.
+    ocr_cache_hash: Mapped[str | None] = mapped_column(String(64))
+    ocr_cache: Mapped[str | None] = mapped_column(Text)
     # E-commerce listing (CHK15/CHK16): persisted by POST /scans/{id}/listing
     # so build_context can assess Rule 6(10) without re-fetching. Nullable for
     # pre-migration rows (getattr fallback in build_context handles absence).

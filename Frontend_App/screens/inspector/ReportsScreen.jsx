@@ -6,6 +6,7 @@ import Card from '../../components/Card';
 import StatCard from '../../components/StatCard';
 import SegmentControl from '../../components/SegmentControl';
 import EmptyState from '../../components/EmptyState';
+import VerdictBadge from '../../components/VerdictBadge';
 import { fetchInspections } from '../../api/admin';
 
 // §5.5 Inspector Reports — calendar + stats from live GET /inspections data.
@@ -41,6 +42,8 @@ function itemYearMonth(it) {
 }
 
 function bucket(it) {
+  const isRefusal = it?.signature_status === 'refused' || it?.is_refusal || String(it?.result || it?.overall_result || '').toLowerCase() === 'refused';
+  if (isRefusal) return 'refused';
   const r = String(it?.result || it?.overall_result || it?.verdict || it?.status || '').toLowerCase();
   if (['success', 'pass', 'compliant'].includes(r)) return 'success';
   if (['violation', 'fail', 'non_compliant', 'non-compliant'].includes(r)) return 'violation';
@@ -49,6 +52,7 @@ function bucket(it) {
 
 export default function ReportsScreen({ navigation }) {
   const [period, setPeriod] = useState('today');
+  const [outcomeFilter, setOutcomeFilter] = useState('all');
   const [inspections, setInspections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -94,8 +98,6 @@ export default function ReportsScreen({ navigation }) {
     if (period === 'week' || period === 'last7') return d >= weekStart;
     if (period === 'last30') return d >= last30Start;
     if (period === 'month') {
-      // Compare year+month of the item date — the old branch returned true
-      // for every row, so "This Month" silently showed all-time totals.
       const ym = itemYearMonth(it);
       if (!ym) return false;
       return ym.y === monthCursor.y && ym.m === monthCursor.m + 1;
@@ -103,22 +105,33 @@ export default function ReportsScreen({ navigation }) {
     return true;
   }, [period, today, yesterday, weekStart, last30Start, dayFilter, monthCursor]);
 
+  const periodRows = useMemo(() => {
+    return inspections.filter((i) => inPeriod(i));
+  }, [inspections, inPeriod]);
+
   const currentStats = useMemo(() => {
-    const rows = inspections.filter((i) => inPeriod(i));
     let success = 0;
     let violations = 0;
-    rows.forEach((i) => {
+    let refusals = 0;
+    periodRows.forEach((i) => {
       const b = bucket(i);
-      if (b === 'success') success += 1;
+      if (b === 'refused') refusals += 1;
+      else if (b === 'success') success += 1;
       else if (b === 'violation') violations += 1;
     });
     return {
-      inspections: rows.length,
+      inspections: periodRows.length,
       success,
       violations,
-      notAssessed: rows.length - success - violations,
+      refusals,
+      notAssessed: Math.max(0, periodRows.length - success - violations - refusals),
     };
-  }, [inspections, inPeriod]);
+  }, [periodRows]);
+
+  const displayedRows = useMemo(() => {
+    if (outcomeFilter === 'all') return periodRows;
+    return periodRows.filter((i) => bucket(i) === outcomeFilter);
+  }, [periodRows, outcomeFilter]);
 
   // ---- Dynamic calendar grid for the cursor month ----
   const { y, m } = monthCursor;
@@ -131,9 +144,11 @@ export default function ReportsScreen({ navigation }) {
       const d = itemDay(i);
       if (!d.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`)) return;
       const day = parseInt(d.slice(8, 10), 10);
-      if (!map[day]) map[day] = { inspections: 0, hasViolation: false };
+      if (!map[day]) map[day] = { inspections: 0, hasViolation: false, hasRefusal: false };
       map[day].inspections += 1;
-      if (bucket(i) === 'violation') map[day].hasViolation = true;
+      const b = bucket(i);
+      if (b === 'violation') map[day].hasViolation = true;
+      if (b === 'refused') map[day].hasRefusal = true;
     });
     return map;
   }, [inspections, y, m]);
@@ -141,15 +156,15 @@ export default function ReportsScreen({ navigation }) {
   const shiftMonth = (delta) => {
     setMonthCursor((c) => {
       const d = new Date(c.y, c.m + delta, 1);
-      // Never navigate into the future.
       if (d > new Date(now.getFullYear(), now.getMonth(), 1)) return c;
       return { y: d.getFullYear(), m: d.getMonth() };
     });
   };
 
   const selectedDay = now.getFullYear() === y && now.getMonth() === m ? now.getDate() : null;
-  const rate = currentStats.inspections > 0
-    ? Math.round((currentStats.success / currentStats.inspections) * 100)
+  const assessableCount = Math.max(0, currentStats.inspections - currentStats.refusals);
+  const rate = assessableCount > 0
+    ? Math.round((currentStats.success / assessableCount) * 100)
     : 0;
 
   const toggleDay = (day) => {
@@ -161,7 +176,7 @@ export default function ReportsScreen({ navigation }) {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Header title="Reports" subtitle="Your inspection activity" />
       <ScrollView
-        contentContainerStyle={{ padding: spacing.lg }}
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} />}
       >
         {/* Period selector */}
@@ -227,11 +242,12 @@ export default function ReportsScreen({ navigation }) {
           </View>
         ) : (
           <>
-            {/* Stats row */}
+            {/* Stats row with 4 cards including Refusals */}
             <View style={{ flexDirection: 'row', marginTop: spacing.lg, marginBottom: spacing.lg }}>
               <StatCard label="Inspections" value={currentStats.inspections} />
               <StatCard label="Success" value={currentStats.success} color={colors.pass.text} />
               <StatCard label="Violations" value={currentStats.violations} color={colors.violation.text} alert={currentStats.violations > 0} />
+              <StatCard label="Refusals" value={currentStats.refusals} color={colors.review.text} alert={currentStats.refusals > 0} />
             </View>
 
             {/* Calendar */}
@@ -259,28 +275,46 @@ export default function ReportsScreen({ navigation }) {
               </View>
               {/* Calendar grid */}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                {/* Weekday offset for the 1st of the displayed month */}
                 {Array.from({ length: leadOffset }, (_, i) => (
                   <View key={`empty-${i}`} style={{ width: `${100 / 7}%`, aspectRatio: 1, padding: 2 }} />
                 ))}
                 {Array.from({ length: daysInMonth }, (_, i) => {
                   const day = i + 1;
-                  const info = perDay[day] || { inspections: 0, hasViolation: false };
+                  const info = perDay[day] || { inspections: 0, hasViolation: false, hasRefusal: false };
                   const isToday = day === selectedDay;
                   const dayKey = `${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                   const isFiltered = dayFilter === dayKey;
+
+                  const tileBg = isFiltered
+                    ? colors.netraTeal
+                    : isToday
+                    ? colors.niyamBlue
+                    : info.hasViolation
+                    ? colors.violation.fill
+                    : info.hasRefusal
+                    ? colors.review.fill
+                    : info.inspections > 0
+                    ? colors.pass.fill
+                    : 'transparent';
+
+                  const dotColor = info.hasViolation
+                    ? colors.violation.text
+                    : info.hasRefusal
+                    ? colors.review.text
+                    : colors.pass.text;
+
                   return (
                     <View key={day} style={{ width: `${100 / 7}%`, aspectRatio: 1, padding: 2 }}>
                       <Pressable
                         onPress={() => toggleDay(day)}
                         accessibilityRole="button"
-                        accessibilityLabel={`${dayKey}, ${info.inspections} inspections${info.hasViolation ? ', has violation' : ''}`}
+                        accessibilityLabel={`${dayKey}, ${info.inspections} inspections${info.hasViolation ? ', has violation' : ''}${info.hasRefusal ? ', has refusal' : ''}`}
                         accessibilityState={{ selected: isFiltered }}
                         hitSlop={2}
                         style={{
                           flex: 1,
                           borderRadius: radius.sm,
-                          backgroundColor: isFiltered ? colors.netraTeal : isToday ? colors.niyamBlue : info.hasViolation ? colors.violation.fill : info.inspections > 0 ? colors.pass.fill : 'transparent',
+                          backgroundColor: tileBg,
                           justifyContent: 'center',
                           alignItems: 'center',
                           borderWidth: isToday || isFiltered ? 0 : 1,
@@ -301,7 +335,7 @@ export default function ReportsScreen({ navigation }) {
                             width: 4,
                             height: 4,
                             borderRadius: 2,
-                            backgroundColor: info.hasViolation ? colors.violation.text : colors.pass.text,
+                            backgroundColor: dotColor,
                           }} />
                         )}
                       </Pressable>
@@ -318,7 +352,8 @@ export default function ReportsScreen({ navigation }) {
                   {rate}%
                 </Text>
                 <Text style={typography.bodySecondary}>
-                  {currentStats.success} of {currentStats.inspections} inspections successful
+                  {currentStats.success} of {assessableCount} assessable inspections compliant
+                  {currentStats.refusals > 0 ? ` • ${currentStats.refusals} refusal(s) excluded` : ''}
                 </Text>
               </View>
               {/* Progress bar */}
@@ -331,6 +366,58 @@ export default function ReportsScreen({ navigation }) {
                 }} />
               </View>
             </Card>
+
+            {/* Outcome Segment Filter & Inspection List */}
+            <View style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>
+              <Text style={[{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, marginBottom: spacing.xs }]}>
+                VISIT RECORDS ({displayedRows.length})
+              </Text>
+              <SegmentControl
+                selected={outcomeFilter}
+                onSelect={setOutcomeFilter}
+                options={[
+                  { key: 'all', label: `All (${periodRows.length})` },
+                  { key: 'success', label: `Pass (${currentStats.success})` },
+                  { key: 'violation', label: `Violations (${currentStats.violations})` },
+                  { key: 'refused', label: `Refusals (${currentStats.refusals})` },
+                ]}
+              />
+            </View>
+
+            {displayedRows.length === 0 ? (
+              <Card padding="md" style={{ marginTop: spacing.sm, alignItems: 'center' }}>
+                <Text style={{ color: colors.textMuted, fontSize: 12, paddingVertical: spacing.sm }}>
+                  No inspection records match this filter.
+                </Text>
+              </Card>
+            ) : (
+              displayedRows.map((item) => {
+                const isRefusal = item.signature_status === 'refused' || item.is_refusal || String(item.result || item.overall_result || '').toLowerCase() === 'refused';
+                const dateStr = itemDay(item);
+                const storeName = item.store_name || item.store?.name || 'Retail Establishment';
+                const verdict = isRefusal ? 'refused' : (item.overall_result || item.result || 'not_assessed');
+                return (
+                  <Card key={item.id || item.client_uuid} padding="md" style={{ marginTop: spacing.sm }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <View style={{ flex: 1, marginRight: spacing.sm }}>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 2 }}>
+                          {storeName}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: colors.textMuted }}>
+                          {dateStr} • {isRefusal ? 'Merchant Non-Cooperation' : (item.transaction_type || 'Retail Sale')}
+                        </Text>
+                        {isRefusal && (
+                          <Text style={{ fontSize: 11, color: colors.review.text, fontStyle: 'italic', marginTop: 4 }}>
+                            Reason: {item.notes || 'Merchant refused inspection / signature.'}
+                          </Text>
+                        )}
+                      </View>
+                      <VerdictBadge result={verdict} />
+                    </View>
+                  </Card>
+                );
+              })
+            )}
           </>
         )}
       </ScrollView>

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, Pressable, ScrollView, Alert, Image, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, ScrollView, Alert, Image, Platform, ActivityIndicator, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { colors, spacing, typography, radius, shadows } from '../../theme';
 import Header from '../../components/Header';
@@ -46,6 +47,14 @@ const transactionTypes = [
 const CHECKS_COPY = '19 checks (CHK01–CHK18 + CHK06b)';
 
 export default function ScanScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
+  const topClearance = Math.max(
+    insets.top || 0,
+    Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0,
+    Platform.OS === 'ios' ? 44 : 24
+  );
+  const bottomClearance = Math.max(insets.bottom || 0, 24);
+
   const [permission, requestPermission] = useCameraPermissions();
   const [step, setStep] = useState('scope');
   const [transactionType, setTransactionType] = useState(null);
@@ -241,7 +250,7 @@ export default function ScanScreen({ navigation }) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.background }}>
         <Header title="New Inspection" subtitle="Step 1 of 3 — Select type" />
-        <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+        <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl + 64 }}>
           <Text style={{ ...typography.body, marginBottom: spacing.lg }}>What are you assessing?</Text>
           <Card padding="lg">
             {transactionTypes.map((tt, idx) => (
@@ -337,7 +346,7 @@ export default function ScanScreen({ navigation }) {
       <View style={{ flex: 1, backgroundColor: '#000' }}>
         <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back">
           <View style={{ flex: 1, justifyContent: 'space-between' }}>
-            <View style={{ backgroundColor: 'rgba(15,42,68,0.9)', paddingTop: spacing.xl, paddingBottom: spacing.md, paddingHorizontal: spacing.lg }}>
+            <View style={{ backgroundColor: 'rgba(15,42,68,0.9)', paddingTop: topClearance + 12, paddingBottom: spacing.md, paddingHorizontal: spacing.lg }}>
               <Text style={{ color: colors.white, fontSize: 16, fontWeight: '700' }}>Capture package panels</Text>
               <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>Photo {photos.length + 1}</Text>
               <Text
@@ -363,7 +372,7 @@ export default function ScanScreen({ navigation }) {
                 <View style={{ position: 'absolute', bottom: -2, right: -2, width: 30, height: 30, borderBottomWidth: 3, borderRightWidth: 3, borderColor: colors.saffron }} />
               </View>
             </View>
-            <View style={{ backgroundColor: 'rgba(15,42,68,0.9)', padding: spacing.xxl, alignItems: 'center' }}>
+            <View style={{ backgroundColor: 'rgba(15,42,68,0.9)', paddingTop: spacing.lg, paddingBottom: bottomClearance + 20, paddingHorizontal: spacing.lg, alignItems: 'center' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Pressable
                   onPress={() => setStep('scope')}
@@ -411,7 +420,7 @@ export default function ScanScreen({ navigation }) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Header title="Review & Submit" subtitle={`${photos.length} photos captured`} />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl + 64 }}>
         <Card title="Inspection Summary" padding="lg" style={{ marginBottom: spacing.md }}>
           <View style={{ flexDirection: 'row', marginBottom: spacing.sm }}>
             <Text style={{ ...typography.label, width: 100 }}>Type</Text>

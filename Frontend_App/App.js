@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, ActivityIndicator, ScrollView, StatusBar } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { SyncProvider } from './offline/SyncProvider';
 import LoginScreen from './screens/LoginScreen';
@@ -96,11 +97,14 @@ function Root() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <SyncProvider>
-          <Root />
-        </SyncProvider>
-      </AuthProvider>
+      <SafeAreaProvider>
+        <StatusBar barStyle="light-content" backgroundColor={colors.niyamBlue} translucent={true} />
+        <AuthProvider>
+          <SyncProvider>
+            <Root />
+          </SyncProvider>
+        </AuthProvider>
+      </SafeAreaProvider>
     </ErrorBoundary>
   );
 }

@@ -6,6 +6,11 @@ export async function fetchStores() {
   return Array.isArray(data) ? data : data?.items || [];
 }
 
+export async function createStore(storeData) {
+  const { data } = await api.post('/stores', storeData);
+  return data;
+}
+
 export async function fetchTodayStats() {
   try {
     const { data } = await api.get('/reports/today');
@@ -62,7 +67,7 @@ export async function updateScanScope(scanId, scopeFlags) {
 }
 
 export async function assessScan(scanId) {
-  const { data } = await api.post(`/scans/${scanId}/assess`);
+  const { data } = await api.post(`/scans/${scanId}/assess`, undefined, { timeout: 90000 });
   return data;
 }
 
@@ -94,4 +99,40 @@ export async function submitInspection(inspectionId, { signature_status = 'signe
     notes,
   });
   return data;
+}
+
+export async function fetchPendingScans() {
+  try {
+    const { data } = await api.get('/scans?status=not_assessed');
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    console.warn('[api/inspections] fetchPendingScans failed:', err?.message || err);
+    return [];
+  }
+}
+
+export async function assessScanBatch(scanIds) {
+  if (!Array.isArray(scanIds) || scanIds.length === 0) {
+    return { total: 0, results: [] };
+  }
+  try {
+    const { data } = await api.post('/scans/batch-assess', { scan_ids: scanIds }, { timeout: 120000 });
+    return data;
+  } catch (err) {
+    const status = err?.status || err?.response?.status;
+    if (status === 404) {
+      // Fallback: sequential assessScan loop if server lacks batch endpoint
+      const results = [];
+      for (const id of scanIds) {
+        try {
+          const res = await assessScan(id);
+          results.push({ scan_id: id, overall_result: res?.overall_result, ok: true });
+        } catch (singleErr) {
+          results.push({ scan_id: id, ok: false, error: singleErr?.message || 'Assessment failed' });
+        }
+      }
+      return { total: scanIds.length, results };
+    }
+    throw err;
+  }
 }

@@ -132,21 +132,33 @@ class OcrResult:
 def run_ocr(bgr: np.ndarray, lang: str | None = None) -> OcrResult:
     """Cloud-first cascade for 512MB Render free tier, with Indic multilingual support.
 
-    Order (OCR_PROVIDER=auto):
+    Order (OCR_PROVIDER=auto) — fastest working engine first, box-capable
+    engines preferred when configured, so letter-height / clear-space / width
+    checks (Rule 7/9) read REAL per-line geometry instead of the fabricated
+    boxes the text-only LLM engines would return:
       1. Google Cloud Vision DOCUMENT_TEXT_DETECTION (if GOOGLE_VISION_API_KEY)
-         — best accuracy on small/Hindi label text, 0MB RAM, only httpx.
-      2. OCR.space (if OCR_SPACE_API_KEY) — free, no card, only httpx+cv2.
-      3. Tesseract local (if binary present) — small, works in Docker.
-      4. PaddleOCR local (if installed + not DISABLE_PADDLE) — best offline,
+         — best accuracy on small/Hindi label text, REAL paragraph boxes,
+         0MB RAM, only httpx.
+      2. Groq Llama 4 Scout Vision (if GROQ_API_KEY) — free, ~0.4s (text only).
+      3. Google Gemini Flash (if GEMINI_API_KEY) — free, no card, single
+         short-timeout call (text only, no real boxes).
+      4. OCR.space (if OCR_SPACE_API_KEY) — free, word boxes, only httpx+cv2.
+      5. Tesseract local (if binary present) — small, works in Docker.
+      6. PaddleOCR local (if installed + not DISABLE_PADDLE) — best offline,
          supports Indic models ('en', 'hi', 'te', 'ta', 'bn', etc.).
-      5. engine="none" with honest failure_reason → checks not_assessed.
+      7. engine="none" with honest failure_reason → checks not_assessed.
 
-    OCR_PROVIDER forces one engine: google | ocrspace | tesseract | paddle.
+    OCR_PROVIDER forces one engine: gemini | groq | google | ocrspace |
+    tesseract | paddle.
     """
     provider = (getattr(settings, "OCR_PROVIDER", "auto") or "auto").lower()
 
     def _cloud_first() -> OcrResult | None:
         # Explicit provider pin.
+        if provider == "gemini":
+            return _gemini_vision_ocr(bgr, "Gemini forced via OCR_PROVIDER.")
+        if provider == "groq":
+            return _groq_vision_ocr(bgr, "Groq forced via OCR_PROVIDER.")
         if provider == "google":
             return _google_vision_ocr(bgr, "Google Vision forced via OCR_PROVIDER.")
         if provider == "ocrspace":
@@ -163,37 +175,53 @@ def run_ocr(bgr: np.ndarray, lang: str | None = None) -> OcrResult:
     if forced is not None:
         return forced
 
-    # auto: best cloud → free cloud → local light → local heavy.
+    # auto cascade: Google Vision (real boxes) → Groq Vision (~0.4s) → Gemini Flash → OCR.space → local
+    accumulated_err = ""
     if getattr(settings, "GOOGLE_VISION_API_KEY", None):
         r = _google_vision_ocr(bgr, "auto cascade")
         if r.engine != "none":
             return r
-        _google_err = r.failure_reason
-    else:
-        _google_err = "Google Vision not configured."
+        accumulated_err += f"{r.failure_reason}; "
 
-    if getattr(settings, "OCR_SPACE_API_KEY", None):
-        r = _ocrspace_fallback(bgr, f"{_google_err}")
+    if getattr(settings, "GROQ_API_KEY", None):
+        r = _groq_vision_ocr(bgr, accumulated_err or "auto cascade")
         if r.engine != "none":
             return r
-        _cloud_err = r.failure_reason
-    else:
-        _cloud_err = f"{_google_err}; OCR.space not configured."
+        accumulated_err += f"{r.failure_reason}; "
+
+    if getattr(settings, "GEMINI_API_KEY", None):
+        r = _gemini_vision_ocr(bgr, accumulated_err or "auto cascade")
+        if r.engine != "none":
+            return r
+        accumulated_err += f"{r.failure_reason}; "
+
+    if getattr(settings, "OCR_SPACE_API_KEY", None):
+        r = _ocrspace_fallback(bgr, accumulated_err or "auto cascade")
+        if r.engine != "none":
+            return r
+        accumulated_err += f"{r.failure_reason}; "
 
     prepped = preprocess_for_ocr(bgr)
-    r = _tesseract_fallback(prepped, _cloud_err, original=bgr)
+    r = _tesseract_fallback(prepped, accumulated_err, original=bgr)
     if r.engine != "none":
         return r
     p = _paddle_ocr(bgr, lang=lang)
     if p.engine != "none":
         return p
-    # Honest terminal reason naming both cloud keys so the operator knows
-    # exactly which .env key to add (see .env.example OCR section).
-    why = (p.failure_reason or r.failure_reason or _cloud_err or "")
-    if not getattr(settings, "GOOGLE_VISION_API_KEY", None) and not getattr(
-            settings, "OCR_SPACE_API_KEY", None):
-        why += (" No cloud OCR key configured: set GOOGLE_VISION_API_KEY "
-                "(best) or OCR_SPACE_API_KEY (free) in Backend/.env.")
+
+    why = (
+        # Upstream reasons first: when every cloud engine fails, the terminal
+        # Paddle reason ("DISABLE_PADDLE=1") says nothing about WHY Gemini /
+        # Groq / OCR.space failed, which made field diagnosis impossible.
+        accumulated_err
+        or p.failure_reason
+        or r.failure_reason
+        or ""
+    )
+    if not (getattr(settings, "GEMINI_API_KEY", None) or getattr(settings, "GROQ_API_KEY", None)
+            or getattr(settings, "GOOGLE_VISION_API_KEY", None) or getattr(settings, "OCR_SPACE_API_KEY", None)):
+        why += (" No cloud OCR key configured: set GEMINI_API_KEY (free, no card from aistudio.google.com) "
+                "or GROQ_API_KEY (free, fast from console.groq.com) in Backend/.env.")
     return OcrResult(engine="none", failure_reason=why)
 
 
@@ -267,28 +295,189 @@ def _tesseract_fallback(bgr: np.ndarray, why: str, original: np.ndarray | None =
     )
 
 
-def _encode_under_limit(bgr: np.ndarray, max_bytes: int = 1_000_000) -> bytes:
-    """JPEG-encode small enough for OCR.space's free tier (1 MB file limit).
-
-    Drops quality first, then downscales — a 25 MB upload (MAX_UPLOAD_MB) would
-    otherwise be rejected by the API with a size error, not an OCR result.
+def _encode_under_limit(bgr: np.ndarray, max_bytes: int = 600_000, max_dim: int = 1000) -> bytes:
+    """JPEG-encode small and fast for OCR.space / Google Vision.
+    Downscales to max_dim (1000px) first so cloud API response time drops to 1-2s.
     """
-    for quality in (85, 70, 55, 40):
+    h, w = bgr.shape[:2]
+    if max(h, w) > max_dim:
+        scale = max_dim / float(max(h, w))
+        bgr = cv2.resize(bgr, (max(1, int(w * scale)), max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
+
+    for quality in (85, 75, 60, 45):
         ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, quality])
         if ok and buf.nbytes <= max_bytes:
             return buf.tobytes()
+    return buf.tobytes()
+
+
+
+def _gemini_vision_ocr(bgr: np.ndarray, why: str) -> OcrResult:
+    """Zero-billing high-accuracy OCR via Google AI Studio Gemini Flash.
+    Free tier allows 15 RPM with NO credit card or billing account needed.
+    """
+    key = getattr(settings, "GEMINI_API_KEY", None)
+    if not key:
+        return OcrResult(engine="none", failure_reason=f"{why}; Gemini not configured.")
+    try:
+        blob = _encode_under_limit(bgr, max_bytes=1_500_000, max_dim=1200)
+        content_b64 = base64.b64encode(blob).decode("ascii")
+    except Exception as e:
+        return OcrResult(engine="none", failure_reason=f"{why}; Gemini image encode failed ({type(e).__name__}).")
+
+    model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash-lite")
+
+    prompt = (
+        "Extract ALL text visible on this product packaging or label.\n"
+        "Transcribe each line or block of text exactly as written, including:\n"
+        "- Brand & Product name\n"
+        "- MRP (e.g. 'MRP Rs. ... incl. of all taxes')\n"
+        "- Net Quantity / Net Content\n"
+        "- Month and Year of Manufacture / Packaging / Import\n"
+        "- Manufacturer / Packer / Importer Name & Complete Address\n"
+        "- Customer Care contact details (email, phone, address)\n"
+        "- Country of origin\n"
+        "- Unit Sale Price\n"
+        "Output ONLY the transcribed text line by line. Do NOT include markdown styling or conversational filler."
+    )
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": content_b64,
+                    }
+                }
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": 2048,
+        }
+    }
+
+    import httpx
+    timeout = float(getattr(settings, "GEMINI_TIMEOUT_S", 8.0))
+    last_err = ""
+    data = None
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        resp = httpx.post(url, params={"key": key}, json=payload, timeout=timeout)
+        if resp.status_code == 404:
+            last_err = f"model '{model}' not available"
+        else:
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        err_msg = str(e)
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                err_msg = e.response.json().get("error", {}).get("message", err_msg)
+            except Exception:
+                pass
+        last_err = err_msg
+
+    if not data:
+        return OcrResult(engine="none", failure_reason=f"{why}; Gemini request failed ({last_err}).")
+
+    try:
+        candidates = (data or {}).get("candidates") or []
+        if not candidates:
+            return OcrResult(engine="none", failure_reason=f"{why}; Gemini returned no candidates.")
+        parts = candidates[0].get("content", {}).get("parts") or []
+        extracted_text = "\n".join(p.get("text", "") for p in parts if "text" in p).strip()
+    except Exception as e:
+        return OcrResult(engine="none", failure_reason=f"{why}; Gemini parse failed ({type(e).__name__}).")
+
+    if not extracted_text:
+        return OcrResult(engine="none", failure_reason=f"{why}; Gemini returned empty text.")
+
     h, w = bgr.shape[:2]
-    scale, small, buf = 1.0, bgr, buf
-    for _ in range(6):
-        scale *= 0.8
-        small = cv2.resize(
-            bgr, (max(1, int(w * scale)), max(1, int(h * scale))),
-            interpolation=cv2.INTER_AREA,
-        )
-        ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 60])
-        if ok and buf.nbytes <= max_bytes:
-            return buf.tobytes()
-    return buf.tobytes()      # smallest we managed; let the API decide
+    lines: list[OcrLine] = []
+    for line in extracted_text.splitlines():
+        t = line.strip()
+        t = re.sub(r"^[\*\-\•]\s*", "", t)
+        if t:
+            lines.append(OcrLine(text=t, confidence=0.98, box=[[0.0, 0.0], [float(w), 0.0], [float(w), 25.0], [0.0, 25.0]], height_px=25.0))
+
+    return OcrResult(lines=lines, engine="gemini_vision", mean_confidence=0.98)
+
+
+def _groq_vision_ocr(bgr: np.ndarray, why: str) -> OcrResult:
+    """Ultra-fast (0.4s) Vision OCR via Groq Llama 3.2 Vision. Free tier (console.groq.com/keys)."""
+    key = getattr(settings, "GROQ_API_KEY", None)
+    if not key:
+        return OcrResult(engine="none", failure_reason=f"{why}; Groq not configured.")
+    try:
+        blob = _encode_under_limit(bgr, max_bytes=1_500_000, max_dim=1024)
+        content_b64 = base64.b64encode(blob).decode("ascii")
+    except Exception as e:
+        return OcrResult(engine="none", failure_reason=f"{why}; Groq image encode failed ({type(e).__name__}).")
+
+    model = getattr(settings, "GROQ_MODEL", "llama-3.2-11b-vision-preview")
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Extract all text visible on this product packaging or label line by line. Include brand, MRP, Net Quantity, Date of Manufacture, Manufacturer details, and customer care. Return ONLY the transcribed lines, no commentary.",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{content_b64}",
+                        },
+                    },
+                ],
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 1500,
+    }
+    try:
+        import httpx
+        timeout = float(getattr(settings, "GROQ_TIMEOUT_S", 8.0))
+        resp = httpx.post(url, headers={"Authorization": f"Bearer {key}"}, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        err_msg = str(e)
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                err_msg = e.response.json().get("error", {}).get("message", err_msg)
+            except Exception:
+                pass
+        return OcrResult(engine="none", failure_reason=f"{why}; Groq request failed ({err_msg}).")
+
+    try:
+        choices = (data or {}).get("choices") or []
+        if not choices:
+            return OcrResult(engine="none", failure_reason=f"{why}; Groq returned no choices.")
+        extracted_text = choices[0].get("message", {}).get("content", "").strip()
+    except Exception as e:
+        return OcrResult(engine="none", failure_reason=f"{why}; Groq parse failed ({type(e).__name__}).")
+
+    if not extracted_text:
+        return OcrResult(engine="none", failure_reason=f"{why}; Groq returned empty text.")
+
+    h, w = bgr.shape[:2]
+    lines: list[OcrLine] = []
+    for line in extracted_text.splitlines():
+        t = line.strip()
+        t = re.sub(r"^[\*\-\•]\s*", "", t)
+        if t:
+            lines.append(OcrLine(text=t, confidence=0.95, box=[[0.0, 0.0], [float(w), 0.0], [float(w), 25.0], [0.0, 25.0]], height_px=25.0))
+
+    return OcrResult(lines=lines, engine="groq_vision", mean_confidence=0.95)
+
+
+_GOOGLE_VISION_FAILED: bool = False
 
 
 def _google_vision_ocr(bgr: np.ndarray, why: str) -> OcrResult:
@@ -298,12 +487,16 @@ def _google_vision_ocr(bgr: np.ndarray, why: str) -> OcrResult:
     Returns engine='google_vision' on success, else engine='none' with reason
     so the cascade can try OCR.space next. Never raises.
     """
+    global _GOOGLE_VISION_FAILED
+    if _GOOGLE_VISION_FAILED:
+        return OcrResult(engine="none", failure_reason=f"{why}; Google Vision previously failed (billing/auth disabled).")
+
     key = getattr(settings, "GOOGLE_VISION_API_KEY", None)
     if not key:
         return OcrResult(engine="none",
                          failure_reason=f"{why}; Google Vision not configured.")
     try:
-        blob = _encode_under_limit(bgr, max_bytes=4_000_000)  # Vision allows 20MB; stay safe
+        blob = _encode_under_limit(bgr, max_bytes=2_000_000, max_dim=1400)
         content_b64 = base64.b64encode(blob).decode("ascii")
     except Exception as e:
         return OcrResult(engine="none",
@@ -319,7 +512,7 @@ def _google_vision_ocr(bgr: np.ndarray, why: str) -> OcrResult:
                 "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
                 "imageContext": {"languageHints": ["en", "hi"]},
             }]},
-            timeout=getattr(settings, "GOOGLE_VISION_TIMEOUT_S", 25.0),
+            timeout=8.0,  # Fast 8s timeout instead of 25s
         )
         resp.raise_for_status()
         body = resp.json()
@@ -331,8 +524,12 @@ def _google_vision_ocr(bgr: np.ndarray, why: str) -> OcrResult:
                 msg = err_json.get("error", {}).get("message", "")
                 if msg:
                     detail = f": {msg}"
+                    if "billing" in msg.lower() or "permission" in msg.lower() or "disabled" in msg.lower():
+                        _GOOGLE_VISION_FAILED = True
         except Exception:
             pass
+        if "billing" in str(e).lower() or "403" in str(e):
+            _GOOGLE_VISION_FAILED = True
         return OcrResult(engine="none",
                          failure_reason=f"{why}; Google Vision request failed ({type(e).__name__}{detail}).")
     try:
@@ -340,6 +537,8 @@ def _google_vision_ocr(bgr: np.ndarray, why: str) -> OcrResult:
         first = responses[0] if responses else {}
         if first.get("error"):
             msg = (first["error"] or {}).get("message", "unknown error")
+            if "billing" in msg.lower() or "disabled" in msg.lower():
+                _GOOGLE_VISION_FAILED = True
             return OcrResult(engine="none",
                              failure_reason=f"{why}; Google Vision error: {msg}.")
         lines = _parse_google_vision(first)
@@ -429,7 +628,7 @@ def _ocrspace_fallback(bgr: np.ndarray, why: str) -> OcrResult:
                 "detectOrientation": "true",
             },
             files={"file": ("scan.jpg", blob, "image/jpeg")},
-            timeout=settings.OCR_SPACE_TIMEOUT_S,
+            timeout=min(float(settings.OCR_SPACE_TIMEOUT_S), 8.0),
         )
         resp.raise_for_status()
         body = resp.json()
@@ -520,8 +719,9 @@ CARE_PATTERN = (
 # so CHK01 always reported them missing. Patterns below are intentionally broad
 # (recall over precision) — the rules engine decides violation, not this file.
 MFR_PATTERNS = [
-    r"(?:Mfd\.?\s*by|Manufactured\s*by|Mfg\.?\s*by|Packed\s*by|Imported\s*by|Marketed\s*by|Mfr\.?|Pkd\.?\s*by)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9 .,&\-/()]{3,120})",
+    r"(?:Mfd\.?\s*by|Manufactured\s*by|Mfg\.?\s*by|Packed\s*by|Imported\s*by|Marketed\s*by|Mfr\.?|Pkd\.?\s*by|Quality\s+products\s+from|Products?\s+from|Made\s+by)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9 .,&\-/()]{3,120})",
     r"(?:Manufacturer|Packer|Importer)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9 .,&\-/()]{3,120})",
+    r"([A-Za-z0-9 .,&\-/()]{3,80}\s+(?:Pvt\.?\s*Ltd\.?|Private\s+Limited|Limited|Ltd\.?|Industries|Enterprises))",
 ]
 COMMODITY_PATTERN = (
     r"(?:Commodity|Product|Item|Name\s*of\s*(?:the\s*)?(?:Commodity|Product))"

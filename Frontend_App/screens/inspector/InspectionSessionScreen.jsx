@@ -20,6 +20,7 @@ import VerdictBadge from '../../components/VerdictBadge';
 import { enqueueInspection, enqueueScan } from '../../offline/queue';
 import { useAppLock } from '../../hooks/useAppLock';
 import {
+  createStore,
   createInspection,
   createScan,
   uploadScanImage,
@@ -29,6 +30,9 @@ import {
 
 let ScreenCapture = null;
 try { ScreenCapture = require('expo-screen-capture'); } catch { ScreenCapture = null; }
+
+let ImageManipulator = null;
+try { ImageManipulator = require('expo-image-manipulator'); } catch { ImageManipulator = null; }
 
 const PANELS = [
   { key: 'front', label: 'Front Panel', desc: 'Product name & brand' },
@@ -112,6 +116,7 @@ export default function InspectionSessionScreen({
   const [packages, setPackages] = useState(inspectionSession?.scans || []);
 
   const cameraRef = useRef(null);
+  const assessingRef = useRef(false);
   useAppLock({ enabled: true });
 
   // Screen capture protection
@@ -135,13 +140,28 @@ export default function InspectionSessionScreen({
     setCapturing(true);
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.85,
+        quality: 0.8,
         skipProcessing: Platform.OS === 'android',
       });
       if (photo?.uri) {
+        let finalUri = photo.uri;
+        // Fast client-side image compression down to 1600px width (drops 10MB to ~300KB)
+        if (ImageManipulator?.manipulateAsync) {
+          try {
+            const manip = await ImageManipulator.manipulateAsync(
+              photo.uri,
+              [{ resize: { width: 1600 } }],
+              { compress: 0.75, format: ImageManipulator.SaveFormat.JPEG }
+            );
+            if (manip?.uri) finalUri = manip.uri;
+          } catch (manipErr) {
+            console.warn('[Session] Image compression fallback:', manipErr);
+          }
+        }
+
         setPanelPhotos((prev) => ({
           ...prev,
-          [activePanel]: photo.uri,
+          [activePanel]: finalUri,
         }));
         // Auto-advance to next panel
         const idx = PANELS.findIndex((p) => p.key === activePanel);
@@ -157,35 +177,61 @@ export default function InspectionSessionScreen({
   };
 
   const handleAssessCurrentPackage = async () => {
+    if (assessingRef.current) return;
     const photoUris = Object.values(panelPhotos).filter(Boolean);
     if (photoUris.length === 0) {
       Alert.alert('Evidence Required', 'Please take at least one panel photograph before assessment.');
       return;
     }
 
+    assessingRef.current = true;
     setAssessing(true);
+    let serverErrorDetail = null;
     try {
       let serverScanId = null;
       let assessedScan = null;
       let usedServerId = inspectionSession?.serverInspectionId;
 
       // 1. If online and no serverInspectionId yet, create inspection on the server
-      if (!usedServerId && inspectionSession?.store?.id) {
+      if (!usedServerId) {
         try {
-          const newInsp = await createInspection({
-            store_id: Number(inspectionSession.store.id),
-            transaction_type: inspectionSession.transaction_type || 'retail_sale',
-            latitude: inspectionSession.coords?.latitude,
-            longitude: inspectionSession.coords?.longitude,
-            gps_accuracy_m: inspectionSession.coords?.accuracy,
-            local_created_at: inspectionSession.started_at || new Date().toISOString(),
-          });
-          usedServerId = newInsp?.id || newInsp?.inspection_id;
-          if (usedServerId && inspectionSession) {
-            inspectionSession.serverInspectionId = usedServerId;
+          let storeId = inspectionSession?.store?.id;
+          if (!storeId || (typeof storeId === 'number' && storeId < 0)) {
+            // Local store intake — create store on server first
+            const createdStore = await createStore({
+              name: inspectionSession?.store?.name || 'Local Retail Store',
+              store_type: inspectionSession?.store?.store_type || 'Kirana / General Store',
+              address: inspectionSession?.store?.address || undefined,
+              city: inspectionSession?.store?.city || 'Hyderabad',
+              district: inspectionSession?.store?.district || 'Hyderabad',
+              state: 'Telangana',
+              latitude: inspectionSession?.coords?.latitude || undefined,
+              longitude: inspectionSession?.coords?.longitude || undefined,
+              geofence_radius_m: 150,
+            });
+            if (createdStore?.id) {
+              storeId = createdStore.id;
+              if (inspectionSession?.store) inspectionSession.store.id = storeId;
+            }
+          }
+
+          if (storeId && typeof storeId === 'number' && storeId > 0) {
+            const newInsp = await createInspection({
+              store_id: Number(storeId),
+              transaction_type: inspectionSession?.transaction_type || 'retail_sale',
+              latitude: inspectionSession?.coords?.latitude,
+              longitude: inspectionSession?.coords?.longitude,
+              gps_accuracy_m: inspectionSession?.coords?.accuracy,
+              local_created_at: inspectionSession?.started_at || new Date().toISOString(),
+            });
+            usedServerId = newInsp?.id || newInsp?.inspection_id;
+            if (usedServerId && inspectionSession) {
+              inspectionSession.serverInspectionId = usedServerId;
+            }
           }
         } catch (inspErr) {
-          console.warn('[Session] createInspection failed (offline?):', inspErr?.message || inspErr);
+          serverErrorDetail = inspErr?.response?.data?.detail || inspErr?.message || 'Failed to start server inspection session';
+          console.warn('[Session] createInspection failed (offline?):', serverErrorDetail);
         }
       }
 
@@ -219,19 +265,31 @@ export default function InspectionSessionScreen({
               has_sticker: hasSticker,
             });
 
-            // Upload all captured panel images
-            for (const [panelKey, uri] of Object.entries(panelPhotos)) {
-              if (uri) {
-                await uploadScanImage(serverScanId, panelKey, uri);
-              }
-            }
+            // Upload all captured panel images concurrently in parallel for max speed
+            const uploadTasks = Object.entries(panelPhotos)
+              .filter(([_, uri]) => Boolean(uri))
+              .map(([panelKey, uri]) => uploadScanImage(serverScanId, panelKey, uri));
+            await Promise.all(uploadTasks);
 
             // Run authoritative statutory assessment across all 19 rules
             assessedScan = await assessScan(serverScanId);
           }
         } catch (serverErr) {
-          console.warn('[Session] Live server assessment failed, falling back to local:', serverErr?.message || serverErr);
+          // Distinguish "server reachable but failed" from "device offline /
+          // timeout" so the inspector sees the honest reason, not a vague
+          // "offline" for what was a 500, or vice versa.
+          const resp = serverErr?.response;
+          if (resp) {
+            serverErrorDetail = `Server error (HTTP ${resp.status})${resp?.data?.detail ? ': ' + resp.data.detail : ''}`;
+          } else if (serverErr?.request || serverErr?.code === 'ECONNABORTED' || /timeout|network/i.test(serverErr?.message || '')) {
+            serverErrorDetail = 'Device offline or the server took too long to respond.';
+          } else {
+            serverErrorDetail = serverErr?.message || 'Server assessment request failed';
+          }
+          console.warn('[Session] Live server assessment failed, falling back to local:', serverErrorDetail);
         }
+      } else if (!serverErrorDetail) {
+        serverErrorDetail = 'No active server connection (offline mode)';
       }
 
       let scanItem;
@@ -266,7 +324,8 @@ export default function InspectionSessionScreen({
           isPerishable,
         });
         scanItem = {
-          id: `pkg-${Date.now()}`,
+          id: `pkg-${serverScanId || Date.now()}`,
+          server_id: serverScanId,
           commodity_generic: commodity.trim() || 'Unspecified Commodity',
           brand_name: brand.trim() || 'Unspecified Brand',
           batch_number: batch.trim() || null,
@@ -275,10 +334,6 @@ export default function InspectionSessionScreen({
           is_imported: isImported,
           is_perishable: isPerishable,
           has_sticker: hasSticker,
-          // Nothing is assessed until the server says so (C3/C4). A local
-          // rollup must never claim 'violation' from a device flag alone —
-          // the officer's provisional suspicion still reaches the server via
-          // the violationSuspected flag on the queued scan.
           overall_result: 'not_assessed',
           checks_assessed: 0,
           checks_total: 19,
@@ -286,6 +341,13 @@ export default function InspectionSessionScreen({
           is_offline: true,
           created_at: new Date().toISOString(),
         };
+
+        // Alert the inspector with the reason why live evaluation couldn't complete
+        Alert.alert(
+          'Assessment Pending — Not Scored Yet',
+          `The 19 statutory checks could not be assessed right now:\n• ${serverErrorDetail}\n\nYour photos and package details are saved. Nothing has been scored, so no verdict is invented. Once you are online, open this package and tap "Run Server Assessment" — the engine will read YOUR actual photos and produce a genuine result.`,
+          [{ text: 'Review Package' }]
+        );
       }
 
       const updated = [...packages, scanItem];
@@ -306,15 +368,49 @@ export default function InspectionSessionScreen({
         onPackageAssessed(scanItem, updated);
       }
     } catch (e) {
-      Alert.alert('Assessment Error', 'Failed to assess package. Saved to offline queue.');
+      Alert.alert('Assessment Error', `Failed to assess package: ${e?.message || 'Unknown error'}. Saved to offline queue.`);
     } finally {
+      assessingRef.current = false;
       setAssessing(false);
     }
   };
 
   const handleFinishInspection = () => {
     if (packages.length === 0 && Object.keys(panelPhotos).length === 0) {
-      Alert.alert('No Packages Inspected', 'Please scan at least one package before concluding the inspection visit.');
+      Alert.alert(
+        'Conclude Visit (0 Scans)',
+        'No packages were scanned. If the merchant/owner refused inspection or no packaged goods are available, you can record this visit with an official reason.',
+        [
+          {
+            text: '🚫 Owner Refused Inspection',
+            style: 'destructive',
+            onPress: () => {
+              onCompleteInspection({
+                ...inspectionSession,
+                scans: [],
+                refusal_reason: 'Merchant / Shop owner refused inspection under Legal Metrology Act, 2009',
+                signature_status: 'refused',
+                notes: 'Merchant / Shop owner refused statutory inspection under Legal Metrology Act, 2009.',
+                finished_at: new Date().toISOString(),
+              });
+            },
+          },
+          {
+            text: '🏬 Store Closed / No Stock',
+            onPress: () => {
+              onCompleteInspection({
+                ...inspectionSession,
+                scans: [],
+                refusal_reason: 'Store closed or no pre-packaged retail commodities found on premises',
+                signature_status: 'unavailable',
+                notes: 'Store closed or no pre-packaged retail stock available for sampling.',
+                finished_at: new Date().toISOString(),
+              });
+            },
+          },
+          { text: 'Keep Scanning', style: 'cancel' },
+        ]
+      );
       return;
     }
 
@@ -323,6 +419,30 @@ export default function InspectionSessionScreen({
       scans: packages,
       finished_at: new Date().toISOString(),
     });
+  };
+
+  const handleRecordRefusal = () => {
+    Alert.alert(
+      'Record Owner Refusal',
+      'Conclude this visit immediately and record that the merchant/shopkeeper refused inspection?',
+      [
+        {
+          text: 'Record Refusal & Conclude',
+          style: 'destructive',
+          onPress: () => {
+            onCompleteInspection({
+              ...inspectionSession,
+              scans: packages,
+              refusal_reason: 'Merchant / Shop owner refused statutory inspection under Legal Metrology Act',
+              signature_status: 'refused',
+              notes: 'Merchant / Shop owner refused statutory inspection under Legal Metrology Act, 2009.',
+              finished_at: new Date().toISOString(),
+            });
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
   };
 
   const capturedCount = Object.keys(panelPhotos).length;
@@ -556,12 +676,23 @@ export default function InspectionSessionScreen({
 
           <Pressable
             onPress={handleFinishInspection}
-            style={[styles.finishBtn, packages.length === 0 && { opacity: 0.6 }]}
+            style={styles.finishBtn}
             accessibilityRole="button"
             accessibilityLabel="Finish visit and submit all packages"
           >
             <Text style={styles.finishBtnText}>
               ✓ Conclude Inspection Visit ({packages.length} Packages Ready) →
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleRecordRefusal}
+            style={styles.refusalBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Record merchant refusal"
+          >
+            <Text style={styles.refusalBtnText}>
+              🚫 Record Merchant Refusal / Non-Cooperation
             </Text>
           </Pressable>
         </View>
@@ -580,7 +711,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxxl + 64,
   },
   storeBanner: {
     backgroundColor: colors.surface,
@@ -848,6 +979,21 @@ const styles = StyleSheet.create({
   finishBtnText: {
     color: colors.netraTeal,
     fontSize: 14,
+    fontWeight: '700',
+  },
+  refusalBtn: {
+    backgroundColor: '#FEF2F2',
+    borderColor: colors.violation.border,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+  },
+  refusalBtnText: {
+    color: colors.violation.text,
+    fontSize: 13,
     fontWeight: '700',
   },
   rowBetween: {

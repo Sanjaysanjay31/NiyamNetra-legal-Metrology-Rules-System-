@@ -1001,7 +1001,7 @@ def chk07_character_width(ctx: CheckContext) -> FindingResult:
         if label and all(c in NARROW_GLYPHS for c in label.strip()):
             continue                       # exempt glyphs
         height = ctx.measured_heights_mm.get(label)
-        if height and width < height * WIDTH_RATIO:
+        if height and width > 0.1 and width < height * WIDTH_RATIO:
             offenders.append(f'"{label}" {width:.2f} mm wide against {height:.2f} mm high')
 
     if offenders:

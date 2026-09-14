@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,16 @@ import {
   Modal,
   TextInput,
   Alert,
+  ActivityIndicator,
   StyleSheet,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, typography, radius, shadows } from '../../theme';
 import Header from '../../components/Header';
 import Card from '../../components/Card';
 import VerdictBadge from '../../components/VerdictBadge';
 import PrimaryButton from '../../components/PrimaryButton';
-import { overrideFinding } from '../../api/inspections';
+import { overrideFinding, assessScan, fetchScanDetails } from '../../api/inspections';
 
 // The 19 statutory checks under Legal Metrology (Packaged Commodities) Rules 2011
 const STATUTORY_CHECKS_MASTER = [
@@ -173,6 +175,9 @@ const STATUTORY_CHECKS_MASTER = [
 ];
 
 export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
+  const insets = useSafeAreaInsets();
+  const safeBottom = Math.max(insets.bottom || 0, 24);
+
   const [findings, setFindings] = useState(() => {
     // If scan has real findings from server or offline assessment, use them!
     if (Array.isArray(scan?.findings) && scan.findings.length > 0) {
@@ -229,6 +234,104 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
   const [overrideVerdict, setOverrideVerdict] = useState('pass');
   const [overrideReason, setOverrideReason] = useState('');
   const [submittingOverride, setSubmittingOverride] = useState(false);
+  const [reassessing, setReassessing] = useState(false);
+  const reassessBusyRef = useRef(false);
+
+  const scanId = scan?.server_id || (typeof scan?.id === 'number' && scan.id > 0 ? scan.id : null);
+
+  // Auto-sync fresh findings from server on mount
+  useEffect(() => {
+    if (!scanId) return;
+    let active = true;
+    (async () => {
+      try {
+        const fresh = await fetchScanDetails(scanId);
+        if (active && fresh && Array.isArray(fresh.findings) && fresh.findings.length > 0) {
+          const formatted = fresh.findings.map((f, idx) => ({
+            id: f.id || idx + 1,
+            server_id: typeof f.id === 'number' && f.id > 0 ? f.id : null,
+            check_id: f.check_id || f.code,
+            title: f.title || f.name,
+            citation: f.citation || '',
+            engine_verdict: f.engine_verdict || f.verdict || 'not_assessed',
+            effective_verdict: f.effective_verdict || f.human_verdict || f.engine_verdict || f.verdict || 'not_assessed',
+            human_verdict: f.human_verdict || null,
+            override_reason: f.override_reason || null,
+            observed: f.observed || 'Observation recorded',
+            required: f.required || '',
+            severity: f.severity || 'critical',
+            reason: f.reason || null,
+            confidence: f.confidence,
+          }));
+          setFindings(formatted);
+          if (onSaveFindings) {
+            onSaveFindings(formatted);
+          }
+        }
+      } catch (e) {
+        // silent fallback
+      }
+    })();
+    return () => { active = false; };
+  }, [scanId]);
+
+  const handleTriggerReassess = async () => {
+    if (!scanId) {
+      Alert.alert(
+        'Offline Package',
+        'This package was recorded in offline mode without a server scan ID. It will be assessed once synchronized with the server.'
+      );
+      return;
+    }
+
+    if (reassessBusyRef.current) return;
+    reassessBusyRef.current = true;
+    setReassessing(true);
+    try {
+      const assessed = await assessScan(scanId);
+      if (assessed && Array.isArray(assessed.findings)) {
+        const formatted = assessed.findings.map((f, idx) => ({
+          id: f.id || idx + 1,
+          server_id: typeof f.id === 'number' && f.id > 0 ? f.id : null,
+          check_id: f.check_id || f.code,
+          title: f.title || f.name,
+          citation: f.citation || '',
+          engine_verdict: f.engine_verdict || f.verdict || 'not_assessed',
+          effective_verdict: f.effective_verdict || f.human_verdict || f.engine_verdict || f.verdict || 'not_assessed',
+          human_verdict: f.human_verdict || null,
+          override_reason: f.override_reason || null,
+          observed: f.observed || 'Observation recorded',
+          required: f.required || '',
+          severity: f.severity || 'critical',
+          reason: f.reason || null,
+          confidence: f.confidence,
+        }));
+        setFindings(formatted);
+        if (onSaveFindings) {
+          onSaveFindings(formatted);
+        }
+        const pCount = formatted.filter((f) => f.effective_verdict === 'pass').length;
+        const fCount = formatted.filter((f) => f.effective_verdict === 'fail').length;
+        const nCount = formatted.filter((f) => f.effective_verdict === 'not_assessed').length;
+        Alert.alert(
+          'Assessment Complete',
+          `Server assessment finished.\nResult: ${assessed.overall_result ? assessed.overall_result.toUpperCase() : 'COMPLETED'}\n\n✓ ${pCount} passed • ✗ ${fCount} failed • ${nCount} not assessed`
+        );
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.message || 'Server assessment failed';
+      const isNetwork = !err?.response && (err?.request || err?.code === 'ECONNABORTED' || /timeout|network|network request failed/i.test(msg));
+      Alert.alert(
+        'Assessment Error',
+        isNetwork
+          ? 'Could not reach the server (offline or it took too long). Your scan is kept here — tap the button again once you are online and it will be scored from your actual photos.'
+          : `Could not complete live server assessment:\n\n${msg}`
+      );
+    } finally {
+      setReassessing(false);
+      reassessBusyRef.current = false;
+    }
+  };
 
   const handleOpenOverride = (f) => {
     setSelectedFinding(f);
@@ -318,10 +421,14 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
       <Header
         title="19 Statutory Rule Checks"
         subtitle={`${scan?.brand_name || 'Package'} (${scan?.commodity_generic || 'Sample'})`}
+        onBack={() => {
+          if (onSaveFindings) onSaveFindings(findings);
+          if (onBack) onBack();
+        }}
       />
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-        {/* Package Header Card */}
+        {/* Package Header Card (Main Result) */}
         <Card padding="md" style={styles.headerCard}>
           <View style={styles.rowBetween}>
             <View style={{ flex: 1 }}>
@@ -373,6 +480,41 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
             )}
           </View>
         </Card>
+
+        {/* Run Server Assessment Action (if checks are pending) */}
+        {notAssessedCount > 0 && Boolean(scan?.server_id || (typeof scan?.id === 'number' && scan.id > 0)) && (
+          <View style={{ marginBottom: spacing.sm }}>
+            <Pressable
+              onPress={handleTriggerReassess}
+              disabled={reassessing}
+              style={[styles.reassessBtn, reassessing && { opacity: 0.65 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Run live assessment"
+            >
+              {reassessing ? (
+                <View style={styles.rowAlign}>
+                  <ActivityIndicator color={colors.white} size="small" style={{ marginRight: 8 }} />
+                  <Text style={styles.reassessBtnText}>Evaluating 19 Checks with OCR…</Text>
+                </View>
+              ) : (
+                <Text style={styles.reassessBtnText}>
+                  ⚡ Run Server Assessment ({notAssessedCount} Pending Checks) →
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        )}
+
+        {/* Confirm & Return Action — placed prominently right below main result and above checklist breakdown */}
+        <View style={{ marginBottom: spacing.lg }}>
+          <PrimaryButton
+            title="✓ Confirm & Return to Package List"
+            onPress={() => {
+              if (onSaveFindings) onSaveFindings(findings);
+              if (onBack) onBack();
+            }}
+          />
+        </View>
 
         {/* List of 19 Checks */}
         <Text style={styles.sectionTitle}>CHECKLIST BREAKDOWN (RULE 6 & 9)</Text>
@@ -429,22 +571,14 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
           );
         })}
 
-        {/* Back / Confirm Action */}
-        <View style={{ marginTop: spacing.md, marginBottom: spacing.xxl }}>
-          <PrimaryButton
-            title="✓ Confirm & Return to Package List"
-            onPress={() => {
-              if (onSaveFindings) onSaveFindings(findings);
-              if (onBack) onBack();
-            }}
-          />
-        </View>
+        {/* Bottom spacing so the last card doesn't hug the edge */}
+        <View style={{ height: spacing.xl }} />
       </ScrollView>
 
       {/* Officer Override Modal */}
       <Modal visible={!!selectedFinding} animationType="slide" transparent onRequestClose={() => setSelectedFinding(null)}>
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalSheet}>
+          <View style={[styles.modalSheet, { paddingBottom: safeBottom + spacing.lg }]}>
             <Text style={styles.modalTitle}>Officer Finding Override</Text>
             <Text style={styles.modalSub}>
               {selectedFinding?.check_id}: {selectedFinding?.title}
@@ -523,7 +657,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxxl + 64,
   },
   headerCard: {
     marginBottom: spacing.md,
@@ -689,5 +823,20 @@ const styles = StyleSheet.create({
   rowAlign: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  reassessBtn: {
+    backgroundColor: colors.niyamBlue,
+    borderRadius: radius.md,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.sm,
+  },
+  reassessBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.white,
+    letterSpacing: 0.3,
   },
 });

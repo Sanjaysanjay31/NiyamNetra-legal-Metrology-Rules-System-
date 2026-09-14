@@ -6,16 +6,20 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  StatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
 import { colors, spacing, typography, radius, shadows } from '../theme';
 import Input from '../components/Input';
 import PrimaryButton from '../components/PrimaryButton';
-import { API_BASE_URL } from '../api/config';
 import { getApiBaseUrl } from '../api/client';
 
 export default function LoginScreen() {
   const { login } = useAuth();
+  const insets = useSafeAreaInsets();
+  const androidBar = Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0;
+  const topClearance = Math.max(insets.top || 0, androidBar, Platform.OS === 'ios' ? 44 : 24);
   const [employee_id, setId] = useState('');
   const [password, setPw] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -41,12 +45,11 @@ export default function LoginScreen() {
       } else if (status === 429) {
         setErr('Too many sign-in attempts. Please wait a moment and try again.');
       } else {
-        const activeUrl = getApiBaseUrl() || API_BASE_URL;
+        const activeUrl = getApiBaseUrl();
         setErr(
           `Cannot connect to backend server at:\n${activeUrl}\n\n` +
           `• Ensure your phone and laptop are on the SAME Wi-Fi network.\n` +
-          `• Ensure backend is running: uvicorn main:app --host 0.0.0.0 --port 8000\n` +
-          `• If laptop IP changed, update LAPTOP_WIFI_IP in api/config.js.`
+          `• Ensure backend is running: uvicorn main:app --host 0.0.0.0 --port 8000`
         );
       }
     } finally {
@@ -61,11 +64,11 @@ export default function LoginScreen() {
     >
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ flexGrow: 1 }}
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: Math.max(insets.bottom || 0, 28) }}
         keyboardShouldPersistTaps="handled"
       >
         {/* Sovereign Tricolor Accent Stripe */}
-        <View style={{ height: 4, flexDirection: 'row', width: '100%' }}>
+        <View style={{ height: 4, flexDirection: 'row', width: '100%', marginTop: topClearance + 8 }}>
           <View style={{ flex: 1, backgroundColor: '#FF9933' }} />
           <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />
           <View style={{ flex: 1, backgroundColor: '#138808' }} />
@@ -75,7 +78,7 @@ export default function LoginScreen() {
         <View
           style={{
             backgroundColor: colors.niyamBlue,
-            paddingTop: spacing.xxl + 8,
+            paddingTop: spacing.xl,
             paddingBottom: spacing.xxxl + 8,
             alignItems: 'center',
             paddingHorizontal: spacing.lg,
@@ -296,3 +299,4 @@ export default function LoginScreen() {
     </KeyboardAvoidingView>
   );
 }
+

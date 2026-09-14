@@ -115,8 +115,8 @@ export default function ReportsScreen({ navigation }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <Header title="Reports" subtitle="Success analytics" />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <Header title="Analytics & Reports" subtitle="State-wide compliance data" />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}>
         <SegmentControl
           selected={period}
           onSelect={setPeriod}

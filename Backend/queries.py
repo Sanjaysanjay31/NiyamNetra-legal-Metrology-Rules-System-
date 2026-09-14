@@ -57,10 +57,16 @@ def _result_counts(col=Scan.overall_result):
 # --- Query 1: today's report for one inspector ---
 def todays_stats(db: Session, user_id: int, day: date):
     total, comp, viol, na, oos = _result_counts()
+    # Refusals: count inspections (not scans) where the merchant refused to
+    # cooperate. signature_status == 'refused' is set by SubmitInspectionRequest
+    # and is independent of whether any scans were taken.
+    refusals = func.coalesce(
+        func.count(func.distinct(case((Inspection.signature_status == "refused", Inspection.id)))), 0
+    ).label("refusals")
     row = db.execute(
         select(
             func.count(func.distinct(Inspection.id)).label("inspections"),
-            total, comp, viol, na, oos,
+            total, comp, viol, na, oos, refusals,
         )
         .select_from(Inspection)
         .outerjoin(Scan, (Scan.inspection_id == Inspection.id) & LIVE)

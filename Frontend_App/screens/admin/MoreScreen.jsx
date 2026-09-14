@@ -54,7 +54,7 @@ export default function MoreScreen({ navigation }) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Header title={t.more} />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}>
         <Card padding="lg" style={{ marginBottom: spacing.md }}>
           {loading ? (
             <ActivityIndicator color={colors.netraTeal} />

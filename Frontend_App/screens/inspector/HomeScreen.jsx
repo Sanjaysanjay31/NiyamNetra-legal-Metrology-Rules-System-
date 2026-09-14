@@ -15,15 +15,18 @@ import VerdictBadge from '../../components/VerdictBadge';
 import PrimaryButton from '../../components/PrimaryButton';
 import EmptyState from '../../components/EmptyState';
 import { useSync } from '../../offline/SyncProvider';
-import { fetchTodayStats, fetchInspectionsList } from '../../api/inspections';
+import { fetchTodayStats, fetchInspectionsList, fetchPendingScans, assessScan } from '../../api/inspections';
 import { fetchMe } from '../../api/admin';
 
 export default function HomeScreen({ navigation, onStartInspection, onResumeInspection, activeInspection }) {
   const [officer, setOfficer] = useState(null);
   const [todayStats, setTodayStats] = useState(null);
   const [recentInspections, setRecentInspections] = useState([]);
+  const [pendingScans, setPendingScans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [assessing, setAssessing] = useState(false);
+  const [assessProgress, setAssessProgress] = useState(null);
   const { pending, isSyncing, syncNow } = useSync();
 
   const loadData = useCallback(async (isRefresh = false) => {
@@ -31,10 +34,11 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
     else setLoading(true);
 
     try {
-      const [userRes, statsRes, inspRes] = await Promise.allSettled([
+      const [userRes, statsRes, inspRes, pendingRes] = await Promise.allSettled([
         fetchMe(),
         fetchTodayStats(),
         fetchInspectionsList(),
+        fetchPendingScans(),
       ]);
 
       if (userRes.status === 'fulfilled' && userRes.value) {
@@ -46,6 +50,9 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
       if (inspRes.status === 'fulfilled' && inspRes.value) {
         const list = Array.isArray(inspRes.value) ? inspRes.value : [];
         setRecentInspections(list.slice(0, 5));
+      }
+      if (pendingRes.status === 'fulfilled' && pendingRes.value) {
+        setPendingScans(Array.isArray(pendingRes.value) ? pendingRes.value : []);
       }
     } catch (e) {
       // offline fallback
@@ -59,11 +66,71 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
     loadData();
   }, [loadData]);
 
+  const runServerAssessment = useCallback(async () => {
+    if (assessing || pendingScans.length === 0) return;
+    setAssessing(true);
+    setAssessProgress(`Preparing ${pendingScans.length} scans...`);
+
+    const scanIds = pendingScans.map((s) => s.id).filter(Boolean);
+    const total = scanIds.length;
+    let completed = 0;
+    const concurrency = 2;
+    let nextIdx = 0;
+
+    const assessWithRetry = async (scanId, retries = 3) => {
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          return await assessScan(scanId);
+        } catch (err) {
+          const status = err?.status || err?.response?.status;
+          if (status === 503 && attempt < retries) {
+            const retryHeader = err?.headers?.['retry-after'] || err?.response?.headers?.['retry-after'];
+            const waitSec = Math.min(10, Math.max(2, parseInt(retryHeader, 10) || attempt * 2));
+            setAssessProgress(`Capacity busy, retrying scan ${scanId} in ${waitSec}s...`);
+            await new Promise((r) => setTimeout(r, waitSec * 1000));
+            continue;
+          }
+          if (attempt === retries) throw err;
+        }
+      }
+    };
+
+    const worker = async () => {
+      while (nextIdx < scanIds.length) {
+        const cur = nextIdx++;
+        const id = scanIds[cur];
+        completed += 1;
+        setAssessProgress(`Assessing ${completed} of ${total}...`);
+        try {
+          await assessWithRetry(id);
+        } catch (err) {
+          console.warn(`[HomeScreen] Assessment failed for scan ${id}:`, err?.message || err);
+        }
+      }
+    };
+
+    try {
+      const workers = Array.from({ length: Math.min(concurrency, scanIds.length) }, () => worker());
+      await Promise.all(workers);
+    } catch (e) {
+      console.warn('[HomeScreen] runServerAssessment error:', e);
+    } finally {
+      setAssessing(false);
+      setAssessProgress(null);
+      await loadData(true);
+    }
+  }, [assessing, pendingScans, loadData]);
+
+  const refusalsToday = todayStats?.counts?.refusals ?? recentInspections.filter(
+    (i) => i.signature_status === 'refused' || i.result === 'refused' || i.overall_result === 'refused'
+  ).length;
+
   const counts = todayStats?.counts || {
     total: recentInspections.length,
     compliant: recentInspections.filter((i) => (i.result || i.overall_result) === 'compliant').length,
     violation: recentInspections.filter((i) => (i.result || i.overall_result) === 'violation').length,
     not_assessed: 0,
+    refusals: refusalsToday,
   };
 
   return (
@@ -152,13 +219,79 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
           </Card>
 
           <Card padding="md" style={styles.statCard}>
-            <Text style={styles.statLabel}>Pending Sync</Text>
+            <Text style={styles.statLabel}>Refusals</Text>
+            <Text style={[typography.statNumber, { color: colors.review.text }]}>
+              {refusalsToday ?? 0}
+            </Text>
+            <Text style={[styles.statSub, { color: colors.review.text }]}>Non-cooperation</Text>
+          </Card>
+
+          <Card padding="md" style={styles.statCard}>
+            <Text style={styles.statLabel}>Pending Assessment</Text>
+            <Text style={[typography.statNumber, { color: pendingScans.length > 0 ? colors.warning : colors.textMuted }]}>
+              {pendingScans.length}
+            </Text>
+            <Text style={styles.statSub}>Server Queue</Text>
+          </Card>
+
+          <Card padding="md" style={styles.statCard}>
+            <Text style={styles.statLabel}>Offline Queue</Text>
             <Text style={[typography.statNumber, { color: pending > 0 ? colors.warning : colors.textMuted }]}>
               {pending}
             </Text>
             <Text style={styles.statSub}>{isSyncing ? 'Syncing now…' : 'Queued offline'}</Text>
           </Card>
         </View>
+
+        {/* Run Server Assessment Card */}
+        {pendingScans.length > 0 && (
+          <Card
+            padding="md"
+            style={{
+              marginBottom: spacing.lg,
+              borderColor: colors.netraTeal,
+              borderWidth: 1.5,
+              backgroundColor: '#F0FDFA',
+            }}
+          >
+            <View style={styles.rowBetween}>
+              <View style={{ flex: 1, marginRight: spacing.md }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.niyamBlue }}>
+                  ⚡ Server Assessment Available
+                </Text>
+                <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
+                  {assessing
+                    ? assessProgress || `Assessing ${pendingScans.length} pending scans…`
+                    : `${pendingScans.length} scanned package(s) awaiting cloud OCR rule checks.`}
+                </Text>
+              </View>
+              <Pressable
+                onPress={runServerAssessment}
+                disabled={assessing}
+                accessibilityRole="button"
+                accessibilityLabel={`Run server assessment for ${pendingScans.length} pending scans`}
+                style={{
+                  backgroundColor: assessing ? colors.textMuted : colors.netraTeal,
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: radius.md,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  minHeight: 44,
+                  minWidth: 100,
+                }}
+              >
+                {assessing ? (
+                  <ActivityIndicator size="small" color={colors.white} />
+                ) : (
+                  <Text style={{ color: colors.white, fontSize: 12, fontWeight: '700' }}>
+                    Run Assess ({pendingScans.length})
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </Card>
+        )}
 
         {/* Statutory Scope Info Card */}
         <Card padding="md" style={styles.infoCard}>
@@ -200,7 +333,8 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
         ) : (
           recentInspections.map((item) => {
             const dateStr = item.date || item.created_at || item.local_created_at || '';
-            const verdict = item.overall_result || item.result || 'not_assessed';
+            const isRefusal = item.signature_status === 'refused' || item.result === 'refused' || item.overall_result === 'refused';
+            const verdict = isRefusal ? 'refused' : (item.overall_result || item.result || 'not_assessed');
             return (
               <Card key={item.id || item.client_uuid} padding="md" style={styles.inspectionCard}>
                 <View style={styles.rowBetween}>
@@ -209,7 +343,7 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
                       {item.store_name || item.store?.name || 'Retail Establishment'}
                     </Text>
                     <Text style={{ fontSize: 11, color: colors.textMuted }}>
-                      {dateStr ? String(dateStr).slice(0, 10) : 'Today'} • {item.transaction_type || 'Retail Sale'}
+                      {dateStr ? String(dateStr).slice(0, 10) : 'Today'} • {isRefusal ? 'Inspection Refused' : (item.transaction_type || 'Retail Sale')}
                     </Text>
                   </View>
                   <VerdictBadge result={verdict} />
@@ -233,7 +367,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxxl + 60,
   },
   rowBetween: {
     flexDirection: 'row',

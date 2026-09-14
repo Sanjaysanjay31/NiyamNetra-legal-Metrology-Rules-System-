@@ -249,12 +249,18 @@ class ScanListItemOut(BaseModel):
 
 # ---------------------------------------------------------------- reports
 class ResultCounts(BaseModel):
-    """The four scan results. Required in every report and dashboard payload."""
+    """The five scan results plus refusals. Required in every report and dashboard payload.
+
+    `refusals` counts inspections whose signature_status is 'refused' — it is
+    an inspection-level count (not a scan count) and is additive with zero as
+    a safe default so older clients ignore it.
+    """
     total: int = 0
     compliant: int = 0
     violation: int = 0
     not_assessed: int = 0
     out_of_scope: int = 0
+    refusals: int = 0
 
 
 class StoreBreakdown(BaseModel):
@@ -432,3 +438,27 @@ class AuditEntryOut(ORMModel):
     reason: str | None = None
     timestamp: datetime
     hash_self: str
+
+
+# ---------------------------------------------------------------- batch assess
+class BatchAssessRequest(BaseModel):
+    """Body for POST /scans/batch-assess.
+
+    scan_ids: list of scan primary keys to (re-)assess. The caller is
+    responsible for filtering to scans they own; the endpoint enforces
+    ownership per item and reports per-item errors rather than batch-rejecting.
+    """
+    scan_ids: list[int] = Field(min_length=1, max_length=100)
+    model_config = ConfigDict(extra="forbid")
+
+
+class BatchAssessItem(BaseModel):
+    scan_id: int
+    overall_result: str | None = None
+    ok: bool
+    error: str | None = None
+
+
+class BatchAssessResponse(BaseModel):
+    total: int
+    results: list[BatchAssessItem]

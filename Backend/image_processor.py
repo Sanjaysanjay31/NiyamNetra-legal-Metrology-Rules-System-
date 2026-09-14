@@ -112,19 +112,21 @@ def store_upload(raw: bytes, mime: str, inspection_id: int, scan_id: int) -> Sto
         raise
     digest = hashlib.sha256(stored).hexdigest()
 
-    # Mirror to Supabase Storage if configured — best-effort, never blocks local evidence.
+    # Mirror to Supabase Storage asynchronously if configured — best-effort, never blocks local evidence response.
     # Local remains primary per 09 §5.1; Supabase is backup for offline-phone images 12 §11.
     if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_KEY:
-        try:
-            from supabase import create_client
-            supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
-            key = f"{inspection_id}/{scan_id}/{dest.name}"
-            # supabase-py expects bytes; content-type matters for browser preview
-            supabase.storage.from_(settings.SUPABASE_BUCKET).upload(
-                key, stored, {"content-type": mime, "upsert": "true"}
-            )
-        except Exception:
-            pass  # mirror failure does not fail the scan — local hash is the evidence
+        import threading
+        def _mirror_bg(img_bytes=stored, c_type=mime, path_name=dest.name):
+            try:
+                from supabase import create_client
+                supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+                key = f"{inspection_id}/{scan_id}/{path_name}"
+                supabase.storage.from_(settings.SUPABASE_BUCKET).upload(
+                    key, img_bytes, {"content-type": c_type, "upsert": "true"}
+                )
+            except Exception:
+                pass
+        threading.Thread(target=_mirror_bg, daemon=True).start()
 
     return StoredImage(
         path=dest,

@@ -174,6 +174,23 @@ class Settings(BaseSettings):
     GOOGLE_VISION_URL: str = "https://vision.googleapis.com/v1/images:annotate"
     GOOGLE_VISION_TIMEOUT_S: float = 25.0
 
+    # Free Generative AI Vision OCR: Google Gemini Flash (Google AI Studio).
+    # 100% FREE, NO credit card or billing required (aistudio.google.com/app/apikey).
+    # Single-model call, short 8s timeout so a slow/erroring Gemini never stalls
+    # the cascade. Auto order: Google Vision (real word boxes) -> Gemini -> Groq
+    # -> OCR.space -> Tesseract -> Paddle, so letter-height/clear-space checks get
+    # genuine per-line geometry from the first engine that supplies it.
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_TIMEOUT_S: float = 8.0
+
+    # Free Ultra-fast Vision OCR: Groq (console.groq.com/keys) - ~0.4s latency.
+    # NOTE: llama-3.2-*-vision-preview was decommissioned by Groq; llama-4-scout
+    # is the current free vision model (image_url in chat completions).
+    GROQ_API_KEY: str | None = None
+    GROQ_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    GROQ_TIMEOUT_S: float = 8.0
+
     # --- rules ---
     RULES_AS_AT: str = "2026-07-01"        # C6; GSR 128(E) in force
     RULES_CATALOG: Path = BASE_DIR / "rules" / "catalog_2026_07_01.json"

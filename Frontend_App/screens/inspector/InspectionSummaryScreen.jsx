@@ -15,7 +15,7 @@ import Card from '../../components/Card';
 import VerdictBadge from '../../components/VerdictBadge';
 import PrimaryButton from '../../components/PrimaryButton';
 import { enqueueInspection } from '../../offline/queue';
-import { submitInspection } from '../../api/inspections';
+import { submitInspection, createInspection } from '../../api/inspections';
 
 const SIGNATURE_STATUSES = [
   { key: 'signed', label: 'Signed by Merchant / Representative', icon: '✍️' },
@@ -28,8 +28,12 @@ export default function InspectionSummaryScreen({
   onInspectionFinalized,
   onBackToSession,
 }) {
-  const [signatureStatus, setSignatureStatus] = useState('signed');
-  const [officerNotes, setOfficerNotes] = useState('');
+  const [signatureStatus, setSignatureStatus] = useState(
+    inspectionSession?.signature_status || 'signed'
+  );
+  const [officerNotes, setOfficerNotes] = useState(
+    inspectionSession?.notes || ''
+  );
   const [recordSeizure, setRecordSeizure] = useState(false);
   const [seizedUnits, setSeizedUnits] = useState('');
   const [witnessDetails, setWitnessDetails] = useState('');
@@ -40,7 +44,10 @@ export default function InspectionSummaryScreen({
   const compliantCount = packages.filter((p) => p.overall_result === 'compliant').length;
   const violationCount = packages.filter((p) => p.overall_result === 'violation').length;
   const notAssessedCount = packages.filter((p) => p.overall_result === 'not_assessed').length;
-  const overallInspectionVerdict = violationCount > 0 ? 'violation' : (compliantCount > 0 && notAssessedCount === 0 ? 'compliant' : 'not_assessed');
+  const isRefusal = signatureStatus === 'refused' || inspectionSession?.signature_status === 'refused';
+  const overallInspectionVerdict = packages.length === 0
+    ? (isRefusal ? 'violation' : 'not_assessed')
+    : (violationCount > 0 ? 'violation' : (compliantCount > 0 && notAssessedCount === 0 ? 'compliant' : 'not_assessed'));
 
   const handleSubmit = async () => {
     if (!inspectionSession?.store?.id) {
@@ -51,13 +58,35 @@ export default function InspectionSummaryScreen({
     setSubmitting(true);
     try {
       let liveSubmitted = false;
+      let currentServerId = inspectionSession.serverInspectionId;
 
-      // 1. Direct API submission if server inspection already created
-      if (inspectionSession.serverInspectionId) {
+      // 1. If server inspection not yet created (e.g. 0 scans on refusal), create it now
+      if (!currentServerId && inspectionSession?.store?.id) {
         try {
-          await submitInspection(inspectionSession.serverInspectionId, {
+          const newInsp = await createInspection({
+            store_id: Number(inspectionSession.store.id),
+            transaction_type: inspectionSession.transaction_type || 'retail_sale',
+            latitude: inspectionSession.coords?.latitude,
+            longitude: inspectionSession.coords?.longitude,
+            gps_accuracy_m: inspectionSession.coords?.accuracy,
+            local_created_at: inspectionSession.started_at || new Date().toISOString(),
+            notes: officerNotes || (isRefusal ? 'Merchant refused inspection access.' : null),
+          });
+          currentServerId = newInsp?.id || newInsp?.inspection_id;
+          if (currentServerId) {
+            inspectionSession.serverInspectionId = currentServerId;
+          }
+        } catch (createErr) {
+          console.warn('[Summary] Live create inspection failed:', createErr?.message || createErr);
+        }
+      }
+
+      // 2. Direct API submission if server inspection exists
+      if (currentServerId) {
+        try {
+          await submitInspection(currentServerId, {
             signature_status: signatureStatus,
-            notes: officerNotes,
+            notes: officerNotes || (isRefusal ? 'Merchant refused inspection access under Legal Metrology Act.' : null),
           });
           liveSubmitted = true;
         } catch (subErr) {
@@ -133,7 +162,7 @@ export default function InspectionSummaryScreen({
             </View>
             <View style={[styles.rowBetween, { marginTop: 6 }]}>
               <Text style={styles.summaryLabel}>Final Verdict:</Text>
-              <VerdictBadge result={overallInspectionVerdict} />
+              <VerdictBadge result={isRefusal ? 'refused' : overallInspectionVerdict} />
             </View>
             <View style={[styles.rowBetween, { marginTop: 6 }]}>
               <Text style={styles.summaryLabel}>Merchant Signature:</Text>
@@ -167,7 +196,7 @@ export default function InspectionSummaryScreen({
                 {inspectionSession?.store?.address || inspectionSession?.store?.city || 'Telangana'} • {inspectionSession?.transaction_type}
               </Text>
             </View>
-            <VerdictBadge result={overallInspectionVerdict} />
+            <VerdictBadge result={isRefusal ? 'refused' : overallInspectionVerdict} />
           </View>
 
           {/* Counts */}
@@ -197,20 +226,31 @@ export default function InspectionSummaryScreen({
 
         {/* Packages Breakdown */}
         <Text style={styles.sectionTitle}>PACKAGES CHECKED IN THIS VISIT</Text>
-        <Card padding="sm" style={{ marginBottom: spacing.md }}>
-          {packages.map((pkg, idx) => (
-            <View key={pkg.id || idx} style={[styles.pkgRow, idx > 0 && styles.pkgRowBorder]}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
-                  #{idx + 1}: {pkg.brand_name} ({pkg.commodity_generic})
-                </Text>
-                <Text style={{ fontSize: 10, color: colors.textMuted }}>
-                  Batch: {pkg.batch_number || 'N/A'}
-                </Text>
-              </View>
-              <VerdictBadge result={pkg.overall_result || 'compliant'} />
+        <Card padding="md" style={{ marginBottom: spacing.md }}>
+          {packages.length === 0 ? (
+            <View style={{ paddingVertical: spacing.xs }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: isRefusal ? colors.violation.text : colors.text, marginBottom: 4 }}>
+                {isRefusal ? '🚫 Merchant Refusal / Non-Cooperation' : 'ℹ️ Zero Packages Inspected'}
+              </Text>
+              <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                {inspectionSession?.refusal_reason || 'No packages were scanned during this visit. Official visit recorded.'}
+              </Text>
             </View>
-          ))}
+          ) : (
+            packages.map((pkg, idx) => (
+              <View key={pkg.id || idx} style={[styles.pkgRow, idx > 0 && styles.pkgRowBorder]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
+                    #{idx + 1}: {pkg.brand_name} ({pkg.commodity_generic})
+                  </Text>
+                  <Text style={{ fontSize: 10, color: colors.textMuted }}>
+                    Batch: {pkg.batch_number || 'N/A'}
+                  </Text>
+                </View>
+                <VerdictBadge result={pkg.overall_result || 'compliant'} />
+              </View>
+            ))
+          )}
         </Card>
 
         {/* Panchnama / Seizure Memo Section (if violations found) */}
@@ -320,7 +360,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxxl + 64,
   },
   summaryCard: {
     marginBottom: spacing.md,

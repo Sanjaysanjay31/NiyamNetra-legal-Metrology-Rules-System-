@@ -73,7 +73,7 @@ export default function RaidsScreen({ navigation }) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Header title="Raids Monitor" subtitle="Live inspection tracking" />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}>
         <SegmentControl
           selected={period}
           onSelect={setPeriod}

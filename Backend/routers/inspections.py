@@ -69,7 +69,13 @@ def _inspection_dict(insp: Inspection) -> dict:
         live = []
     results = [getattr(s, "overall_result", None) for s in live]
     if not live:
-        rollup = "no_scans"
+        # A refused inspection (merchant non-cooperation, zero scans) gets its
+        # own rollup value so clients can filter/bucket it separately from
+        # genuine 'no_scans' visits (inspector arrived but did not scan yet).
+        if getattr(insp, "signature_status", None) == "refused":
+            rollup = "refused"
+        else:
+            rollup = "no_scans"
     elif any(r == "violation" for r in results):
         rollup = "violation"
     elif any(r == "not_assessed" for r in results):
@@ -93,15 +99,44 @@ def _inspection_dict(insp: Inspection) -> dict:
                       for s in live if getattr(s, "overall_result", None) == "compliant")
         _total = sum(int(getattr(s, "checks_total", 0) or 0) for s in live)
         _thumbs = []
+        _all_findings = []
+        _commodity_name = None
         for s in live:
+            if not _commodity_name and (getattr(s, "commodity_generic", None) or getattr(s, "brand_name", None)):
+                _commodity_name = f"{getattr(s, 'brand_name', '') or ''} {getattr(s, 'commodity_generic', '') or ''}".strip()
+            for f in (getattr(s, "findings", []) or []):
+                _all_findings.append({
+                    "id": f.id,
+                    "scan_id": s.id,
+                    "check_id": f.check_id,
+                    "code": f.check_id,
+                    "title": f.title,
+                    "name": f.title,
+                    "engine_verdict": f.engine_verdict,
+                    "human_verdict": f.human_verdict,
+                    "effective_verdict": f.effective_verdict,
+                    "verdict": f.effective_verdict,
+                    "result": f.effective_verdict,
+                    "checkVerdict": f.effective_verdict,
+                    "severity": f.severity,
+                    "reason": f.reason,
+                    "observed": f.observed,
+                    "required": f.required,
+                    "citation": f.citation,
+                })
             try:
                 _imgs = sorted(getattr(s, "images", []) or [], key=lambda i: getattr(i, "id", 0))
                 if _imgs:
                     _thumbs.append(f"/scans/{s.id}/images/{_imgs[0].id}/thumbnail")
             except Exception:
                 continue
+        _failed_findings = [f for f in _all_findings if f["effective_verdict"] == "fail"]
+        _violated_packages = sum(1 for r in results if r == "violation")
+        _violation_count = len(_failed_findings) if len(_failed_findings) > 0 else _violated_packages
     except Exception:
-        _passed, _total, _thumbs = 0, 0, []
+        _passed, _total, _thumbs, _all_findings, _failed_findings = 0, 0, [], [], []
+        _commodity_name = None
+        _violation_count = sum(1 for r in results if r == "violation")
     return {
         "id": insp.id, "store_id": insp.store_id, "user_id": insp.user_id,
         "store_name": store_name,
@@ -128,8 +163,18 @@ def _inspection_dict(insp: Inspection) -> dict:
             if any(getattr(s, "created_at", None) for s in live)
             else (insp.submitted_at.isoformat() if insp.submitted_at else (insp.inspection_date.isoformat() if insp.inspection_date else None))
         ),
+        # Commodity & Violation details for cards
+        "commodity": _commodity_name,
+        "commodity_generic": _commodity_name,
+        "violated": _violation_count,
+        "violation_count": _violation_count,
+        "failed_checks_count": len(_failed_findings),
+        "findings": _all_findings,
         # Rollup aliases — every name the clients filter on resolves.
         "overall_result": rollup, "result": rollup, "verdict": rollup,
+        "is_refusal": rollup == "refused",
+        "local_created_at": insp.inspection_date.isoformat() if insp.inspection_date else None,
+        "date": insp.inspection_date.isoformat() if insp.inspection_date else None,
         "result_counts": {
             "compliant": sum(1 for r in results if r == "compliant"),
             "violation": sum(1 for r in results if r == "violation"),
@@ -153,6 +198,27 @@ def _inspection_dict(insp: Inspection) -> dict:
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "images": [{"id": img.id, "panel": img.panel} for img in (getattr(s, "images", []) or [])],
                 "image_count": len(getattr(s, "images", []) or []),
+                "findings": [
+                    {
+                        "id": f.id,
+                        "check_id": f.check_id,
+                        "code": f.check_id,
+                        "title": f.title,
+                        "name": f.title,
+                        "effective_verdict": f.effective_verdict,
+                        "engine_verdict": f.engine_verdict,
+                        "human_verdict": f.human_verdict,
+                        "verdict": f.effective_verdict,
+                        "result": f.effective_verdict,
+                        "checkVerdict": f.effective_verdict,
+                        "severity": f.severity,
+                        "observed": f.observed,
+                        "required": f.required,
+                        "citation": f.citation,
+                        "reason": f.reason,
+                    }
+                    for f in (getattr(s, "findings", []) or [])
+                ],
             }
             for s in live
         ],
@@ -185,8 +251,8 @@ def list_stores(user: User = Depends(require_inspector), db: Session = Depends(g
 
 
 @router.post("/stores", status_code=status.HTTP_201_CREATED)
-def create_store(body: CreateStoreRequest, user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    """Admin creates a new store. Invalidates the 5-min cache so inspectors see it."""
+def create_store(body: CreateStoreRequest, user: User = Depends(require_inspector), db: Session = Depends(get_db)):
+    """Inspector or Admin creates a new store. Invalidates the 5-min cache so inspectors see it."""
     from sqlalchemy.exc import IntegrityError
     existing = db.query(Store).filter(Store.name == body.name).first()
     if existing:
@@ -350,6 +416,7 @@ def list_inspections(
                             detail="status must be draft or submitted")
     query = db.query(Inspection).options(
         selectinload(Inspection.scans).selectinload(Scan.images),
+        selectinload(Inspection.scans).selectinload(Scan.findings),
         joinedload(Inspection.store),
         joinedload(Inspection.inspector),
     )

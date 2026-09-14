@@ -2,10 +2,10 @@
 // NIYAMNETRA BACKEND CONFIGURATION (EDIT HERE BEFORE RUNNING)
 // ============================================================================
 // 1. Target mode: 'lan' for local laptop on Wi-Fi, or 'render' for cloud backend
-export const ACTIVE_BACKEND = 'render'; // 'lan' | 'render'
+export const ACTIVE_BACKEND = 'lan'; // 'lan' | 'render'
 
 // 2. Your Laptop Wi-Fi IPv4 Address (find by running `ipconfig` in terminal)
-export const LAPTOP_WIFI_IP = '10.50.17.186';
+export const LAPTOP_WIFI_IP = '192.168.101.72';
 
 // 3. Backend port
 export const API_PORT = 8000;

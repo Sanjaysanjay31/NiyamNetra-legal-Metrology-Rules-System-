@@ -236,7 +236,15 @@ def generate_daily_pdf(inspector, report_date, blocks, chain_head: str,
             f"Transaction: {insp.transaction_type or '-'}; geofence: "
             f"{insp.geofence_status or 'unknown'}; status: {insp.status}.", body))
         if not scans:
-            story.append(Paragraph("No packages scanned.", body))
+            if getattr(insp, "signature_status", None) == "refused":
+                ref = _refusal_notes(insp)
+                story.append(Paragraph(
+                    f"<b>Refusal / Non-cooperation:</b> {ref['reason']} "
+                    f"(Merchant signature: {ref['signature_status']})",
+                    body,
+                ))
+            else:
+                story.append(Paragraph("No packages scanned.", body))
         for scan in scans:
             rows = findings_by_scan.get(scan.id, [])
             label = RESULT_STYLE.get(
@@ -305,6 +313,14 @@ def generate_daily_docx(inspector, report_date, blocks, chain_head: str,
             f"Transaction: {insp.transaction_type or '-'}; geofence: "
             f"{insp.geofence_status or 'unknown'}; status: {insp.status}."
         )
+        if not scans:
+            if getattr(insp, "signature_status", None) == "refused":
+                ref = _refusal_notes(insp)
+                p = doc.add_paragraph()
+                r = p.add_run(f"Refusal / Non-cooperation: {ref['reason']} (Merchant signature: {ref['signature_status']})")
+                r.bold = True
+            else:
+                doc.add_paragraph("No packages scanned.")
         for scan in scans:
             rows = findings_by_scan.get(scan.id, [])
             doc.add_heading(
@@ -367,22 +383,57 @@ def _verdict_label(f) -> str:
     return VERDICT_STYLE[f.human_verdict or f.engine_verdict][1]
 
 
+def _refusal_notes(insp) -> dict:
+    """Extract display fields from a refused inspection block.
+
+    A refusal has no scans (merchant non-cooperation). All four document
+    generators call this helper so the same text appears in PDF, DOCX, XLSX
+    and CSV.
+    """
+    store_name = insp.store.name if getattr(insp, "store", None) else "-"
+    reason = (insp.notes or "").strip() or "Merchant refused to cooperate (no reason given)."
+    return {
+        "store_name": store_name,
+        "reason": reason,
+        "signature_status": getattr(insp, "signature_status", "refused") or "refused",
+        "date_str": insp.inspection_date.strftime("%Y-%m-%d") if insp.inspection_date else "-",
+        "transaction_type": insp.transaction_type or "-",
+        "geofence_status": insp.geofence_status or "unknown",
+        "insp_status": insp.status,
+    }
+
+
 def _daily_rows(blocks) -> list[list]:
     """Flatten (inspection, scans, findings) day-blocks into one row per finding.
 
     A scan with no findings still yields a single row so a package that could
     not be read at all is not silently absent from the sheet.
+
+    A refused inspection (no scans, signature_status='refused') yields a
+    dedicated 'Refusal / Non-cooperation' row so the refusal is never silently
+    absent from the spreadsheet or CSV export.
     """
     rows: list[list] = []
     for insp, scans, findings_by_scan in blocks:
         store_name = insp.store.name if insp.store else "-"
         date_str = insp.inspection_date.strftime("%Y-%m-%d")
         if not scans:
-            rows.append([
-                insp.id, date_str, store_name, insp.transaction_type or "-",
-                insp.geofence_status or "unknown", insp.status,
-                "(no packages scanned)", "-", "", "", "", "", "", "", "",
-            ])
+            if getattr(insp, "signature_status", None) == "refused":
+                # Refusal row: always present so compliance officers see it.
+                ref = _refusal_notes(insp)
+                rows.append([
+                    insp.id, ref["date_str"], ref["store_name"],
+                    ref["transaction_type"], ref["geofence_status"], ref["insp_status"],
+                    "Refusal / Non-cooperation",
+                    f"REFUSED — {ref['reason']}",
+                    "", "", "", "", "", "", "",
+                ])
+            else:
+                rows.append([
+                    insp.id, date_str, store_name, insp.transaction_type or "-",
+                    insp.geofence_status or "unknown", insp.status,
+                    "(no packages scanned)", "-", "", "", "", "", "", "", "",
+                ])
             continue
         for scan in scans:
             package = (f"{scan.commodity_generic or 'Unidentified package'}"

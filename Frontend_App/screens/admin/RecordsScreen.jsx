@@ -73,7 +73,7 @@ export default function RecordsScreen({ navigation }) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Header title="Records" subtitle="Store-wise inspection data" />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}>
         <SegmentControl
           selected={filter}
           onSelect={setFilter}

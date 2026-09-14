@@ -39,6 +39,7 @@ def _counts(d: dict) -> ResultCounts:
         violation=d.get("violation") or 0,
         not_assessed=d.get("not_assessed") or 0,
         out_of_scope=d.get("out_of_scope") or 0,
+        refusals=d.get("refusals") or 0,
     )
 
 

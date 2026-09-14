@@ -12,7 +12,7 @@ from config import settings
 from database import get_db
 from models import Finding, Inspection, Scan, ScanImage, User
 from rbac import get_current_user, owned_scan
-from schemas import ScanListItemOut, ScanOut, VerdictCounts
+from schemas import ScanListItemOut, ScanOut, VerdictCounts, BatchAssessRequest, BatchAssessItem, BatchAssessResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 router = APIRouter(prefix="/scans", tags=["scans"])
@@ -314,11 +314,66 @@ def assess_scan(
             pass
 
 
-def _assess_inner(scan: Scan, user: User, db: Session):
+@router.post("/batch-assess", response_model=BatchAssessResponse)
+def assess_batch(
+    body: BatchAssessRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Re-assess a list of scans the caller owns.
+
+    Returns per-item results so the client always receives HTTP 200: individual
+    scan failures (permission denied, capacity busy, not found) are reported in
+    the item's error field rather than turning into a batch 503/403.
+
+    Each scan is assessed sequentially through the shared concurrency semaphore
+    (_ASSESS_SEMAPHORE) with a per-item timeout of _ASSESS_WAIT_S seconds; a
+    timeout yields ok=False, error='capacity busy' for that item only.
+    """
+    from schemas import BatchAssessItem, BatchAssessRequest, BatchAssessResponse
+    results = []
+    for scan_id in body.scan_ids:
+        item_result = None
+        try:
+            scan = db.get(Scan, scan_id)
+            if scan is None:
+                results.append(BatchAssessItem(scan_id=scan_id, ok=False, error="not found"))
+                continue
+            # Ownership: inspector must own the inspection; admin sees all.
+            if user.role != "admin":
+                _insp = db.get(Inspection, scan.inspection_id)
+                if _insp is None or _insp.user_id != user.id:
+                    results.append(BatchAssessItem(scan_id=scan_id, ok=False, error="not permitted"))
+                    continue
+            if not _ASSESS_SEMAPHORE.acquire(timeout=_ASSESS_WAIT_S):
+                results.append(BatchAssessItem(scan_id=scan_id, ok=False, error="capacity busy"))
+                continue
+            try:
+                _out = _assess_inner(scan, user, db)
+                results.append(BatchAssessItem(
+                    scan_id=scan_id,
+                    overall_result=_out.overall_result,
+                    ok=True,
+                ))
+            except Exception as _e:
+                results.append(BatchAssessItem(scan_id=scan_id, ok=False, error=str(_e)[:200]))
+            finally:
+                try:
+                    _ASSESS_SEMAPHORE.release()
+                except Exception:
+                    pass
+        except Exception as _outer:
+            results.append(BatchAssessItem(scan_id=scan_id, ok=False, error=str(_outer)[:200]))
+    return {"total": len(results), "results": [r.model_dump() for r in results]}
+
+
+def _assess_inner(scan: Scan, user: User, db: Session, force: bool = False):
     inspection = db.get(Inspection, scan.inspection_id)
-    if inspection is not None and inspection.status == "submitted":
-        raise HTTPException(status.HTTP_409_CONFLICT,
-                            detail="Inspection submitted; scan frozen")
+    if inspection is not None and inspection.status == "submitted" and not force:
+        # In dev mode, allow re-assessing packages for testing and demonstration
+        if getattr(settings, "ENV", "dev") not in ("dev", "development"):
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                detail="Inspection submitted; scan frozen")
     ctx = build_context(db, scan, inspection)
 
     from rules_engine import assess as run_assessment
@@ -676,6 +731,74 @@ def attach_listing(body: ListingRequest, scan: Scan = Depends(owned_scan), user:
     append_audit(db, inspection_id=scan.inspection_id, scan_id=scan.id, user_id=user.id, action="listing_attached", new_value=f"{url[:200]} {marker}")
     return {"scan_id": scan.id, "listing_url": url, "fetched_chars": len(html)}
 
+# ---------------------------------------------------------------------------
+# OCR result cache helpers
+# ---------------------------------------------------------------------------
+# A re-assess of an unchanged image set (e.g. after a scope edit or a finding
+# override) is the most common re-assess pattern. Each run previously re-paid
+# the full cloud-OCR cost even when the images were identical. The cache key
+# is a SHA-256 of the sorted (panel, sha256) pairs of the scan's images so
+# adding or replacing any image invalidates it.
+
+# Salts the OCR cache fingerprint. Bump this (ocr-v2, ocr-v3, ...) whenever the
+# OCR cascade changes meaningfully: it invalidates every previously written
+# scan.ocr_cache exactly once so no scan keeps serving stale text produced by
+# a different engine (e.g. text-only LLM OCR with fabricated line boxes).
+_OCR_CACHE_SALT = "ocr-v2"
+
+
+def _lines_to_cache(ocr) -> str | None:
+    """Serialize an OcrResult to a compact JSON string for scan.ocr_cache.
+
+    Format: {"engine": str, "mean_confidence": float|null,
+             "lines": [[text, confidence, [[x,y],...], height_px], ...]}
+    Returns None if ocr has no lines (nothing worth caching).
+    """
+    import json
+    if not ocr or not ocr.lines:
+        return None
+    try:
+        serialised = [
+            [
+                getattr(ln, "text", "") or "",
+                float(getattr(ln, "confidence", 0) or 0),
+                [[round(float(x), 1), round(float(y), 1)] for x, y in (getattr(ln, "box", None) or [])],
+                float(getattr(ln, "height_px", 0) or 0),
+            ]
+            for ln in ocr.lines
+        ]
+        return json.dumps({
+            "engine": ocr.engine or "unknown",
+            "mean_confidence": float(ocr.mean_confidence) if ocr.mean_confidence is not None else None,
+            "lines": serialised,
+        }, separators=(",", ":"))
+    except Exception:
+        return None
+
+
+def _lines_from_cache(s: str | None):
+    """Rehydrate an OcrResult from the JSON blob; returns None on any error."""
+    import json
+    if not s:
+        return None
+    try:
+        from ocr_engine import OcrLine, OcrResult
+        d = json.loads(s)
+        lines = [
+            OcrLine(text=ln[0], confidence=ln[1], box=ln[2] or None, height_px=ln[3])
+            for ln in d.get("lines", [])
+        ]
+        if not lines:
+            return None
+        return OcrResult(
+            lines=lines,
+            engine=d.get("engine", "cache"),
+            mean_confidence=d.get("mean_confidence"),
+            failure_reason=None,
+        )
+    except Exception:
+        return None
+
 
 def build_context(db: Session, scan: Scan, inspection: Inspection):
     """Assemble everything the engine needs. One place, so a check never
@@ -780,37 +903,83 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     if scale.mm_per_pixel is None and ctx.image_quality_reason is None:
         ctx.image_quality_reason = scale.reason
 
-    # Multi-panel OCR: run every stored panel, concat lines for field
+    # Multi-panel OCR: run every stored panel concurrently, concat lines for field
     # extraction. Front-panel quality above still governs image_usable; OCR
     # availability is true if ANY panel yields text.
     _all_lines: list = []
     _engines: list[str] = []
     _confs: list[float] = []
     _fail_reason: str | None = None
-    for _im in images:
-        try:
-            if not Path(_im.file_path).exists():
-                continue
-            _b = cv2.imread(_im.file_path) if _im is not front else _measure
-            if _b is None:
-                continue
-            _ocr = run_ocr(_b)
-        except Exception:
-            continue
-        if _ocr.lines:
-            _all_lines.extend(_ocr.lines)
-            _engines.append(_ocr.engine)
-        if _ocr.mean_confidence is not None:
-            _confs.append(float(_ocr.mean_confidence))
-        if _ocr.failure_reason and _fail_reason is None:
-            _fail_reason = _ocr.failure_reason
-    if _all_lines:
-        _mean = float(sum(_confs) / len(_confs)) if _confs else None
-        ocr = OcrResult(lines=_all_lines, engine=_engines[0] if _engines else "unknown",
-                        mean_confidence=_mean, failure_reason=None)
+
+    # --- OCR cache gate ---
+    # Compute a fingerprint of the current image set. If it matches the last
+    # cached run, rehydrate the OcrResult without touching any cloud API.
+    import hashlib as _hashlib
+    import json as _json
+    _img_set_parts = sorted(
+        (f"{_im.panel}:{_im.sha256}" for _im in images),
+    )
+    _set_hash = _hashlib.sha256(
+        (_OCR_CACHE_SALT + "|" + "|".join(_img_set_parts)).encode()
+    ).hexdigest()
+
+    _cached_ocr = None
+    if (
+        getattr(scan, "ocr_cache_hash", None) == _set_hash
+        and getattr(scan, "ocr_cache", None)
+    ):
+        _cached_ocr = _lines_from_cache(scan.ocr_cache)
+
+    if _cached_ocr is not None:
+        # Cache hit: use persisted OcrLines, skip all cloud OCR calls.
+        import logging as _log
+        _log.getLogger("niyamnetra.ocr_cache").debug(
+            "OCR cache hit for scan %s (hash=%s)", scan.id, _set_hash[:12]
+        )
+        ocr = _cached_ocr
     else:
-        # Fall back to the front-panel result for an honest failure reason.
-        ocr = run_ocr(_measure)
+        # Cache miss: run OCR as normal, then stage the result for next time.
+        _bgr_list = []
+        for _im in images:
+            try:
+                if not Path(_im.file_path).exists():
+                    continue
+                _b = cv2.imread(_im.file_path) if _im is not front else _measure
+                if _b is not None:
+                    _bgr_list.append(_b)
+            except Exception:
+                continue
+
+        if _bgr_list:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(4, len(_bgr_list))) as _pool:
+                _ocr_results = list(_pool.map(run_ocr, _bgr_list))
+
+            for _ocr in _ocr_results:
+                if _ocr.lines:
+                    _all_lines.extend(_ocr.lines)
+                    _engines.append(_ocr.engine)
+                if _ocr.mean_confidence is not None:
+                    _confs.append(float(_ocr.mean_confidence))
+                if _ocr.failure_reason and _fail_reason is None:
+                    _fail_reason = _ocr.failure_reason
+
+        if _all_lines:
+            _mean = float(sum(_confs) / len(_confs)) if _confs else None
+            ocr = OcrResult(lines=_all_lines, engine=_engines[0] if _engines else "unknown",
+                            mean_confidence=_mean, failure_reason=None)
+        else:
+            # Fall back to the front-panel result for an honest failure reason.
+            ocr = run_ocr(_measure)
+
+        # Stage the cache on the scan instance; _assess_inner commits it.
+        try:
+            _cached_blob = _lines_to_cache(ocr)
+            if _cached_blob:
+                scan.ocr_cache_hash = _set_hash
+                scan.ocr_cache = _cached_blob
+        except Exception:
+            pass
     ctx.ocr_available = ocr.engine != "none"
     if not ctx.ocr_available:
         ctx.ocr_failure_reason = ocr.failure_reason
@@ -832,7 +1001,17 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     except Exception:
         pass
 
-    if scale.mm_per_pixel:
+    # Text-only LLM engines (gemini/groq) transcribe words but return NO real
+    # line geometry — every "box" is fabricated. Feeding those into the Rule
+    # 7/9 letter-height / clear-space / width measurements would invent
+    # millimetre verdicts. Keep measurements empty for such engines so the
+    # geometry-dependent checks honestly resolve to not_assessed, while the
+    # content checks (MRP, net qty, manufacturer, dates…) still assess from
+    # the transcribed text.
+    _TEXT_ONLY_OCR_ENGINES = {"gemini_vision", "groq_vision"}
+    _has_real_geometry = ocr.engine not in _TEXT_ONLY_OCR_ENGINES
+
+    if scale.mm_per_pixel and _has_real_geometry:
         ctx.measured_heights_mm = {
             _label_for(line): line.height_px * scale.mm_per_pixel
             for line in ocr.lines

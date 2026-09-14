@@ -1,33 +1,22 @@
 import React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, Platform, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, typography, radius, shadows } from '../theme';
-
-// SafeArea without a hard dependency: use react-native-safe-area-context when
-// installed, otherwise fall back to a padded View so the header never renders
-// under the notch/status bar. 11 §2.4 — never crash on a missing optional dep.
-let SafeAreaView = View;
-try {
-  // eslint-disable-next-line global-require
-  const sac = require('react-native-safe-area-context');
-  if (sac?.SafeAreaView) SafeAreaView = sac.SafeAreaView;
-} catch { /* optional — fall back to View + manual padding */ }
 
 // §3.1 Top bar - Niyam Blue, white text, saffron accent
 export default function Header({ title, subtitle, onBack, rightAction, rightLabel }) {
-  // When react-native-safe-area-context is present its SafeAreaView applies
-  // the notch/status-bar inset itself; otherwise a plain View with manual
-  // top padding keeps the header clear of the status bar. No hooks here on
-  // purpose: useSafeAreaInsets needs a provider ancestor that App.js does not
-  // guarantee, and a missing provider would throw at render time.
-  const Top = SafeAreaView;
-  const fallbackPad = SafeAreaView === View ? { paddingTop: spacing.lg + 24 } : { paddingTop: spacing.lg };
+  const insets = useSafeAreaInsets();
+  // Ensure ample breathing space for camera notch, clock, battery charge, and signal icons:
+  const androidBar = Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0;
+  const topClearance = Math.max(insets.top || 0, androidBar, Platform.OS === 'ios' ? 44 : 24);
+
   return (
-    <Top
+    <View
       style={{
         backgroundColor: colors.niyamBlue,
-        paddingBottom: spacing.md,
+        paddingTop: topClearance + 16,
+        paddingBottom: spacing.md + 4,
         paddingHorizontal: spacing.lg,
-        ...fallbackPad,
         ...shadows.md,
       }}
     >
@@ -78,6 +67,6 @@ export default function Header({ title, subtitle, onBack, rightAction, rightLabe
           </Pressable>
         )}
       </View>
-    </Top>
+    </View>
   );
 }

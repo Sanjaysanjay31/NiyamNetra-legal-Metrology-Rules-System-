@@ -74,7 +74,7 @@ export default function PassScreen({ navigation }) {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Header title="Successful Inspections" subtitle={`${inspections.length} total`} />
       <ScrollView
-        contentContainerStyle={{ padding: spacing.lg }}
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} />}
       >
         {/* Filter */}

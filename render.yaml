@@ -72,11 +72,17 @@ services:
       - key: SUPABASE_BUCKET
         value: NiyamNetra_Images
 
-      # Cloud OCR (512MB-safe). This slim deploy has NO PaddleOCR/Tesseract,
-      # so without a key every scan is not_assessed. BEST = Google Vision
-      # (console.cloud.google.com → Vision API → API key); FREE = OCR.space
-      # (ocr.space/ocrapi/freekey). Set at least one in the dashboard
-      # (sync: false = never committed). Cascade: Google → OCR.space.
+      # Cloud OCR (512MB-safe). Slim deploy with ~0MB RAM cloud OCR.
+      # Gemini Flash (100% free, no credit card: aistudio.google.com/app/apikey).
+      # Groq Vision (100% free, fast: console.groq.com/keys).
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash-lite
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: meta-llama/llama-4-scout-17b-16e-instruct
       - key: GOOGLE_VISION_API_KEY
         sync: false
       - key: OCR_SPACE_API_KEY

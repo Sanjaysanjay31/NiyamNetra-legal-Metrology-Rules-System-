@@ -125,8 +125,8 @@ export default function InspectorsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <Header title="Inspectors" subtitle={`${inspectors.length} officers`} />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+      <Header title="Inspectors" subtitle="Field officer accounts & devices" />
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}>
         <PrimaryButton title="Add inspector" icon="+" onPress={openCreate} style={{ marginBottom: spacing.md }} />
 
         <SegmentControl

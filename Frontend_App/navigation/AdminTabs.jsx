@@ -1,6 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import RaidsScreen from '../screens/admin/RaidsScreen';
 import InspectorsScreen from '../screens/admin/InspectorsScreen';
@@ -29,6 +30,12 @@ const styles = StyleSheet.create({
 });
 
 export default function AdminTabs() {
+  const insets = useSafeAreaInsets();
+  // Safe clearance above Android 3-button navigation, gesture indicator, and hardware buttons:
+  const bottomInset = insets.bottom || 0;
+  const safeBottomPadding = bottomInset > 0 ? bottomInset + 8 : 16;
+  const tabHeight = 64 + (bottomInset > 0 ? bottomInset : 14);
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -39,13 +46,18 @@ export default function AdminTabs() {
           backgroundColor: colors.white,
           borderTopColor: colors.border,
           borderTopWidth: 1,
-          height: 60,
-          paddingBottom: 6,
-          paddingTop: 6,
+          height: tabHeight,
+          paddingBottom: safeBottomPadding,
+          paddingTop: 8,
         },
         tabBarLabelStyle: {
           fontSize: 11,
-          fontWeight: '500',
+          fontWeight: '600',
+          marginTop: 2,
+        },
+        tabBarItemStyle: {
+          justifyContent: 'center',
+          alignItems: 'center',
         },
       }}
     >
