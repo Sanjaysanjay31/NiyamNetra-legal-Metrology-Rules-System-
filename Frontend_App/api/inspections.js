@@ -101,6 +101,41 @@ export async function submitInspection(inspectionId, { signature_status = 'signe
   return data;
 }
 
+export async function updateInspection(inspectionId, { notes, signature_status } = {}) {
+  const { data } = await api.patch(`/inspections/${inspectionId}`, {
+    notes,
+    signature_status,
+  });
+  return data;
+}
+
+export async function verifyEvidence(scanId) {
+  const { data } = await api.get(`/scans/${scanId}/verify`);
+  return data;
+}
+
+export async function fetchRuleInfo() {
+  try {
+    const { data } = await api.get('/rule-info');
+    if (data) return data;
+  } catch (e) {
+    try {
+      const { data } = await api.get('/admin/rule-versions');
+      if (Array.isArray(data)) {
+        return data.find((r) => r.is_active) || data[data.length - 1];
+      }
+    } catch {
+      try {
+        const { data } = await api.get('/health');
+        return data;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 export async function fetchPendingScans() {
   try {
     const { data } = await api.get('/scans?status=not_assessed');

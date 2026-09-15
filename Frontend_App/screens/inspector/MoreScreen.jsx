@@ -6,6 +6,7 @@ import Card from '../../components/Card';
 import { useAuth } from '../../auth/AuthContext';
 import { useSync } from '../../offline/SyncProvider';
 import { fetchMe } from '../../api/admin';
+import { fetchRuleInfo } from '../../api/inspections';
 
 // Full en/hi strings for this screen (was header-only preview).
 const STR = {
@@ -13,22 +14,22 @@ const STR = {
     more: 'More', signOut: 'Sign Out', officer: 'Officer',
     fieldDivision: 'Field Division', syncNow: 'Sync now', syncing: 'Syncing...',
     pending: 'pending', uploading: 'Uploading to server', tapToSync: 'Tap to sync now',
-    help: 'Help & Guidance', about: 'About NiyamNetra',
+    help: 'Help & Guidance', about: 'About NiyamNetra & Statutory Rules',
     helpText: 'Capture front, back, MRP and batch panels. The server assesses 19 checks (CHK01–CHK18 + CHK06b) after sync.',
-    aboutText: 'NiyamNetra v1.0 • Assesses LM (PC) Rules 2011 only. Not a statutory notice.',
+    aboutText: 'NiyamNetra • Legal Metrology (Packaged Commodities) Rules, 2011. 19 statutory rule checks.',
     language: 'Language', english: 'English', hindi: 'हिन्दी',
-    footer: 'NiyamNetra v1.0 • Assesses LM (PC) Rules 2011 only',
+    footer: 'NiyamNetra • Legal Metrology (Packaged Commodities) Rules, 2011',
     langTitle: 'Language', langMsg: 'Choose display language for this screen.',
   },
   hi: {
     more: 'अधिक', signOut: 'साइन आउट', officer: 'अधिकारी',
     fieldDivision: 'क्षेत्रीय प्रभाग', syncNow: 'अभी सिंक करें', syncing: 'सिंक हो रहा है...',
     pending: 'लंबित', uploading: 'सर्वर पर अपलोड हो रहा है', tapToSync: 'सिंक के लिए टैप करें',
-    help: 'सहायता और मार्गदर्शन', about: 'नियमनेत्रा के बारे में',
+    help: 'सहायता और मार्गदर्शन', about: 'नियमनेत्रा और वैधानिक नियमों के बारे में',
     helpText: 'फ्रंट, बैक, MRP और बैच पैनल कैप्चर करें। सिंक के बाद सर्वर 19 जांचों (CHK01–CHK18 + CHK06b) का मूल्यांकन करता है।',
-    aboutText: 'नियमनेत्रा v1.0 • केवल LM (PC) नियम 2011 का मूल्यांकन। वैधानिक नोटिस नहीं।',
+    aboutText: 'नियमनेत्रा • विधिक मापविज्ञान (पैकेज्ड वस्तुएं) नियम, 2011. 19 वैधानिक नियम जांचें।',
     language: 'भाषा', english: 'English', hindi: 'हिन्दी',
-    footer: 'नियमनेत्रा v1.0 • केवल LM (PC) नियम 2011',
+    footer: 'नियमनेत्रा • विधिक मापविज्ञान (पैकेज्ड वस्तुएं) नियम, 2011',
     langTitle: 'भाषा', langMsg: 'इस स्क्रीन के लिए भाषा चुनें।',
   },
 };
@@ -39,15 +40,19 @@ export default function MoreScreen({ navigation }) {
   const { pending, isSyncing, syncNow } = useSync();
   const [lang, setLang] = useState('en');
   const [me, setMe] = useState(null);
+  const [ruleInfo, setRuleInfo] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const data = await fetchMe();
-        if (mounted) setMe(data);
-      } catch { /* leave me null — neutral fallback below */ }
+        const [userData, ruleData] = await Promise.allSettled([fetchMe(), fetchRuleInfo()]);
+        if (mounted) {
+          if (userData.status === 'fulfilled' && userData.value) setMe(userData.value);
+          if (ruleData.status === 'fulfilled' && ruleData.value) setRuleInfo(ruleData.value);
+        }
+      } catch { /* neutral fallback */ }
       finally { if (mounted) setLoading(false); }
     })();
     return () => { mounted = false; };
@@ -75,7 +80,10 @@ export default function MoreScreen({ navigation }) {
     if (key === 'help') {
       Alert.alert(t.help, t.helpText);
     } else {
-      Alert.alert(t.about, t.aboutText);
+      const details = ruleInfo
+        ? `${ruleInfo.name}\n\n• Gazette Reference: ${ruleInfo.gazette_ref || 'Official Gazette'}\n• 19 Statutory Checks Enforced\n• Status: ${ruleInfo.status || 'Active'}\n\n${ruleInfo.summary || ruleInfo.description || ''}`
+        : t.aboutText;
+      Alert.alert(t.about, details);
     }
   };
 
@@ -169,7 +177,9 @@ export default function MoreScreen({ navigation }) {
             <Text style={{ color: colors.error, fontWeight: '600', fontSize: 14 }}>{t.signOut}</Text>
           </View>
         </Pressable>
-        <Text style={{ ...typography.caption, textAlign: 'center', marginTop: spacing.xxl }}>{t.footer}</Text>
+        <Text style={{ ...typography.caption, textAlign: 'center', marginTop: spacing.xxl }}>
+          {ruleInfo?.name ? `${ruleInfo.name} • 19 Checks` : t.footer}
+        </Text>
       </ScrollView>
     </View>
   );

@@ -52,7 +52,9 @@ web-build/
 *.local
 coverage/
 
-# native signing material — leaking these lets anyone publish as you
+# native signing material and build folders — leaking these lets anyone publish as you
+android/
+ios/
 *.jks
 *.p8
 *.p12

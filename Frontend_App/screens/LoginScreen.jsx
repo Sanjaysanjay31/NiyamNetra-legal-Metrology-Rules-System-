@@ -46,10 +46,15 @@ export default function LoginScreen() {
         setErr('Too many sign-in attempts. Please wait a moment and try again.');
       } else {
         const activeUrl = getApiBaseUrl();
+        const isCloud = String(activeUrl || '').includes('onrender.com');
         setErr(
-          `Cannot connect to backend server at:\n${activeUrl}\n\n` +
-          `• Ensure your phone and laptop are on the SAME Wi-Fi network.\n` +
-          `• Ensure backend is running: uvicorn main:app --host 0.0.0.0 --port 8000`
+          isCloud
+            ? `Cannot connect to cloud backend server at:\n${activeUrl}\n\n` +
+              `• Please check your device internet connection.\n` +
+              `• Free-tier cloud backend may take 30–50s to wake from sleep. Please wait and try again.`
+            : `Cannot connect to backend server at:\n${activeUrl}\n\n` +
+              `• Ensure your phone and laptop are on the SAME Wi-Fi network.\n` +
+              `• Ensure backend is running: uvicorn main:app --host 0.0.0.0 --port 8000`
         );
       }
     } finally {

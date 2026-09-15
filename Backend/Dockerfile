@@ -57,4 +57,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # Render injects $PORT; default 8000 locally. The shell form is required so
 # $PORT is expanded at runtime, not baked at build. .dockerignore ensures
 # .env / *.db / evidence / out never bake into the image.
-CMD sh -c "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
+CMD sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"

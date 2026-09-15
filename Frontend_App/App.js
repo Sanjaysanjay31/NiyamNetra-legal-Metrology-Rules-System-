@@ -8,6 +8,7 @@ import { SyncProvider } from './offline/SyncProvider';
 import LoginScreen from './screens/LoginScreen';
 import InspectorTabs from './navigation/InspectorTabs';
 import AdminTabs from './navigation/AdminTabs';
+import WebPhoneWrapper from './components/WebPhoneWrapper';
 import { colors } from './theme';
 
 const Stack = createNativeStackNavigator();
@@ -97,14 +98,16 @@ function Root() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <SafeAreaProvider>
-        <StatusBar barStyle="light-content" backgroundColor={colors.niyamBlue} translucent={true} />
-        <AuthProvider>
-          <SyncProvider>
-            <Root />
-          </SyncProvider>
-        </AuthProvider>
-      </SafeAreaProvider>
+      <WebPhoneWrapper>
+        <SafeAreaProvider>
+          <StatusBar barStyle="light-content" backgroundColor={colors.niyamBlue} translucent={true} />
+          <AuthProvider>
+            <SyncProvider>
+              <Root />
+            </SyncProvider>
+          </AuthProvider>
+        </SafeAreaProvider>
+      </WebPhoneWrapper>
     </ErrorBoundary>
   );
 }

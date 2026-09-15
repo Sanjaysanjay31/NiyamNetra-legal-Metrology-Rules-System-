@@ -132,11 +132,11 @@ export default function PassScreen({ navigation }) {
                         <Text style={{ fontSize: 12, color: colors.textMuted }}>{itemDate(item)} • {checks ? `${checks} assessed` : '19 checks (CHK01–CHK18 + CHK06b)'}</Text>
                         <View style={{ flexDirection: 'row', marginTop: spacing.sm }}>
                           <View style={{ backgroundColor: colors.pass.fill, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 2, marginRight: spacing.xs }}>
-                            <Text style={{ color: colors.pass.text, fontSize: 11, fontWeight: '600' }}>✓ {passed} pass</Text>
+                            <Text style={{ color: colors.pass.text, fontSize: 11, fontWeight: '600' }}>✓ {passed} compliant</Text>
                           </View>
                           {notAssessed > 0 && (
                             <View style={{ backgroundColor: colors.notAssessed.fill, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 2 }}>
-                              <Text style={{ color: colors.notAssessed.text, fontSize: 11, fontWeight: '600' }}>— {notAssessed} N/A</Text>
+                              <Text style={{ color: colors.notAssessed.text, fontSize: 11, fontWeight: '600' }}>⏳ {notAssessed} not assessed</Text>
                             </View>
                           )}
                         </View>

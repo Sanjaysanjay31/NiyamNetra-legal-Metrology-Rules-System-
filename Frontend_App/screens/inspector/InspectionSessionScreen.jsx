@@ -485,8 +485,9 @@ export default function InspectionSessionScreen({
                       Batch: {pkg.batch_number || 'N/A'} • 19 Checks Evaluated
                     </Text>
                   </View>
-                  <View style={styles.rowAlign}>
-                    <VerdictBadge result={pkg.overall_result || 'compliant'} />
+                  <View style={[styles.rowAlign, { gap: 6 }]}>
+                    <VerdictBadge result={pkg.overall_result || 'not_assessed'} size="sm" />
+                    <VerdictBadge status={pkg.server_id ? 'synced' : 'not_synced'} size="sm" />
                     {onViewFindings && (
                       <Pressable
                         onPress={() => onViewFindings(pkg)}

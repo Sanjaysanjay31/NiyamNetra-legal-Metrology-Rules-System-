@@ -1,17 +1,25 @@
 import React from 'react';
 import { View, Text } from 'react-native';
-import { radius, spacing, typography, scanResultConfig, verdictConfig } from '../theme';
+import { radius, spacing, typography, scanResultConfig, verdictConfig, statusConfig } from '../theme';
 
-// §2.4 Verdict badge - word not colour, proper contrast
-// checkVerdict: pass | fail | not_assessed
-// scanResult: success | compliant | violation | not_assessed | out_of_scope
-// ("success" is a legacy alias of "compliant" — both render the pass style so
-// no row ever renders a blank badge.)
-export default function VerdictBadge({ result, checkVerdict, size = 'md' }) {
-  const normalized = result === 'success' ? 'compliant' : result;
-  const cfg = checkVerdict
-    ? verdictConfig[checkVerdict]
-    : scanResultConfig[normalized] || scanResultConfig[result];
+// §2.4 Verdict & Status badge - word not colour, proper contrast
+// ruleResult / result: compliant | violation | not_assessed | out_of_scope
+// checkVerdict: compliant | violation | not_assessed | out_of_scope | pass | fail
+// status: in_progress | submitted | synced | not_synced
+export default function VerdictBadge({ result, checkVerdict, status, size = 'md' }) {
+  const normKey = (val) => String(val || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const nResult = normKey(result);
+  const nCheck = normKey(checkVerdict);
+  const nStatus = normKey(status);
+
+  let cfg = null;
+  if (status) {
+    cfg = statusConfig[nStatus] || statusConfig[status];
+  } else if (checkVerdict) {
+    cfg = verdictConfig[nCheck] || verdictConfig[checkVerdict];
+  } else {
+    cfg = scanResultConfig[nResult] || scanResultConfig[result] || statusConfig[nResult];
+  }
 
   if (!cfg) return null;
 

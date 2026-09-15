@@ -5,7 +5,7 @@
 export const ACTIVE_BACKEND = 'lan'; // 'lan' | 'render'
 
 // 2. Your Laptop Wi-Fi IPv4 Address (find by running `ipconfig` in terminal)
-export const LAPTOP_WIFI_IP = '192.168.101.72';
+export const LAPTOP_WIFI_IP = '10.50.7.235';
 
 // 3. Backend port
 export const API_PORT = 8000;
@@ -29,15 +29,18 @@ function resolveHost() {
 }
 
 export function resolveApiBaseUrl() {
-  // If EXPO_PUBLIC_API_BASE_URL is set in .env, it takes highest precedence
+  // If EXPO_PUBLIC_API_BASE_URL is set in .env or eas.json, it takes highest precedence
   const explicit = (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim();
   if (explicit) return explicit.replace(/\/+$/, '');
 
-  if (ACTIVE_BACKEND === 'render') {
+  // In production / standalone APK release builds, default to cloud Render backend
+  // In development mode (__DEV__), default according to ACTIVE_BACKEND ('lan' on Wi-Fi)
+  const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
+  if (!isDev || ACTIVE_BACKEND === 'render') {
     return RENDER_API_URL;
   }
 
-  // LAN mode: use LAPTOP_WIFI_IP for phone, 127.0.0.1 for local web preview
+  // LAN mode (dev): use LAPTOP_WIFI_IP for phone, 127.0.0.1 for local web preview
   const host = resolveHost();
   return `http://${host}:${API_PORT}`;
 }

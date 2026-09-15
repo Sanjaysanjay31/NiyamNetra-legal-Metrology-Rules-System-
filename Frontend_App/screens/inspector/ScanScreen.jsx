@@ -218,9 +218,9 @@ export default function ScanScreen({ navigation }) {
       });
       setResult('queued');
       setStep('review');
-      if (draft) Alert.alert('Draft saved', 'Queued on this device — will sync when online.');
+      if (draft) Alert.alert('Inspection saved', 'Saved as In Progress on this device — will sync when online.');
     } catch (e) {
-      Alert.alert(draft ? 'Draft failed' : 'Submit failed', 'Could not queue the inspection. Please try again.');
+      Alert.alert(draft ? 'Save failed' : 'Submit failed', 'Could not queue the inspection. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -525,7 +525,7 @@ export default function ScanScreen({ navigation }) {
           disabled={submitting}
           style={{ marginBottom: spacing.md }}
         />
-        <PrimaryButton title="Save as Draft" variant="outline" onPress={() => submitInspection({ draft: true })} disabled={submitting || photos.length === 0} />
+        <PrimaryButton title="Save as In Progress" variant="outline" onPress={() => submitInspection({ draft: true })} disabled={submitting || photos.length === 0} />
       </ScrollView>
     </View>
   );

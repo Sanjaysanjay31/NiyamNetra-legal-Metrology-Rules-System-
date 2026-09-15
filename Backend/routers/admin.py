@@ -18,7 +18,7 @@ from queries import (
     admin_stats, admin_violations_list, inspection_trend, proximity_flags, repeat_violators, review_queue_size,
     violations_by_check,
 )
-from rbac import require_admin
+from rbac import get_current_user, require_admin
 from schemas import (
     AdminDashboardResponse, AdminViolationItem, AdminViolationsResponse, AuditEntryOut, CheckTally, CreateUserRequest,
     OverrideFindingRequest, RepeatOffender, RepeatOffenderHistory, RepeatOffendersResponse, ResetInstallRequest,
@@ -418,11 +418,11 @@ def review_queue_items(limit: int = Query(default=200, ge=1, le=500),
 def override_finding(
     finding_id: int,
     body: OverrideFindingRequest,
-    user: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """A human may disagree with the engine. The disagreement is recorded
-    alongside the engine's verdict, never in place of it. C11.
+    """A human may disagree with the engine, or an inspector may attach a
+    statutory remark/clarification. C11.
 
     engine_verdict is protected by a database trigger as well (§10.3), so a
     stray UPDATE from a script cannot do what this endpoint refuses to do.
@@ -443,12 +443,21 @@ def override_finding(
     scan = db.get(Scan, f.scan_id)
     if scan is not None and scan.inspection_id is not None:
         _insp = db.get(_Inspection, scan.inspection_id)
-        if _insp is not None and _insp.status == "submitted":
-            raise HTTPException(status.HTTP_409_CONFLICT,
-                                detail="Inspection submitted; findings frozen")
+        if _insp is not None:
+            if user.role != "admin" and _insp.user_id != user.id:
+                raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                    detail="Not permitted to modify this finding")
+            if _insp.status == "submitted":
+                raise HTTPException(status.HTTP_409_CONFLICT,
+                                    detail="Inspection submitted; findings frozen")
 
     old = f.human_verdict or f.engine_verdict
-    f.human_verdict = body.human_verdict
+    new_verdict = body.human_verdict if body.human_verdict is not None else f.human_verdict
+    if new_verdict in ("compliant", "pass"):
+        new_verdict = "pass"
+    elif new_verdict in ("violation", "fail"):
+        new_verdict = "fail"
+    f.human_verdict = new_verdict
     f.override_reason = body.override_reason
     f.overridden_by = user.id
     f.overridden_at = datetime.now(timezone.utc)
@@ -473,15 +482,21 @@ def override_finding(
         except IntegrityError:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, detail="Recompute conflicts with existing data")
+    action_type = "finding_overridden" if body.human_verdict is not None and body.human_verdict != old else "finding_remark_added"
     append_audit(
-        db, inspection_id=scan.inspection_id, scan_id=scan.id, user_id=user.id,
-        action="finding_overridden",
+        db, inspection_id=scan.inspection_id if scan else None, scan_id=scan.id if scan else None, user_id=user.id,
+        action=action_type,
         old_value=f"{f.check_id}={old}",
-        new_value=f"{f.check_id}={body.human_verdict}",
+        new_value=f"{f.check_id}={new_verdict or old}",
         reason=body.override_reason,
     )
-    return {"finding_id": f.id, "engine_verdict": f.engine_verdict,
-            "human_verdict": f.human_verdict}
+    return {
+        "finding_id": f.id,
+        "engine_verdict": f.engine_verdict,
+        "human_verdict": f.human_verdict,
+        "effective_verdict": f.effective_verdict,
+        "override_reason": f.override_reason,
+    }
 
 
 @router.get("/audit")

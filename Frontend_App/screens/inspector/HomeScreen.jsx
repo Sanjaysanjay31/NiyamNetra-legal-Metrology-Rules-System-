@@ -203,7 +203,7 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
           </Card>
 
           <Card padding="md" style={styles.statCard}>
-            <Text style={styles.statLabel}>Compliant (Pass)</Text>
+            <Text style={styles.statLabel}>Compliant</Text>
             <Text style={[typography.statNumber, { color: colors.pass.text }]}>
               {counts.compliant ?? 0}
             </Text>
@@ -346,7 +346,10 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
                       {dateStr ? String(dateStr).slice(0, 10) : 'Today'} • {isRefusal ? 'Inspection Refused' : (item.transaction_type || 'Retail Sale')}
                     </Text>
                   </View>
-                  <VerdictBadge result={verdict} />
+                  <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                    <VerdictBadge status={item.status === 'submitted' ? 'submitted' : 'in_progress'} size="sm" />
+                    <VerdictBadge result={verdict} size="sm" />
+                  </View>
                 </View>
               </Card>
             );

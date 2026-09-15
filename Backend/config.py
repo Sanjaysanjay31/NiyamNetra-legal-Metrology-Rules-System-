@@ -99,7 +99,9 @@ class Settings(BaseSettings):
     # to a strict pattern (e.g. your portal domain) and it is used instead.
     # If unset in prod, boot logs a warning (see _warn_prod_cors) and keeps
     # the default — fail-open with a loud warning, not a silent localhost.
-    CORS_ORIGIN_REGEX_PROD: str | None = r"^https://.*\.vercel\.app$"
+    CORS_ORIGIN_REGEX_PROD: str | None = (
+        r"^(https?://([a-zA-Z0-9_-]+\.)*(vercel\.app|onrender\.com)(:[0-9]+)?|exp://.*)$"
+    )
 
     @property
     def effective_cors_regex(self) -> str:
@@ -223,8 +225,7 @@ def get_settings() -> Settings:
     s.OUT_DIR.mkdir(parents=True, exist_ok=True)
     if s.ENV == "prod" and not s.CORS_ORIGIN_REGEX_PROD:
         s.CORS_ORIGIN_REGEX_PROD = (
-            r"^(https?://([a-zA-Z0-9_-]+\.)*vercel\.app(:[0-9]+)?"
-            r"|https?://([a-zA-Z0-9_-]+\.)*onrender\.com(:[0-9]+)?)$"
+            r"^(https?://([a-zA-Z0-9_-]+\.)*(vercel\.app|onrender\.com)(:[0-9]+)?|exp://.*)$"
         )
     return s
 

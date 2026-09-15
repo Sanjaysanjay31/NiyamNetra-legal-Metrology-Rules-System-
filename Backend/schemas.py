@@ -423,8 +423,27 @@ class ResetInstallRequest(BaseModel):
 
 
 class OverrideFindingRequest(BaseModel):
-    human_verdict: Verdict
-    override_reason: str = Field(min_length=10, max_length=1000)
+    human_verdict: str | None = None
+    override_reason: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("human_verdict", mode="before")
+    @classmethod
+    def _normalize_verdict(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        norm = str(v).strip().lower()
+        if norm in ("pass", "compliant"):
+            return "pass"
+        if norm in ("fail", "violation", "non_compliant"):
+            return "fail"
+        if norm in ("not_assessed", "out_of_scope"):
+            return "not_assessed"
+        raise ValueError("Verdict must be pass/compliant, fail/violation, or not_assessed/out_of_scope")
+
+
+class UpdateInspectionRequest(BaseModel):
+    notes: str | None = Field(default=None, max_length=4000)
+    signature_status: str | None = Field(default=None, max_length=24)
 
 
 class AuditEntryOut(ORMModel):

@@ -9,9 +9,11 @@ export const colors = {
 
   // Semantic - corrected for badge text (≥4.5:1 at 11-12px)
   pass: { fill: '#ECFDF5', border: '#A7F3D0', text: '#047857', icon: '#059669' },
+  compliant: { fill: '#ECFDF5', border: '#A7F3D0', text: '#047857', icon: '#059669' },
   violation: { fill: '#FEF2F2', border: '#FECACA', text: '#B91C1C', icon: '#DC2626' },
   review: { fill: '#FFFBEB', border: '#FDE68A', text: '#B45309', icon: '#D97706' },
   notAssessed: { fill: '#F1F5F9', border: '#CBD5E1', text: '#475569', icon: '#64748B' },
+  outOfScope: { fill: '#F1F5F9', border: '#CBD5E1', text: '#475569', icon: '○' },
   info: { fill: '#F0F9FF', border: '#BAE6FD', text: '#0369A1', icon: '#0284C7' },
 
   // Neutral
@@ -103,26 +105,39 @@ export const shadows = {
   },
 };
 
-// Scan results - 5 states (backend SCAN_RESULTS = compliant/violation/
-// not_assessed/out_of_scope; "success" kept as a legacy alias so older queued
-// rows never render a blank badge).
+// Canonical rule results: Compliant, Violation, Not Assessed, Out of Scope
 export const scanResultConfig = {
-  success: { label: 'Pass', ...colors.pass, icon: '✓' },
-  compliant: { label: 'Pass/Compliant', ...colors.pass, icon: '✓' },
+  compliant: { label: 'Compliant', ...colors.pass, icon: '✓' },
   violation: { label: 'Violation', ...colors.violation, icon: '✗' },
-  not_assessed: { label: 'Not assessed', ...colors.notAssessed, icon: '—' },
-  out_of_scope: { label: 'Out of scope', ...colors.info, icon: '○' },
+  not_assessed: { label: 'Not Assessed', ...colors.notAssessed, icon: '—' },
+  out_of_scope: { label: 'Out of Scope', ...colors.info, icon: '○' },
+  // Aliases for legacy/back-compat payloads
+  success: { label: 'Compliant', ...colors.pass, icon: '✓' },
+  pass: { label: 'Compliant', ...colors.pass, icon: '✓' },
+  fail: { label: 'Violation', ...colors.violation, icon: '✗' },
+  non_compliant: { label: 'Violation', ...colors.violation, icon: '✗' },
   refused: { label: 'Refused', fill: '#FFFBEB', border: '#FDE68A', text: '#B45309', icon: '🚫' },
 };
 
-// Verdict helpers - §2.4 three verdicts, never two
+// Check finding verdict configs
 export const verdictConfig = {
-  pass: { label: 'Pass', ...colors.pass, icon: '✓' },
-  fail: { label: 'Violation', ...colors.violation, icon: '✗' },
-  not_assessed: { label: 'Not assessed', ...colors.notAssessed, icon: '—' },
-  success: { label: 'Success', ...colors.pass, icon: '✓' },
+  compliant: { label: 'Compliant', ...colors.pass, icon: '✓' },
+  pass: { label: 'Compliant', ...colors.pass, icon: '✓' },
   violation: { label: 'Violation', ...colors.violation, icon: '✗' },
-  out_of_scope: { label: 'Out of scope', ...colors.info, icon: '○' },
+  fail: { label: 'Violation', ...colors.violation, icon: '✗' },
+  non_compliant: { label: 'Violation', ...colors.violation, icon: '✗' },
+  not_assessed: { label: 'Not Assessed', ...colors.notAssessed, icon: '—' },
+  out_of_scope: { label: 'Out of Scope', ...colors.info, icon: '○' },
+  success: { label: 'Compliant', ...colors.pass, icon: '✓' },
   review: { label: 'Review', ...colors.review, icon: '!' },
   refused: { label: 'Refused', fill: '#FFFBEB', border: '#FDE68A', text: '#B45309', icon: '🚫' },
+};
+
+// Inspection & Sync Status configs
+export const statusConfig = {
+  in_progress: { label: 'In Progress', fill: '#FFFBEB', border: '#FDE68A', text: '#B45309', icon: '⏳' },
+  draft: { label: 'In Progress', fill: '#FFFBEB', border: '#FDE68A', text: '#B45309', icon: '⏳' },
+  submitted: { label: 'Submitted', ...colors.pass, icon: '✓' },
+  synced: { label: 'Synced', ...colors.pass, icon: '✓' },
+  not_synced: { label: 'Not Synced', fill: '#FFFBEB', border: '#FDE68A', text: '#B45309', icon: '⏳' },
 };

@@ -16,7 +16,7 @@ from config import settings
 from database import get_db
 from models import Inspection, Scan, Store, User
 from rbac import get_current_user, owned_inspection, require_admin, require_inspector
-from schemas import CreateInspectionRequest, CreateScanRequest, SubmitInspectionRequest
+from schemas import CreateInspectionRequest, CreateScanRequest, SubmitInspectionRequest, UpdateInspectionRequest
 from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["inspections"])
@@ -123,6 +123,7 @@ def _inspection_dict(insp: Inspection) -> dict:
                     "observed": f.observed,
                     "required": f.required,
                     "citation": f.citation,
+                    "override_reason": f.override_reason,
                 })
             try:
                 _imgs = sorted(getattr(s, "images", []) or [], key=lambda i: getattr(i, "id", 0))
@@ -141,7 +142,10 @@ def _inspection_dict(insp: Inspection) -> dict:
         "id": insp.id, "store_id": insp.store_id, "user_id": insp.user_id,
         "store_name": store_name,
         "inspection_date": insp.inspection_date.isoformat(),
-        "status": insp.status, "transaction_type": insp.transaction_type,
+        "status": insp.status,
+        "display_status": "Submitted" if insp.status == "submitted" else "In Progress",
+        "sync_status": "Synced",
+        "transaction_type": insp.transaction_type,
         "in_scope": insp.in_scope, "out_of_scope_reason": insp.out_of_scope_reason,
         "geofence_status": insp.geofence_status,
         "geofence_distance_m": insp.geofence_distance_m,
@@ -216,6 +220,7 @@ def _inspection_dict(insp: Inspection) -> dict:
                         "required": f.required,
                         "citation": f.citation,
                         "reason": f.reason,
+                        "override_reason": f.override_reason,
                     }
                     for f in (getattr(s, "findings", []) or [])
                 ],
@@ -465,19 +470,15 @@ def list_inspections(
 def get_inspection(insp: Inspection = Depends(owned_inspection),
                    db: Session = Depends(get_db)):
     d = _inspection_dict(insp)
-    d["scans"] = []
-    for s in insp.scans:
-        _imgs = sorted(getattr(s, "images", []) or [], key=lambda i: getattr(i, "id", 0))
-        d["scans"].append({
-            "id": s.id, "commodity_generic": s.commodity_generic,
-            "brand_name": s.brand_name, "overall_result": s.overall_result,
-            "result": s.overall_result, "verdict": s.overall_result,
-            "checks_assessed": s.checks_assessed, "checks_total": s.checks_total,
-            "checks": s.checks_total, "duplicate_of": s.duplicate_of,
-            "thumbnail_url": (
-                f"/scans/{s.id}/images/{_imgs[0].id}/thumbnail"
-                if _imgs else None),
-        })
+    for s_dict in d.get("scans", []):
+        s_id = s_dict.get("id")
+        s_obj = next((s for s in insp.scans if s.id == s_id), None)
+        if s_obj:
+            _imgs = sorted(getattr(s_obj, "images", []) or [], key=lambda i: getattr(i, "id", 0))
+            s_dict["thumbnail_url"] = (
+                f"/scans/{s_id}/images/{_imgs[0].id}/thumbnail"
+                if _imgs else None
+            )
     return d
 
 
@@ -498,6 +499,50 @@ def submit_inspection(body: SubmitInspectionRequest,
                  action="inspection_submitted", old_value="draft",
                  new_value="submitted", reason=body.notes)
     return _inspection_dict(insp)
+
+
+@router.patch("/inspections/{inspection_id}")
+def update_inspection(inspection_id: int,
+                      body: UpdateInspectionRequest,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    """Update inspection notes (inspector remarks) or signature status.
+    Inspector may update their own inspection; admin can update any."""
+    insp = db.get(Inspection, inspection_id)
+    if insp is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Inspection not found")
+    if user.role != "admin" and insp.user_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not permitted to modify this inspection")
+
+    old_notes = insp.notes
+    if body.notes is not None:
+        insp.notes = body.notes
+        append_audit(db, inspection_id=insp.id, user_id=user.id,
+                     action="inspection_remark_updated",
+                     old_value=old_notes, new_value=body.notes,
+                     reason="Inspector notes/remarks updated")
+    if body.signature_status is not None:
+        insp.signature_status = body.signature_status
+
+    db.commit()
+    db.refresh(insp)
+    return _inspection_dict(insp)
+
+
+@router.get("/rule-info")
+def get_rule_info(user: User = Depends(get_current_user)):
+    """Return active statutory rulebook info for inspector app."""
+    return {
+        "id": "rv-2026-current",
+        "name": "Legal Metrology (Packaged Commodities) Rules, 2011 (As Amended 2026)",
+        "gazette_ref": "G.S.R. 226(E) & 521(E) · Consolidated 2026 Edition",
+        "rules_as_at": settings.RULES_AS_AT,
+        "engine_version": settings.ENGINE_VERSION,
+        "is_active": True,
+        "status": "Active",
+        "total_checks": 19,
+        "summary": "Consolidated rules in force as at 2026-07-01. Governs all 19 algorithmic statutory checks in NiyamNetra including Rule 6(1)(f) Unit Sale Price, Second Schedule standard sizing, and digital e-commerce compliance.",
+    }
 
 
 @router.post("/inspections/{inspection_id}/scans",
@@ -565,7 +610,7 @@ def create_scan(body: CreateScanRequest,
     append_audit(db, inspection_id=insp.id, scan_id=scan.id, user_id=user.id,
                  action="scan_created",
                  new_value=body.commodity_generic or "unidentified")
-    _out = {"scan_id": scan.id, "inspection_id": insp.id,
+    _out = {"id": scan.id, "scan_id": scan.id, "inspection_id": insp.id,
             "overall_result": scan.overall_result,
             "checks_total": scan.checks_total}
     close_idempotent(db, request, user.id, _idem, status.HTTP_201_CREATED, _out)

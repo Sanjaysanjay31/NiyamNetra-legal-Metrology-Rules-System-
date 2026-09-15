@@ -39,10 +39,10 @@ export default function SyncStrip() {
   const bg = !online ? '#FFFBEB' : isSyncing ? '#F0F9FF' : '#F0F9FF';
   const color = !online ? '#92400E' : '#0369A1';
   const label = !online
-    ? `Offline — ${pending} will sync when connected`
+    ? `Sync Status: Not Synced — ${pending} queued offline`
     : isSyncing
-      ? `Syncing ${pending}...`
-      : `${pending} pending${failedCount > 0 ? ` (${failedCount} failed)` : ''} — tap Sync now`;
+      ? `Sync Status: Syncing ${pending} to backend...`
+      : `Sync Status: Not Synced (${pending} pending upload${failedCount > 0 ? `, ${failedCount} failed` : ''})`;
   return (
     <View
       style={{ backgroundColor: bg, padding: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}

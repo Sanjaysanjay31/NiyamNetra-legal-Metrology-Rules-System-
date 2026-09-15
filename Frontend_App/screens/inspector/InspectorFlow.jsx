@@ -56,7 +56,7 @@ export default function InspectorFlow({ navigation }) {
     // any fail -> violation; ALL pass -> compliant; any not_assessed left
     // -> not_assessed. Claiming 'compliant' while checks were never
     // assessed would invent a verdict the evidence does not carry.
-    const failCount = updatedFindings.filter((f) => f.effective_verdict === 'fail').length;
+    const failCount = updatedFindings.filter((f) => f.effective_verdict === 'fail' || f.effective_verdict === 'violation').length;
     const notAssessed = updatedFindings.filter((f) => f.effective_verdict === 'not_assessed').length;
     const rollup = failCount > 0 ? 'violation' : (notAssessed === 0 ? 'compliant' : 'not_assessed');
     const updatedScans = (activeSession.scans || []).map((s) =>

@@ -16,7 +16,7 @@ import Header from '../../components/Header';
 import Card from '../../components/Card';
 import VerdictBadge from '../../components/VerdictBadge';
 import PrimaryButton from '../../components/PrimaryButton';
-import { overrideFinding, assessScan, fetchScanDetails } from '../../api/inspections';
+import { overrideFinding, assessScan, fetchScanDetails, verifyEvidence } from '../../api/inspections';
 
 // The 19 statutory checks under Legal Metrology (Packaged Commodities) Rules 2011
 const STATUTORY_CHECKS_MASTER = [
@@ -235,9 +235,41 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
   const [overrideReason, setOverrideReason] = useState('');
   const [submittingOverride, setSubmittingOverride] = useState(false);
   const [reassessing, setReassessing] = useState(false);
+  const [verifyingEvidence, setVerifyingEvidence] = useState(false);
+  const [evidenceIntegrity, setEvidenceIntegrity] = useState(null);
   const reassessBusyRef = useRef(false);
 
   const scanId = scan?.server_id || (typeof scan?.id === 'number' && scan.id > 0 ? scan.id : null);
+
+  const handleVerifyEvidence = async () => {
+    if (!scanId) {
+      Alert.alert(
+        'Offline Evidence',
+        'This package was recorded locally. SHA-256 evidence integrity will be verified against the server once synchronized.'
+      );
+      return;
+    }
+    setVerifyingEvidence(true);
+    try {
+      const res = await verifyEvidence(scanId);
+      setEvidenceIntegrity(res);
+      if (res?.all_intact) {
+        Alert.alert(
+          'Evidence Integrity Verified',
+          `All ${res.images?.length || 0} panel photo(s) verified.\n\nCryptographic SHA-256 hashes match original stored evidence on disk.`
+        );
+      } else {
+        Alert.alert(
+          'Integrity Status',
+          `Verification complete: ${res.images?.filter((i) => i.sha256_matches).length || 0} of ${res.images?.length || 0} files intact.`
+        );
+      }
+    } catch (err) {
+      Alert.alert('Verification Error', err?.message || 'Could not verify evidence integrity.');
+    } finally {
+      setVerifyingEvidence(false);
+    }
+  };
 
   // Auto-sync fresh findings from server on mount
   useEffect(() => {
@@ -315,7 +347,7 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
         const nCount = formatted.filter((f) => f.effective_verdict === 'not_assessed').length;
         Alert.alert(
           'Assessment Complete',
-          `Server assessment finished.\nResult: ${assessed.overall_result ? assessed.overall_result.toUpperCase() : 'COMPLETED'}\n\n✓ ${pCount} passed • ✗ ${fCount} failed • ${nCount} not assessed`
+          `Server assessment finished.\nResult: ${assessed.overall_result ? assessed.overall_result.toUpperCase() : 'COMPLETED'}\n\n✓ ${pCount} Compliant • ✗ ${fCount} Violation • ${nCount} Not Assessed`
         );
       }
     } catch (err) {
@@ -335,20 +367,17 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
 
   const handleOpenOverride = (f) => {
     setSelectedFinding(f);
-    setOverrideVerdict(f.effective_verdict === 'pass' ? 'fail' : 'pass');
-    setOverrideReason('');
+    setOverrideVerdict(f.effective_verdict || f.engine_verdict || 'pass');
+    setOverrideReason(f.override_reason || '');
   };
 
   const handleSaveOverride = async () => {
-    if (overrideReason.trim().length < 10) {
-      Alert.alert('Justification Required', 'Statutory audit requires an override reason of at least 10 characters.');
+    if (!overrideReason.trim()) {
+      Alert.alert('Remark Required', 'Please provide an inspector remark or justification before saving.');
       return;
     }
 
     setSubmittingOverride(true);
-    // Local application of the edit. For a server-backed finding this runs
-    // only AFTER the server confirms; applying it in a catch-all error branch
-    // used to show overrides the audit trail never received.
     const applyLocal = () => {
       const updated = findings.map((item) =>
         item.check_id === selectedFinding.check_id
@@ -371,39 +400,30 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
       if (selectedFinding.server_id) {
         try {
           await overrideFinding(selectedFinding.server_id, overrideVerdict, overrideReason.trim());
+          Alert.alert('Remark Saved', 'Inspector remark and finding verdict successfully updated on the server.');
         } catch (e) {
           const status = e?.status ?? e?.response?.status;
-          if (status === 403 || e?.code === 'FORBIDDEN') {
-            // PATCH /admin/findings/{id} is admin-only (routers/admin.py).
-            // An inspector override can never succeed silently: say who must
-            // apply it instead of faking a save that the server refused.
+          if (status === 409) {
             Alert.alert(
-              'Admin approval required',
-              'Verdict overrides are recorded on the server by an administrator. '
-              + 'Your justification was NOT saved — ask an admin to apply this '
-              + 'override from the portal review queue.',
+              'Inspection Submitted',
+              'This inspection has been submitted and sealed. Remarks cannot be altered.',
             );
             return;
           }
           if (status) {
-            // The server understood and refused (409 frozen inspection, 422
-            // validation, …). A rejected write must not be shown as saved.
             Alert.alert(
-              'Override rejected',
-              String(e?.response?.data?.detail || e?.message || 'The server refused this override.'),
+              'Update Refused',
+              String(e?.response?.data?.detail || e?.message || 'The server refused this update.'),
             );
             return;
           }
-          // No status = network failure/timeout. Keep the override in the
-          // local session (offline-first), but state plainly that it is not
-          // on the server yet.
           Alert.alert(
-            'Saved on this device only',
-            'The server could not be reached. This override is recorded in the '
-            + 'local session only and will not appear in the audit trail until '
-            + 'it is applied server-side.',
+            'Saved Locally',
+            'The server could not be reached. Your remark is saved locally and will synchronize when connected.',
           );
         }
+      } else {
+        Alert.alert('Saved Locally', 'Your remark is recorded for this package and will be uploaded upon synchronization.');
       }
       applyLocal();
     } finally {
@@ -441,20 +461,20 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
           </View>
 
           <View style={[styles.rowAlign, { marginTop: spacing.md, flexWrap: 'wrap', gap: 6 }]}>
-            <View style={[styles.statBadge, { backgroundColor: colors.pass.fill, borderColor: colors.pass.border }]}>
-              <Text style={[styles.statBadgeText, { color: colors.pass.text }]}>✓ {passCount} Compliant</Text>
+            <View style={[styles.statBadge, { backgroundColor: colors.pass?.fill || '#ECFDF5', borderColor: colors.pass?.border || '#A7F3D0' }]}>
+              <Text style={[styles.statBadgeText, { color: colors.pass?.text || '#047857' }]}>✓ {passCount} Compliant</Text>
             </View>
             {failCount > 0 && (
               <View
                 style={[
                   styles.statBadge,
-                  { backgroundColor: colors.violation.fill, borderColor: colors.violation.border },
+                  { backgroundColor: colors.violation?.fill || '#FEF2F2', borderColor: colors.violation?.border || '#FECACA' },
                 ]}
               >
                 <Text
                   style={[
                     styles.statBadgeText,
-                    { color: colors.violation.text },
+                    { color: colors.violation?.text || '#B91C1C' },
                   ]}
                 >
                   ⚠️ {failCount} Violations
@@ -465,13 +485,13 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
               <View
                 style={[
                   styles.statBadge,
-                  { backgroundColor: colors.notAssessed.fill, borderColor: colors.notAssessed.border },
+                  { backgroundColor: colors.notAssessed?.fill || '#F1F5F9', borderColor: colors.notAssessed?.border || '#CBD5E1' },
                 ]}
               >
                 <Text
                   style={[
                     styles.statBadgeText,
-                    { color: colors.notAssessed.text },
+                    { color: colors.notAssessed?.text || '#475569' },
                   ]}
                 >
                   ⏳ {notAssessedCount} Pending
@@ -516,8 +536,52 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
           />
         </View>
 
+        {/* Evidence Integrity Card (SHA-256) */}
+        <Card padding="md" style={styles.integrityCard}>
+          <View style={styles.rowBetween}>
+            <View style={{ flex: 1, marginRight: spacing.sm }}>
+              <View style={styles.rowAlign}>
+                <Text style={styles.integrityTitle}>🔒 Evidence Integrity (SHA-256)</Text>
+              </View>
+              <Text style={styles.integritySub}>
+                {evidenceIntegrity
+                  ? `${evidenceIntegrity.images?.filter((i) => i.sha256_matches).length || 0} of ${evidenceIntegrity.images?.length || 0} panel photo(s) match cryptographic hash`
+                  : 'Verify cryptographic evidence chain for this package'}
+              </Text>
+            </View>
+            <Pressable
+              onPress={handleVerifyEvidence}
+              disabled={verifyingEvidence}
+              style={styles.verifyBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Verify evidence integrity"
+            >
+              {verifyingEvidence ? (
+                <ActivityIndicator size="small" color={colors.netraTeal} />
+              ) : (
+                <Text style={styles.verifyBtnText}>Verify Evidence</Text>
+              )}
+            </Pressable>
+          </View>
+          {evidenceIntegrity?.images && evidenceIntegrity.images.length > 0 && (
+            <View style={styles.hashList}>
+              {evidenceIntegrity.images.map((img, i) => (
+                <View key={i} style={styles.hashItem}>
+                  <Text style={styles.hashLabel}>{img.panel_type ? img.panel_type.toUpperCase() : `PANEL ${i + 1}`}:</Text>
+                  <Text style={styles.hashCode} numberOfLines={1} ellipsizeMode="middle">
+                    {img.sha256_hash ? `${img.sha256_hash.slice(0, 16)}…` : 'Pending'}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: img.sha256_matches ? colors.pass.text : colors.violation.text, fontWeight: '700' }}>
+                    {img.sha256_matches ? '✓ Intact' : '⚠️ Mismatch'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </Card>
+
         {/* List of 19 Checks */}
-        <Text style={styles.sectionTitle}>CHECKLIST BREAKDOWN (RULE 6 & 9)</Text>
+        <Text style={styles.sectionTitle}>CHECKLIST BREAKDOWN (19 STATUTORY CHECKS)</Text>
         {findings.map((f) => {
           return (
             <Card key={f.check_id} padding="md" style={styles.findingCard}>
@@ -548,23 +612,23 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
                     <Text style={{ fontSize: 11, color: colors.violation.text }}>{f.reason}</Text>
                   </View>
                 )}
-                {f.human_verdict && (
+                {(f.human_verdict || f.override_reason) && (
                   <View style={styles.overrideNotice}>
                     <Text style={styles.overrideNoticeText}>
-                      👤 Officer Override ({f.human_verdict.toUpperCase()}): {f.override_reason}
+                      📝 Inspector Remark ({f.human_verdict ? f.human_verdict.replace('_', ' ').toUpperCase() : 'NOTE'}): {f.override_reason}
                     </Text>
                   </View>
                 )}
               </View>
 
-              {/* Override Button */}
+              {/* Remark / Override Button */}
               <View style={styles.cardActions}>
                 <Pressable
                   onPress={() => handleOpenOverride(f)}
                   style={styles.overrideBtn}
                   hitSlop={6}
                 >
-                  <Text style={styles.overrideBtnText}>⚙️ Override Verdict…</Text>
+                  <Text style={styles.overrideBtnText}>📝 Add Remark / Review Verdict →</Text>
                 </Pressable>
               </View>
             </Card>
@@ -575,48 +639,72 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
         <View style={{ height: spacing.xl }} />
       </ScrollView>
 
-      {/* Officer Override Modal */}
+      {/* Inspector Review & Remarks Modal */}
       <Modal visible={!!selectedFinding} animationType="slide" transparent onRequestClose={() => setSelectedFinding(null)}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalSheet, { paddingBottom: safeBottom + spacing.lg }]}>
-            <Text style={styles.modalTitle}>Officer Finding Override</Text>
+            <Text style={styles.modalTitle}>Inspector Review & Remarks</Text>
             <Text style={styles.modalSub}>
               {selectedFinding?.check_id}: {selectedFinding?.title}
             </Text>
 
-            <Text style={[styles.sectionTitle, { marginTop: spacing.md }]}>NEW VERDICT</Text>
-            <View style={styles.verdictRow}>
+            <Text style={[styles.sectionTitle, { marginTop: spacing.md }]}>RULE RESULT</Text>
+            <View style={styles.verdictGrid}>
               <Pressable
                 onPress={() => setOverrideVerdict('pass')}
                 style={[
                   styles.verdictBtn,
-                  overrideVerdict === 'pass' && {
-                    backgroundColor: colors.pass.fill,
-                    borderColor: colors.pass.border,
+                  (overrideVerdict === 'pass' || overrideVerdict === 'compliant') && {
+                    backgroundColor: colors.pass?.fill || '#ECFDF5',
+                    borderColor: colors.pass?.border || '#A7F3D0',
                   },
                 ]}
               >
-                <Text style={{ color: colors.pass.text, fontWeight: '700' }}>✓ Compliant (Pass)</Text>
+                <Text style={{ color: colors.pass?.text || '#047857', fontWeight: '700', fontSize: 12 }}>✓ Compliant</Text>
               </Pressable>
               <Pressable
                 onPress={() => setOverrideVerdict('fail')}
                 style={[
                   styles.verdictBtn,
-                  overrideVerdict === 'fail' && {
-                    backgroundColor: colors.violation.fill,
-                    borderColor: colors.violation.border,
+                  (overrideVerdict === 'fail' || overrideVerdict === 'violation') && {
+                    backgroundColor: colors.violation?.fill || '#FEF2F2',
+                    borderColor: colors.violation?.border || '#FECACA',
                   },
                 ]}
               >
-                <Text style={{ color: colors.violation.text, fontWeight: '700' }}>⚠️ Violation (Fail)</Text>
+                <Text style={{ color: colors.violation?.text || '#B91C1C', fontWeight: '700', fontSize: 12 }}>⚠️ Violation</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setOverrideVerdict('not_assessed')}
+                style={[
+                  styles.verdictBtn,
+                  overrideVerdict === 'not_assessed' && {
+                    backgroundColor: colors.notAssessed?.fill || '#F1F5F9',
+                    borderColor: colors.notAssessed?.border || '#CBD5E1',
+                  },
+                ]}
+              >
+                <Text style={{ color: colors.notAssessed?.text || '#475569', fontWeight: '700', fontSize: 12 }}>⏳ Not Assessed</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setOverrideVerdict('out_of_scope')}
+                style={[
+                  styles.verdictBtn,
+                  overrideVerdict === 'out_of_scope' && {
+                    backgroundColor: colors.outOfScope?.fill || '#F1F5F9',
+                    borderColor: colors.outOfScope?.border || '#CBD5E1',
+                  },
+                ]}
+              >
+                <Text style={{ color: colors.outOfScope?.text || '#475569', fontWeight: '700', fontSize: 12 }}>⚪ Out of Scope</Text>
               </Pressable>
             </View>
 
             <Text style={[styles.sectionTitle, { marginTop: spacing.md }]}>
-              STATUTORY JUSTIFICATION (MIN 10 CHARS)
+              INSPECTOR REMARK / CLARIFICATION
             </Text>
             <TextInput
-              placeholder="State clear legal reasoning for overriding automated engine verdict…"
+              placeholder="State inspector remarks, observations, or legal justification for this finding…"
               placeholderTextColor={colors.placeholder}
               value={overrideReason}
               onChangeText={setOverrideReason}
@@ -634,7 +722,7 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
               </Pressable>
               <View style={{ flex: 1 }}>
                 <PrimaryButton
-                  title={submittingOverride ? 'Saving…' : 'Record Override'}
+                  title={submittingOverride ? 'Saving…' : 'Save Remark & Verdict'}
                   onPress={handleSaveOverride}
                   disabled={submittingOverride}
                 />
@@ -783,19 +871,76 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
-  verdictRow: {
+  verdictGrid: {
     flexDirection: 'row',
-    gap: spacing.sm,
+    flexWrap: 'wrap',
+    gap: spacing.xs,
     marginTop: spacing.xs,
   },
   verdictBtn: {
-    flex: 1,
+    flexBasis: '48%',
+    flexGrow: 1,
     paddingVertical: 10,
     alignItems: 'center',
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.white,
+  },
+  integrityCard: {
+    marginBottom: spacing.md,
+    backgroundColor: '#F8FAFC',
+    borderColor: colors.borderLight,
+    borderWidth: 1,
+  },
+  integrityTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.niyamBlue,
+  },
+  integritySub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  verifyBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    backgroundColor: '#CCFBF1',
+    borderWidth: 1,
+    borderColor: colors.netraTeal,
+  },
+  verifyBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.netraTeal,
+  },
+  hashList: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+    gap: 4,
+  },
+  hashItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  hashLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textMuted,
+    width: 75,
+  },
+  hashCode: {
+    fontSize: 10,
+    fontFamily: 'monospace',
+    color: colors.textSecondary,
+    flex: 1,
+    marginHorizontal: 4,
   },
   reasonInput: {
     borderWidth: 1,

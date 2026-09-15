@@ -39,6 +39,7 @@ export default function InspectionSummaryScreen({
   const [witnessDetails, setWitnessDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submittedId, setSubmittedId] = useState(null);
+  const [isLiveSubmitted, setIsLiveSubmitted] = useState(false);
 
   const packages = inspectionSession?.scans || [];
   const compliantCount = packages.filter((p) => p.overall_result === 'compliant').length;
@@ -89,6 +90,7 @@ export default function InspectionSummaryScreen({
             notes: officerNotes || (isRefusal ? 'Merchant refused inspection access under Legal Metrology Act.' : null),
           });
           liveSubmitted = true;
+          setIsLiveSubmitted(true);
         } catch (subErr) {
           console.warn('[Summary] Live submit failed, enqueuing for sync:', subErr?.message || subErr);
         }
@@ -156,15 +158,23 @@ export default function InspectionSummaryScreen({
               <Text style={styles.summaryLabel}>Establishment:</Text>
               <Text style={styles.summaryValue}>{inspectionSession?.store?.name}</Text>
             </View>
-            <View style={[styles.rowBetween, { marginTop: 6 }]}>
+            <View style={[styles.rowBetween, { marginTop: 8 }]}>
+              <Text style={styles.summaryLabel}>Inspection Status:</Text>
+              <VerdictBadge status="submitted" />
+            </View>
+            <View style={[styles.rowBetween, { marginTop: 8 }]}>
+              <Text style={styles.summaryLabel}>Sync Status:</Text>
+              <VerdictBadge status={isLiveSubmitted ? 'synced' : 'not_synced'} />
+            </View>
+            <View style={[styles.rowBetween, { marginTop: 8 }]}>
               <Text style={styles.summaryLabel}>Packages Assessed:</Text>
               <Text style={styles.summaryValue}>{packages.length}</Text>
             </View>
-            <View style={[styles.rowBetween, { marginTop: 6 }]}>
-              <Text style={styles.summaryLabel}>Final Verdict:</Text>
-              <VerdictBadge result={isRefusal ? 'refused' : overallInspectionVerdict} />
+            <View style={[styles.rowBetween, { marginTop: 8 }]}>
+              <Text style={styles.summaryLabel}>Rule Result:</Text>
+              <VerdictBadge result={isRefusal ? 'violation' : overallInspectionVerdict} />
             </View>
-            <View style={[styles.rowBetween, { marginTop: 6 }]}>
+            <View style={[styles.rowBetween, { marginTop: 8 }]}>
               <Text style={styles.summaryLabel}>Merchant Signature:</Text>
               <Text style={styles.summaryValue}>{signatureStatus.toUpperCase()}</Text>
             </View>
@@ -196,7 +206,10 @@ export default function InspectionSummaryScreen({
                 {inspectionSession?.store?.address || inspectionSession?.store?.city || 'Telangana'} • {inspectionSession?.transaction_type}
               </Text>
             </View>
-            <VerdictBadge result={isRefusal ? 'refused' : overallInspectionVerdict} />
+            <View style={{ alignItems: 'flex-end', gap: 4 }}>
+              <VerdictBadge status="in_progress" size="sm" />
+              <VerdictBadge result={isRefusal ? 'violation' : overallInspectionVerdict} size="sm" />
+            </View>
           </View>
 
           {/* Counts */}
@@ -247,7 +260,7 @@ export default function InspectionSummaryScreen({
                     Batch: {pkg.batch_number || 'N/A'}
                   </Text>
                 </View>
-                <VerdictBadge result={pkg.overall_result || 'compliant'} />
+                <VerdictBadge result={pkg.overall_result || 'not_assessed'} />
               </View>
             ))
           )}

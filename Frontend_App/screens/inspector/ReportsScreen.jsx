@@ -245,7 +245,7 @@ export default function ReportsScreen({ navigation }) {
             {/* Stats row with 4 cards including Refusals */}
             <View style={{ flexDirection: 'row', marginTop: spacing.lg, marginBottom: spacing.lg }}>
               <StatCard label="Inspections" value={currentStats.inspections} />
-              <StatCard label="Success" value={currentStats.success} color={colors.pass.text} />
+              <StatCard label="Compliant" value={currentStats.success} color={colors.pass.text} />
               <StatCard label="Violations" value={currentStats.violations} color={colors.violation.text} alert={currentStats.violations > 0} />
               <StatCard label="Refusals" value={currentStats.refusals} color={colors.review.text} alert={currentStats.refusals > 0} />
             </View>
@@ -377,7 +377,7 @@ export default function ReportsScreen({ navigation }) {
                 onSelect={setOutcomeFilter}
                 options={[
                   { key: 'all', label: `All (${periodRows.length})` },
-                  { key: 'success', label: `Pass (${currentStats.success})` },
+                  { key: 'success', label: `Compliant (${currentStats.success})` },
                   { key: 'violation', label: `Violations (${currentStats.violations})` },
                   { key: 'refused', label: `Refusals (${currentStats.refusals})` },
                 ]}
@@ -395,7 +395,8 @@ export default function ReportsScreen({ navigation }) {
                 const isRefusal = item.signature_status === 'refused' || item.is_refusal || String(item.result || item.overall_result || '').toLowerCase() === 'refused';
                 const dateStr = itemDay(item);
                 const storeName = item.store_name || item.store?.name || 'Retail Establishment';
-                const verdict = isRefusal ? 'refused' : (item.overall_result || item.result || 'not_assessed');
+                const verdict = isRefusal ? 'violation' : (item.overall_result || item.result || 'not_assessed');
+                const isSubmitted = item.status === 'submitted' || item.display_status === 'Submitted';
                 return (
                   <Card key={item.id || item.client_uuid} padding="md" style={{ marginTop: spacing.sm }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -412,7 +413,10 @@ export default function ReportsScreen({ navigation }) {
                           </Text>
                         )}
                       </View>
-                      <VerdictBadge result={verdict} />
+                      <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                        <VerdictBadge status={isSubmitted ? 'submitted' : 'in_progress'} size="sm" />
+                        <VerdictBadge result={verdict} size="sm" />
+                      </View>
                     </View>
                   </Card>
                 );

@@ -6,7 +6,7 @@
 # Prefer clicking through the dashboard instead? Create a Web Service with:
 #   Root Directory : Backend
 #   Build Command  : pip install -r requirements-render.txt
-#   Start Command  : uvicorn main:app --host 0.0.0.0 --port $PORT
+#   Start Command  : alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT
 #   Health Check   : /health
 # The $PORT binding is not optional — Render kills any service that listens on a
 # fixed port instead of the one it injects.
@@ -18,7 +18,7 @@ services:
     plan: free
     rootDir: Backend
     buildCommand: pip install -r requirements-render.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: true
     envVars:
@@ -38,9 +38,9 @@ services:
       - key: PUBLIC_BASE_URL
         sync: false
 
-      # Strict CORS regex for production (e.g. ^https://.*\.vercel\.app$).
+      # Strict CORS regex for production (permits Vercel, Render portal/app, and Expo).
       - key: CORS_ORIGIN_REGEX_PROD
-        value: "^https://.*\\.vercel\\.app$"
+        value: "^(https?://([a-zA-Z0-9_-]+\\.)*(vercel\\.app|onrender\\.com)(:[0-9]+)?|exp://.*)$"
 
       # Supabase connection URI. Paste in the dashboard — never commit it.
       #
