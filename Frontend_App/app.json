@@ -2,7 +2,7 @@
   "expo": {
     "name": "NiyamNetra",
     "slug": "niyamnetra-app",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -33,7 +33,7 @@
         "backgroundColor": "#0F2A44"
       },
       "package": "com.niyamnetra.app",
-      "versionCode": 1,
+      "versionCode": 4,
       "permissions": [
         "CAMERA",
         "ACCESS_FINE_LOCATION",
@@ -47,8 +47,19 @@
       ]
     },
     "plugins": [
-      "expo-build-properties",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24
+          }
+        }
+      ],
       "./plugins/withCleartextTraffic",
+      "./plugins/withAllowScreenCapture",
+      "./plugins/withCameraTexturePreview",
+      "./plugins/withAndroidReleaseSigning",
+      "./plugins/withAndroidAbis",
       [
         "expo-camera",
         {

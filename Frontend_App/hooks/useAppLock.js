@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
+import { allowScreenCapture } from './useAllowScreenCapture';
 
 // Minimal background app-lock: when the app returns from background, ask for
 // biometrics/PIN when expo-local-authentication is available. Graceful no-op
@@ -32,7 +33,14 @@ export function useAppLock({ enabled = true } = {}) {
         });
         // A failed/cancelled auth keeps the app open but the session intact:
         // inspection evidence must never be held hostage by a biometric miss.
-      } catch { /* graceful no-op */ }
+      } catch { /* graceful no-op */ } finally {
+        // The biometric prompt runs in its own window, and on some OEM builds
+        // (MIUI / ColorOS) closing it leaves Android FLAG_SECURE on this
+        // activity — which blacks out every frame of the screen recording for
+        // the rest of the demo. Re-assert the allow-capture policy the moment
+        // the prompt is gone, whatever the outcome was.
+        try { await allowScreenCapture(); } catch { /* never block the unlock */ }
+      }
     });
     return () => { cancelled = true; try { sub.remove(); } catch {} };
   }, [enabled]);

@@ -10,6 +10,7 @@ import InspectorTabs from './navigation/InspectorTabs';
 import AdminTabs from './navigation/AdminTabs';
 import WebPhoneWrapper from './components/WebPhoneWrapper';
 import { colors } from './theme';
+import { useAllowScreenCapture, allowScreenCapture } from './hooks/useAllowScreenCapture';
 
 const Stack = createNativeStackNavigator();
 
@@ -81,7 +82,11 @@ function Root() {
   if (isLoading) return <Splash />;
 
   return (
-    <NavigationContainer>
+    // onStateChange re-asserts the allow-capture policy on every navigation, so
+    // a flag set by a screen that is still mounted (or left behind by an older
+    // build of this app) can never outlive the transition. See
+    // hooks/useAllowScreenCapture.js for the full story.
+    <NavigationContainer onStateChange={allowScreenCapture}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!role ? (
           <Stack.Screen name="Login" component={LoginScreen} />
@@ -96,6 +101,11 @@ function Root() {
 }
 
 export default function App() {
+  // Screen recording/screenshots are always allowed (the SIH demo is recorded).
+  // Nothing in this app ever sets Android FLAG_SECURE; this hook clears it on
+  // startup and on every return to the foreground.
+  useAllowScreenCapture();
+
   return (
     <ErrorBoundary>
       <WebPhoneWrapper>

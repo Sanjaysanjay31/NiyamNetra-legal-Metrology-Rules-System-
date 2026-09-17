@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   StyleSheet,
   TextInput,
-  Platform,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { colors, spacing, typography, radius, shadows } from '../../theme';
@@ -19,6 +18,7 @@ import PrimaryButton from '../../components/PrimaryButton';
 import VerdictBadge from '../../components/VerdictBadge';
 import { enqueueInspection, enqueueScan } from '../../offline/queue';
 import { useAppLock } from '../../hooks/useAppLock';
+import { useAllowScreenCapture } from '../../hooks/useAllowScreenCapture';
 import {
   createStore,
   createInspection,
@@ -27,9 +27,6 @@ import {
   updateScanScope,
   assessScan,
 } from '../../api/inspections';
-
-let ScreenCapture = null;
-try { ScreenCapture = require('expo-screen-capture'); } catch { ScreenCapture = null; }
 
 let ImageManipulator = null;
 try { ImageManipulator = require('expo-image-manipulator'); } catch { ImageManipulator = null; }
@@ -119,30 +116,37 @@ export default function InspectionSessionScreen({
   const assessingRef = useRef(false);
   useAppLock({ enabled: true });
 
-  // Screen capture protection
-  useEffect(() => {
-    let active = false;
-    (async () => {
-      try {
-        if (ScreenCapture?.preventScreenCaptureAsync) {
-          await ScreenCapture.preventScreenCaptureAsync();
-          active = true;
-        }
-      } catch {}
-    })();
-    return () => {
-      if (active) ScreenCapture?.allowScreenCaptureAsync?.().catch?.(() => {});
-    };
-  }, []);
+  // The evidence-capture surface must stay screen-recordable: this re-clears
+  // Android FLAG_SECURE on mount and on every app resume, and never sets it.
+  // (The screen previously called preventScreenCaptureAsync, which blacked out
+  // the recording of EVERY screen until the app was force-stopped.)
+  useAllowScreenCapture();
+
+  // Viewfinder status — the preview surface is black by nature, so before the
+  // first frame (or when the OS refuses the camera) the officer would otherwise
+  // stare at a featureless black card.
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
 
   const handleCapturePhoto = async () => {
     if (!cameraRef.current || capturing) return;
+    if (cameraError) {
+      Alert.alert('Camera unavailable', cameraError);
+      return;
+    }
+    if (!cameraReady) {
+      Alert.alert('Camera starting', 'The camera is still starting up. Please try again in a moment.');
+      return;
+    }
     setCapturing(true);
     try {
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.8,
-        skipProcessing: Platform.OS === 'android',
-      });
+      // No `skipProcessing`: the camera's processing pipeline is what physically
+      // applies the EXIF orientation. Skipping it returns an image that only
+      // carries the orientation tag, which React Native's <Image> ignores (the
+      // thumbnail looks rotated) and the server's OCR does not read either (no
+      // orientation detection on the backend) — so evidence could be stored
+      // sideways and read as sideways text.
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
       if (photo?.uri) {
         let finalUri = photo.uri;
         // Fast client-side image compression down to 1600px width (drops 10MB to ~300KB)
@@ -553,7 +557,7 @@ export default function InspectionSessionScreen({
             </View>
           ) : panelPhotos[activePanel] ? (
             <View style={styles.previewBox}>
-              <Image source={{ uri: panelPhotos[activePanel] }} style={styles.previewImage} />
+              <Image source={{ uri: panelPhotos[activePanel] }} style={styles.previewImage} resizeMode="cover" />
               <View style={styles.previewOverlay}>
                 <Text style={styles.previewLabel}>{PANELS.find((p) => p.key === activePanel)?.label} Captured</Text>
                 <Pressable
@@ -566,9 +570,32 @@ export default function InspectionSessionScreen({
             </View>
           ) : (
             <View style={styles.cameraBox}>
-              <CameraView ref={cameraRef} style={styles.cameraView} facing="back" />
+              <CameraView
+                ref={cameraRef}
+                style={styles.cameraView}
+                facing="back"
+                onCameraReady={() => setCameraReady(true)}
+                onMountError={(e) => setCameraError(e?.message || 'The camera could not be started on this device.')}
+              />
+              {/* Viewfinder status. Without it a preview that is slow to open —
+                  or a camera the OS refuses — is a plain black rectangle, which
+                  is what makes a screen-recorded demo look "hidden". */}
+              {!cameraReady && !cameraError && (
+                <View style={styles.cameraStatusOverlay} pointerEvents="none">
+                  <ActivityIndicator color={colors.saffron} />
+                  <Text style={styles.cameraStatusText}>Starting camera…</Text>
+                </View>
+              )}
+              {!!cameraError && (
+                <View style={styles.cameraStatusOverlay}>
+                  <Text style={styles.cameraStatusText}>{cameraError}</Text>
+                  <Text style={[styles.cameraStatusText, styles.cameraStatusHint]}>
+                    Retake after closing other camera apps, or record the reading manually.
+                  </Text>
+                </View>
+              )}
               {/* Guidance overlay bracket */}
-              <View style={styles.bracketOverlay}>
+              <View style={styles.bracketOverlay} pointerEvents="none">
                 <View style={styles.bracketGuide}>
                   <Text style={styles.bracketGuideText}>
                     Align {PANELS.find((p) => p.key === activePanel)?.label} within frame
@@ -579,10 +606,11 @@ export default function InspectionSessionScreen({
               <View style={styles.shutterBar}>
                 <Pressable
                   onPress={handleCapturePhoto}
-                  disabled={capturing}
-                  style={styles.shutterBtn}
+                  disabled={capturing || !cameraReady || !!cameraError}
+                  style={[styles.shutterBtn, (!cameraReady || !!cameraError) && styles.shutterBtnDisabled]}
                   accessibilityRole="button"
                   accessibilityLabel="Capture photo"
+                  accessibilityState={{ disabled: capturing || !cameraReady || !!cameraError }}
                 >
                   {capturing ? (
                     <ActivityIndicator color={colors.white} />
@@ -825,6 +853,31 @@ const styles = StyleSheet.create({
   cameraView: {
     flex: 1,
   },
+  // Status placed over the black viewfinder: "Starting camera…" until the first
+  // frame, and the failure reason when the camera cannot start at all.
+  cameraStatusOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  cameraStatusText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: spacing.xs,
+  },
+  cameraStatusHint: {
+    fontSize: 10.5,
+    fontWeight: '400',
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: spacing.xs,
+  },
+  shutterBtnDisabled: {
+    opacity: 0.4,
+  },
   bracketOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
@@ -880,7 +933,10 @@ const styles = StyleSheet.create({
   previewImage: {
     width: '100%',
     height: '100%',
-    resizeMode: 'cover',
+    // NOTE: resizeMode is a PROP on <Image>, not a style key. React Native
+    // 0.81 silently ignores it here, which left the evidence preview showing at
+    // the wrong scale inside the fixed-height viewfinder card. The prop is set
+    // where the image is rendered.
   },
   previewOverlay: {
     position: 'absolute',

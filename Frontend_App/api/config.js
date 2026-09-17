@@ -2,10 +2,13 @@
 // NIYAMNETRA BACKEND CONFIGURATION (EDIT HERE BEFORE RUNNING)
 // ============================================================================
 // 1. Target mode: 'lan' for local laptop on Wi-Fi, or 'render' for cloud backend
-export const ACTIVE_BACKEND = 'lan'; // 'lan' | 'render'
+export const ACTIVE_BACKEND = 'render'; // 'lan' | 'render'
 
 // 2. Your Laptop Wi-Fi IPv4 Address (find by running `ipconfig` in terminal)
-export const LAPTOP_WIFI_IP = '10.50.7.235';
+// NOTE: this laptop has VMware adapters too (192.168.32.1 / 192.168.52.1) — the
+// Wi-Fi adapter is the one to use, and it CHANGES with every network, so re-run
+// `ipconfig` after switching Wi-Fi and update this line.
+export const LAPTOP_WIFI_IP = '192.168.101.72';
 
 // 3. Backend port
 export const API_PORT = 8000;
@@ -19,6 +22,18 @@ import { Platform, NativeModules } from 'react-native';
 export const EVIDENCE_MIN_FREE_GB = 5;
 export const EVIDENCE_MIN_FREE_BYTES = EVIDENCE_MIN_FREE_GB * 1024 ** 3;
 export const LOCAL_API_URL = 'http://127.0.0.1:8000';
+
+// ---------------------------------------------------------------------------
+// Screen capture / recording policy for the field app.
+// ---------------------------------------------------------------------------
+// true  = screenshots and screen recording always work (the SIH demo is
+//         recorded, so this is the shipping setting). Nothing in the app sets
+//         Android FLAG_SECURE while this is true — see
+//         hooks/useAllowScreenCapture.js and plugins/withAllowScreenCapture.js.
+// false = deliberate opt-in to blocking capture: on Android the app would be
+//         recorded as a black screen and OEM recorders show "cannot record due
+//         to security reasons". Never set this for a demo build.
+export const ALLOW_SCREEN_CAPTURE = true;
 
 // Host resolution for LAN mode
 function resolveHost() {
@@ -125,11 +140,10 @@ export function targetOf(url) {
 }
 
 export async function loadSavedTarget() {
-  try {
-    const { getItem } = await import('../auth/secureStore');
-    const saved = await getItem(TARGET_KEY);
-    if (saved && BACKEND_TARGETS[saved]) return saved;
-  } catch { /* storage unavailable */ }
+  // The backend is PINNED to ACTIVE_BACKEND (top of this file). The on-screen
+  // server-target switcher was removed from the login screen, so a stale
+  // 'lan' choice saved on a phone must never silently take over the URL.
+  // Point ACTIVE_BACKEND at 'lan' to test against a laptop backend again.
   return ACTIVE_BACKEND;
 }
 

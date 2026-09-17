@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, Pressable, ScrollView, Alert, Image, Platform, ActivityIndicator, StatusBar } from 'react-native';
+import { View, Text, Pressable, ScrollView, Alert, Image, Platform, ActivityIndicator, StatusBar, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { colors, spacing, typography, radius, shadows } from '../../theme';
@@ -10,16 +10,15 @@ import Input from '../../components/Input';
 import { enqueueInspection } from '../../offline/queue';
 import { fetchStores } from '../../api/admin';
 import { useAppLock } from '../../hooks/useAppLock';
+import { useAllowScreenCapture } from '../../hooks/useAllowScreenCapture';
 import { getItem, setItem } from '../../auth/secureStore';
 
-// expo-location / expo-screen-capture / FileSystem are optional at runtime:
-// each import is guarded so a missing native module degrades to manual entry
-// instead of a crash. 11 §2.4 — never crash on a missing optional dep.
+// expo-location / FileSystem are optional at runtime: each import is guarded so
+// a missing native module degrades to manual entry instead of a crash.
+// 11 §2.4 — never crash on a missing optional dep.
 let Location = null;
-let ScreenCapture = null;
 let LegacyFS = null;
 try { Location = require('expo-location'); } catch { Location = null; }
-try { ScreenCapture = require('expo-screen-capture'); } catch { ScreenCapture = null; }
 try { LegacyFS = require('expo-file-system/legacy'); } catch { LegacyFS = null; }
 
 let EVIDENCE_MIN_FREE_BYTES = 5 * 1024 ** 3;
@@ -60,6 +59,12 @@ export default function ScanScreen({ navigation }) {
   const [transactionType, setTransactionType] = useState(null);
   const [photos, setPhotos] = useState([]);
   const [capturing, setCapturing] = useState(false);
+  // Viewfinder status. The preview surface is black by nature, so before the
+  // first frame — or when the OS/another app refuses the camera — the officer
+  // (and the recorded demo) would stare at a featureless black screen with no
+  // explanation. Same pattern as InspectionSessionScreen / NewInspectionScreen.
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
   // Never invent a pass/fail verdict on-device. The server assesses the
   // inspection; locally we only track whether the capture was queued.
   // 'queued' means the inspection is stored and awaiting a server verdict.
@@ -80,24 +85,9 @@ export default function ScanScreen({ navigation }) {
 
   const cameraRef = useRef(null);
   useAppLock({ enabled: true });
-
-  // Prevent screenshots/screen recording on capture + review surfaces.
-  useEffect(() => {
-    let active = false;
-    (async () => {
-      try {
-        if ((step === 'camera' || step === 'review') && ScreenCapture?.preventScreenCaptureAsync) {
-          await ScreenCapture.preventScreenCaptureAsync();
-          active = true;
-        }
-      } catch { /* graceful no-op */ }
-    })();
-    return () => {
-      if (active) {
-        ScreenCapture?.allowScreenCaptureAsync?.().catch?.(() => {});
-      }
-    };
-  }, [step]);
+  // Capture + review surfaces must be screen-recordable (SIH demo) — this
+  // re-clears FLAG_SECURE and never sets it. See hooks/useAllowScreenCapture.js.
+  useAllowScreenCapture();
 
   // Load stores for the picker.
   useEffect(() => {
@@ -322,15 +312,23 @@ export default function ScanScreen({ navigation }) {
 
   const takePhoto = async () => {
     if (!cameraRef.current) return;
+    if (cameraError) {
+      Alert.alert('Camera unavailable', cameraError);
+      return;
+    }
+    if (!cameraReady) {
+      Alert.alert('Camera starting', 'The camera is still starting up. Please try again in a moment.');
+      return;
+    }
     if (!(await storageOk())) return;
     setCapturing(true);
     try {
-      // skipProcessing is iOS-only — passing it on Android warns/throws on
-      // some builds, so only send it where it is supported.
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.8,
-        ...(Platform.OS === 'ios' ? { skipProcessing: true } : {}),
-      });
+      // No `skipProcessing`. Skipping the camera's processing pipeline drops the
+      // EXIF-orientation step as well as `quality`, and the server's OCR has no
+      // orientation detection: a photo that arrives rotated 90° is read as
+      // sideways text. expo-camera applies the rotation physically when this is
+      // left off, so the bytes that reach the evidence store are already upright.
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
       const panel = nextPanel(photos.length);
       setPhotos((prev) => [...prev, { uri: photo.uri, panel }]);
     } catch (e) {
@@ -344,8 +342,34 @@ export default function ScanScreen({ navigation }) {
     const lon = coords?.longitude;
     return (
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back">
+        <CameraView
+          ref={cameraRef}
+          style={{ flex: 1 }}
+          facing="back"
+          onCameraReady={() => setCameraReady(true)}
+          onMountError={(e) => setCameraError(e?.message || 'The camera could not be started on this device.')}
+        >
           <View style={{ flex: 1, justifyContent: 'space-between' }}>
+            {!cameraReady && !cameraError && (
+              <View
+                pointerEvents="none"
+                style={{ ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <ActivityIndicator color={colors.saffron} />
+                <Text style={{ color: colors.white, fontSize: 13, fontWeight: '600', marginTop: 8 }}>
+                  Starting camera…
+                </Text>
+              </View>
+            )}
+            {!!cameraError && (
+              <View style={{ ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, backgroundColor: 'rgba(0,0,0,0.6)' }}>
+                <Text style={{ fontSize: 30, marginBottom: 8 }}>⚠️</Text>
+                <Text style={{ color: colors.white, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>{cameraError}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 10.5, textAlign: 'center', marginTop: 6 }}>
+                  Close other camera apps and tap Back to retry.
+                </Text>
+              </View>
+            )}
             <View style={{ backgroundColor: 'rgba(15,42,68,0.9)', paddingTop: topClearance + 12, paddingBottom: spacing.md, paddingHorizontal: spacing.lg }}>
               <Text style={{ color: colors.white, fontSize: 16, fontWeight: '700' }}>Capture package panels</Text>
               <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>Photo {photos.length + 1}</Text>

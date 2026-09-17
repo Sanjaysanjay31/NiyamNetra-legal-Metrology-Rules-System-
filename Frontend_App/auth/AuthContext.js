@@ -120,7 +120,12 @@ export function AuthProvider({ children }) {
 
   const login = async (employee_id, password) => {
     const install_id = await getItem('nn_install_id') || undefined;
-    const { data } = await api.post('/auth/login', { employee_id, password, install_id });
+    // 60s, not the shared 30s default: this is the one request that can land on
+    // a Render free-tier service that has been spun down, and the first login of
+    // a demo is exactly when that happens. A cold start measured at 30-50s would
+    // otherwise still time out and show "cannot reach the backend" for a backend
+    // that is healthy.
+    const { data } = await api.post('/auth/login', { employee_id, password, install_id }, { timeout: 60000 });
     setAccessToken(data.access_token);
     await setItem('nn_install_id', data.install_id);
     // Native session restore: the refresh cookie never reaches SecureStore

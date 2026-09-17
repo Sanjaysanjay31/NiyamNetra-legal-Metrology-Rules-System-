@@ -286,7 +286,6 @@ export default function LoginScreen() {
             style={{ marginTop: spacing.xs, minHeight: 50 }}
           />
 
-
           {/* Statutory Footer */}
           <Text
             style={{

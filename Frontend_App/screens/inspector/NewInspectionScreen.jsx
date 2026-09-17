@@ -21,6 +21,7 @@ import Card from '../../components/Card';
 import PrimaryButton from '../../components/PrimaryButton';
 import { fetchStores, createStore, createInspection } from '../../api/inspections';
 import { getItem, setItem } from '../../auth/secureStore';
+import { useAllowScreenCapture } from '../../hooks/useAllowScreenCapture';
 
 let Location = null;
 try { Location = require('expo-location'); } catch { Location = null; }
@@ -147,6 +148,24 @@ export default function NewInspectionScreen({ navigation, onStartInspectionSessi
   const [capturing, setCapturing] = useState(false);
   const cameraRef = useRef(null);
 
+  // The shop-front camera step is part of the recorded demo flow: keep Android
+  // FLAG_SECURE clear so the recording never goes black. See
+  // hooks/useAllowScreenCapture.js.
+  useAllowScreenCapture();
+
+  // Viewfinder status. The camera surface is a black container by design, so a
+  // preview that is slow to start — or a camera the OS refuses to hand over —
+  // renders as a featureless black page. The demo is screen-recorded; the page
+  // must always say what it is doing instead of looking "hidden".
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
+
+  useEffect(() => {
+    if (!cameraModalVisible) return;
+    setCameraReady(false);
+    setCameraError(null);
+  }, [cameraModalVisible]);
+
   // GPS state
   const [coords, setCoords] = useState(null);
   const [locStatus, setLocStatus] = useState('locating');
@@ -218,12 +237,21 @@ export default function NewInspectionScreen({ navigation, onStartInspectionSessi
 
   const handleCaptureShopPhoto = async () => {
     if (!cameraRef.current || capturing) return;
+    if (cameraError) {
+      Alert.alert('Camera unavailable', cameraError);
+      return;
+    }
+    if (!cameraReady) {
+      Alert.alert('Camera starting', 'The camera is still starting up. Please try again in a moment.');
+      return;
+    }
     setCapturing(true);
     try {
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.8,
-        skipProcessing: Platform.OS === 'android',
-      });
+      // No `skipProcessing`: skipping the pipeline drops the EXIF-orientation
+      // step and the `quality` setting with it. The storefront photo is uploaded
+      // as evidence, so it must arrive upright (the server does no orientation
+      // detection) and compressed.
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
       if (photo?.uri) {
         let finalUri = photo.uri;
         if (ImageManipulator?.manipulateAsync) {
@@ -577,7 +605,7 @@ export default function NewInspectionScreen({ navigation, onStartInspectionSessi
 
           {shopPhoto ? (
             <View style={styles.shopPhotoPreviewContainer}>
-              <Image source={{ uri: shopPhoto }} style={styles.shopPhotoPreview} />
+              <Image source={{ uri: shopPhoto }} style={styles.shopPhotoPreview} resizeMode="cover" />
               <View style={styles.shopPhotoOverlay}>
                 <View style={styles.photoAttachedBadge}>
                   <Text style={styles.photoAttachedText}>✓ Storefront Photo Captured</Text>
@@ -710,7 +738,30 @@ export default function NewInspectionScreen({ navigation, onStartInspectionSessi
             </View>
           ) : (
             <View style={{ flex: 1 }}>
-              <CameraView ref={cameraRef} style={StyleSheet.absoluteFillObject} facing="back" />
+              <CameraView
+                ref={cameraRef}
+                style={StyleSheet.absoluteFillObject}
+                facing="back"
+                onCameraReady={() => setCameraReady(true)}
+                onMountError={(e) => setCameraError(e?.message || 'The camera could not be started on this device.')}
+              />
+              {/* Viewfinder status — see the cameraReady/cameraError note above.
+                  Kept above the preview but below the header/shutter. */}
+              {!cameraReady && !cameraError && (
+                <View style={styles.cameraStatusOverlay} pointerEvents="none">
+                  <ActivityIndicator color={colors.saffron} />
+                  <Text style={styles.cameraStatusText}>Starting camera…</Text>
+                </View>
+              )}
+              {!!cameraError && (
+                <View style={styles.cameraStatusOverlay}>
+                  <Text style={{ fontSize: 30, marginBottom: spacing.sm }}>⚠️</Text>
+                  <Text style={styles.cameraStatusText}>{cameraError}</Text>
+                  <Text style={[styles.cameraStatusText, styles.cameraStatusHint]}>
+                    Close this view and retry, or continue without the shopfront photograph.
+                  </Text>
+                </View>
+              )}
               {/* Camera Header */}
               <View style={[styles.cameraModalHeader, { top: topClearance + 12 }]}>
                 <Text style={styles.cameraModalHeaderTitle}>Capture Shopfront / Board</Text>
@@ -731,8 +782,11 @@ export default function NewInspectionScreen({ navigation, onStartInspectionSessi
               <View style={[styles.cameraModalFooter, { bottom: bottomClearance + 16 }]}>
                 <Pressable
                   onPress={handleCaptureShopPhoto}
-                  disabled={capturing}
-                  style={styles.cameraModalShutter}
+                  disabled={capturing || !cameraReady || !!cameraError}
+                  style={[styles.cameraModalShutter, (!cameraReady || !!cameraError) && styles.cameraModalShutterDisabled]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Capture shopfront photo"
+                  accessibilityState={{ disabled: capturing || !cameraReady || !!cameraError }}
                 >
                   {capturing ? (
                     <ActivityIndicator color={colors.white} />
@@ -970,7 +1024,8 @@ const styles = StyleSheet.create({
   shopPhotoPreview: {
     width: '100%',
     height: 180,
-    resizeMode: 'cover',
+    // resizeMode belongs on the <Image> element, not in its style (RN 0.81
+    // ignores the style key) — see the prop at the call site.
   },
   shopPhotoOverlay: {
     flexDirection: 'row',
@@ -1112,6 +1167,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.xl,
+  },
+  // Centred status text over the black viewfinder surface: "Starting camera…"
+  // before the first frame, and the reason when the camera cannot start at all.
+  cameraStatusOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xxl,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  cameraStatusText: {
+    color: colors.white,
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  cameraStatusHint: {
+    fontSize: 11,
+    fontWeight: '400',
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: spacing.xs,
+  },
+  cameraModalShutterDisabled: {
+    opacity: 0.45,
   },
   cameraModalHeader: {
     position: 'absolute',
