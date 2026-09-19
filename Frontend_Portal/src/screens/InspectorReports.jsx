@@ -41,10 +41,11 @@ import {
 } from '../ui'
 
 const STATUS_OPTIONS = [
-  { value: '', label: 'All statuses' },
-  { value: INSPECTION_STATUS.COMPLIANT, label: 'Compliant' },
-  { value: INSPECTION_STATUS.NON_COMPLIANT, label: 'Non-Compliant' },
-  { value: INSPECTION_STATUS.NEEDS_REVIEW, label: 'Needs Review' },
+  { value: '', label: 'All results' },
+  { value: 'compliant', label: 'Compliant' },
+  { value: 'violation', label: 'Violation' },
+  { value: 'not_assessed', label: 'Not Assessed' },
+  { value: 'out_of_scope', label: 'Out of Scope' },
 ]
 
 const PRESETS = [
@@ -98,9 +99,12 @@ export default function InspectorReports() {
   const filtered = useMemo(() => {
     const q = debouncedQuery.trim().toLowerCase()
     return rows.filter((r) => {
-      // Exclude unfinished drafts from official report outputs
-      if (r.status === 'draft') return false
-      if (status && r.status !== status) return false
+      const res = r.ruleResult || r.status
+      if (status) {
+        if (status === 'violation' && res !== 'violation' && res !== 'non_compliant') return false
+        if (status === 'not_assessed' && res !== 'not_assessed' && res !== 'needs_review') return false
+        if (status !== 'violation' && status !== 'not_assessed' && res !== status) return false
+      }
       if (effFrom && r.inspection_date && r.inspection_date < effFrom) return false
       if (effTo && r.inspection_date && r.inspection_date > effTo) return false
       if (q) {
@@ -112,9 +116,11 @@ export default function InspectorReports() {
   }, [rows, debouncedQuery, status, effFrom, effTo])
 
   const stats = useMemo(() => {
-    const total = rows.filter((r) => r.status !== 'draft').length
-    const compliant = rows.filter((r) => r.status === 'compliant').length
-    const violations = rows.filter((r) => r.status === 'non_compliant').length
+    const total = rows.length
+    const compliant = rows.filter((r) => (r.ruleResult || r.status) === 'compliant').length
+    const violations = rows.filter(
+      (r) => (r.ruleResult || r.status) === 'violation' || (r.ruleResult || r.status) === 'non_compliant'
+    ).length
     return { total: total || 128, compliant: compliant || 94, violations: violations || 27 }
   }, [rows])
 
@@ -304,14 +310,15 @@ export default function InspectorReports() {
                 <Th>Shop &amp; Location</Th>
                 <Th>Product Inspected</Th>
                 <Th>Date &amp; Time</Th>
-                <Th>Compliance Status</Th>
+                <Th>Rule Result</Th>
                 <Th align="right">Violations</Th>
                 <Th align="right">Action</Th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((r) => {
-                const meta = STATUS_META[r.status] ?? STATUS_META.draft
+                const res = r.ruleResult || r.status
+                const meta = STATUS_META[res] ?? STATUS_META.not_assessed
                 return (
                   <Tr key={r.id} onClick={() => navigate(`/inspector/inspections/${r.id}`)}>
                     <Td>

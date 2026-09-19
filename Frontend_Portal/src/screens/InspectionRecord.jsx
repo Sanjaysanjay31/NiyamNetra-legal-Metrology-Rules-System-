@@ -52,6 +52,7 @@ import { CHECKS_TOTAL, DERIVED_CHECK, denominatorLabel, inRegistrationOrder, tal
 import {
   inspectionLabel,
   INSPECTION_STATUS,
+  RULE_RESULT,
   STATUS_META,
   statusOfInspection,
 } from '../lib/inspector'
@@ -64,6 +65,7 @@ import {
   ConfidenceBadge,
   EmptyState,
   Eyebrow,
+  InspectionStatusBadge,
   MetaStat,
   Modal,
   PageHeader,
@@ -72,6 +74,7 @@ import {
   SectionTitle,
   SeverityBadge,
   Skeleton,
+  SyncBadge,
   VerificationBadge,
   VerdictBadge,
   cx,
@@ -105,11 +108,14 @@ const GEOFENCE = {
 }
 
 const INSPECTION_ICONS = {
-  [INSPECTION_STATUS.COMPLIANT]: { icon: CheckCircle, ring: 'var(--nn-pass-graphic)', glyph: '✓' },
-  [INSPECTION_STATUS.NON_COMPLIANT]: { icon: XCircle, ring: 'var(--nn-violation-graphic)', glyph: '✕' },
-  [INSPECTION_STATUS.NEEDS_REVIEW]: { icon: Clock, ring: 'var(--nn-review-graphic)', glyph: '?' },
-  [INSPECTION_STATUS.OUT_OF_SCOPE]: { icon: HelpCircle, ring: 'var(--nn-na-graphic)', glyph: '—' },
-  [INSPECTION_STATUS.DRAFT]: { icon: PenLine, ring: 'var(--nn-na-graphic)', glyph: '…' },
+  [RULE_RESULT.COMPLIANT]: { icon: CheckCircle, ring: 'var(--nn-pass-graphic)', glyph: '✓' },
+  [RULE_RESULT.VIOLATION]: { icon: XCircle, ring: 'var(--nn-violation-graphic)', glyph: '✕' },
+  non_compliant: { icon: XCircle, ring: 'var(--nn-violation-graphic)', glyph: '✕' },
+  [RULE_RESULT.NOT_ASSESSED]: { icon: Clock, ring: 'var(--nn-review-graphic)', glyph: '?' },
+  needs_review: { icon: Clock, ring: 'var(--nn-review-graphic)', glyph: '?' },
+  [RULE_RESULT.OUT_OF_SCOPE]: { icon: HelpCircle, ring: 'var(--nn-na-graphic)', glyph: '—' },
+  [INSPECTION_STATUS.IN_PROGRESS]: { icon: PenLine, ring: 'var(--nn-na-graphic)', glyph: '…' },
+  [INSPECTION_STATUS.SUBMITTED]: { icon: CheckCircle, ring: 'var(--nn-pass-graphic)', glyph: '✓' },
 }
 
 function pretty(isoDate) {
@@ -143,10 +149,10 @@ function skewLabel(seconds) {
 }
 
 /* The visit-level result, given the weight the requirement asks for: the word
-   COMPLIANT / NON-COMPLIANT / NEEDS REVIEW in a ring, icon + word + colour. */
+   COMPLIANT / VIOLATION / NOT ASSESSED / OUT OF SCOPE in a ring, icon + word + colour. */
 function InspectionResultSeal({ status, caption }) {
-  const m = INSPECTION_ICONS[status] ?? INSPECTION_ICONS[INSPECTION_STATUS.NEEDS_REVIEW]
-  const label = STATUS_META[status]?.label ?? 'Needs Review'
+  const m = INSPECTION_ICONS[status] ?? INSPECTION_ICONS[RULE_RESULT.NOT_ASSESSED]
+  const label = STATUS_META[status]?.label ?? 'Not Assessed'
   return (
     <div className="flex items-start gap-4">
       <span
@@ -554,8 +560,10 @@ export default function InspectionRecord() {
         </button>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-display font-bold text-ink">{inspectionLabel(id)}</h1>
+              <InspectionStatusBadge status={data?.status ?? 'submitted'} />
+              <SyncBadge state={data?.synced_at ? 'synced' : 'synced'} />
             </div>
             <p className="mt-1 text-small text-ink-2">
               <span className="font-semibold text-ink">{shopName}</span> · {shop?.city || 'Hyderabad North'}
@@ -573,7 +581,7 @@ export default function InspectionRecord() {
       <Card className="p-6">
         <InspectionResultSeal
           status={overallStatus}
-          caption={`This inspection visit recorded ${scans.length} package ${scans.length === 1 ? 'sample' : 'samples'}. An inspection with any violated check reads Non-Compliant; unresolved evidence reads Needs Review.`}
+          caption={`This inspection visit recorded ${scans.length} package ${scans.length === 1 ? 'sample' : 'samples'}. An inspection with any violated check reads Violation; unassessed evidence reads Not Assessed.`}
         />
       </Card>
 

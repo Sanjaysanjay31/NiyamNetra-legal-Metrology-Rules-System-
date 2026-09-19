@@ -101,9 +101,9 @@ def active_dates(db: Session, user_id: int, year: int, month: int):
         )
     ]
 # --- Query 4: admin dashboard ---
-def admin_stats(db: Session, start: date, end: date):
+def admin_stats(db: Session, start: date, end: date, area: str | None = None):
     total, comp, viol, na, oos = _result_counts()
-    row = db.execute(
+    q = (
         select(
             func.coalesce(func.count(func.distinct(Inspection.id)), 0).label("inspections"),
             func.coalesce(func.count(func.distinct(Inspection.user_id)), 0).label("active_inspectors"),
@@ -111,61 +111,81 @@ def admin_stats(db: Session, start: date, end: date):
             total, comp, viol, na, oos,
         )
         .select_from(Inspection)
+        .join(Store, Store.id == Inspection.store_id)
         .outerjoin(Scan, (Scan.inspection_id == Inspection.id) & LIVE)
         .where(Inspection.inspection_date.between(start, end))
-    ).one()
+    )
+    if area and area.strip().lower() != "all":
+        q = q.where(or_(Store.city.ilike(f"%{area.strip()}%"), Store.district.ilike(f"%{area.strip()}%")))
+    row = db.execute(q).one()
     d = {k: (v if v is not None else 0) for k, v in dict(row._mapping).items()}
     # Real count, not the hard-coded 0 that v1.x shipped at line 924.
-    d["review_queue"] = review_queue_size(db) or 0
+    d["review_queue"] = review_queue_size(db, area=area) or 0
     return d
 
 
-def review_queue_size(db: Session) -> int:
+def review_queue_size(db: Session, area: str | None = None) -> int:
     """Everything a human still has to look at, counted the same way the
     review endpoint lists it, so the badge and the page can never disagree.
 
     Low-confidence includes NULL confidence (e.g. OCR.space reports no
     per-line confidence): unknown confidence must be reviewed, not skipped.
     """
-    na_scans = db.scalar(
-        select(func.count()).select_from(Scan)
-        .where(Scan.overall_result == "not_assessed", LIVE)
-    ) or 0
-    low_conf = db.scalar(
-        select(func.count()).select_from(Finding)
+    na_q = select(func.count()).select_from(Scan).where(Scan.overall_result == "not_assessed", LIVE)
+    low_q = (
+        select(func.count())
+        .select_from(Finding)
         .where(or_(Finding.confidence < 0.60, Finding.confidence.is_(None)),
                Finding.human_verdict.is_(None))
-    ) or 0
-    offline_edits = db.scalar(
-        select(func.count()).select_from(Inspection)
-        .where(Inspection.edited_offline.is_(True))
-    ) or 0
+    )
+    off_q = select(func.count()).select_from(Inspection).where(Inspection.edited_offline.is_(True))
+
+    if area and area.strip().lower() != "all":
+        a_str = area.strip()
+        na_q = (
+            na_q.join(Inspection, Inspection.id == Scan.inspection_id)
+            .join(Store, Store.id == Inspection.store_id)
+            .where(or_(Store.city.ilike(f"%{a_str}%"), Store.district.ilike(f"%{a_str}%")))
+        )
+        low_q = (
+            low_q.join(Scan, Scan.id == Finding.scan_id)
+            .join(Inspection, Inspection.id == Scan.inspection_id)
+            .join(Store, Store.id == Inspection.store_id)
+            .where(or_(Store.city.ilike(f"%{a_str}%"), Store.district.ilike(f"%{a_str}%")))
+        )
+        off_q = (
+            off_q.join(Store, Store.id == Inspection.store_id)
+            .where(or_(Store.city.ilike(f"%{a_str}%"), Store.district.ilike(f"%{a_str}%")))
+        )
+
+    na_scans = db.scalar(na_q) or 0
+    low_conf = db.scalar(low_q) or 0
+    offline_edits = db.scalar(off_q) or 0
     return na_scans + low_conf + offline_edits
 
 
 # --- Query 5: violations by check, for the bar chart ---
-def violations_by_check(db: Session, start: date, end: date, limit: int = 10):
+def violations_by_check(db: Session, start: date, end: date, limit: int = 10, area: str | None = None):
     verdict = func.coalesce(Finding.human_verdict, Finding.engine_verdict)
-    return [
-        dict(r._mapping)
-        for r in db.execute(
-            select(
-                Finding.check_id,
-                Finding.title,
-                func.count().label("count"),
-            )
-            .join(Scan, Scan.id == Finding.scan_id)
-            .join(Inspection, Inspection.id == Scan.inspection_id)
-            .where(
-                verdict == "fail",
-                LIVE,
-                Inspection.inspection_date.between(start, end),
-            )
-            .group_by(Finding.check_id, Finding.title)
-            .order_by(func.count().desc())
-            .limit(limit)
+    q = (
+        select(
+            Finding.check_id,
+            Finding.title,
+            func.count().label("count"),
         )
-    ]
+        .join(Scan, Scan.id == Finding.scan_id)
+        .join(Inspection, Inspection.id == Scan.inspection_id)
+        .join(Store, Store.id == Inspection.store_id)
+        .where(
+            verdict == "fail",
+            LIVE,
+            Inspection.inspection_date.between(start, end),
+        )
+    )
+    if area and area.strip().lower() != "all":
+        q = q.where(or_(Store.city.ilike(f"%{area.strip()}%"), Store.district.ilike(f"%{area.strip()}%")))
+    q = q.group_by(Finding.check_id, Finding.title).order_by(func.count().desc()).limit(limit)
+    return [dict(r._mapping) for r in db.execute(q)]
 
 
 # --- Query 7: repeat violators, for enforcement prioritisation ---
@@ -242,19 +262,55 @@ def proximity_flags(db: Session, start: date, end: date, meters: float = 50.0,
 
 
 # --- Query 6: trend, for the line chart ---
-def inspection_trend(db: Session, start: date, end: date):
+def inspection_trend(db: Session, start: date, end: date, area: str | None = None):
     total, comp, viol, na, oos = _result_counts()
-    return [
-        dict(r._mapping)
-        for r in db.execute(
-            select(Inspection.inspection_date, total, comp, viol, na, oos)
-            .select_from(Inspection)
-            .outerjoin(Scan, (Scan.inspection_id == Inspection.id) & LIVE)
-            .where(Inspection.inspection_date.between(start, end))
-            .group_by(Inspection.inspection_date)
-            .order_by(Inspection.inspection_date)
-        )
-    ]
+    q = (
+        select(Inspection.inspection_date, total, comp, viol, na, oos)
+        .select_from(Inspection)
+        .join(Store, Store.id == Inspection.store_id)
+        .outerjoin(Scan, (Scan.inspection_id == Inspection.id) & LIVE)
+        .where(Inspection.inspection_date.between(start, end))
+    )
+    if area and area.strip().lower() != "all":
+        q = q.where(or_(Store.city.ilike(f"%{area.strip()}%"), Store.district.ilike(f"%{area.strip()}%")))
+    q = q.group_by(Inspection.inspection_date).order_by(Inspection.inspection_date)
+    return [dict(r._mapping) for r in db.execute(q)]
+
+
+def violations_by_category_query(db: Session, start: date, end: date, area: str | None = None) -> list[dict]:
+    verdict = func.coalesce(Finding.human_verdict, Finding.engine_verdict)
+    q = (
+        select(Finding.check_id, Finding.title, func.count().label("count"))
+        .join(Scan, Scan.id == Finding.scan_id)
+        .join(Inspection, Inspection.id == Scan.inspection_id)
+        .join(Store, Store.id == Inspection.store_id)
+        .where(verdict == "fail", LIVE, Inspection.inspection_date.between(start, end))
+    )
+    if area and area.strip().lower() != "all":
+        q = q.where(or_(Store.city.ilike(f"%{area.strip()}%"), Store.district.ilike(f"%{area.strip()}%")))
+    q = q.group_by(Finding.check_id, Finding.title)
+    rows = db.execute(q).all()
+    cat_counts = {}
+    for r in rows:
+        cat = check_category(r.check_id, r.title)
+        cat_counts[cat] = cat_counts.get(cat, 0) + r.count
+    return [{"category": k, "count": v} for k, v in sorted(cat_counts.items(), key=lambda x: x[1], reverse=True)[:8]]
+
+
+def violations_by_area_query(db: Session, start: date, end: date, area: str | None = None) -> list[dict]:
+    verdict = func.coalesce(Finding.human_verdict, Finding.engine_verdict)
+    area_col = func.coalesce(Store.city, Store.district, "Other").label("area")
+    q = (
+        select(area_col, func.count().label("count"))
+        .join(Inspection, Store.id == Inspection.store_id)
+        .join(Scan, (Scan.inspection_id == Inspection.id) & LIVE)
+        .join(Finding, Finding.scan_id == Scan.id)
+        .where(verdict == "fail", Inspection.inspection_date.between(start, end))
+    )
+    if area and area.strip().lower() != "all":
+        q = q.where(or_(Store.city.ilike(f"%{area.strip()}%"), Store.district.ilike(f"%{area.strip()}%")))
+    q = q.group_by(area_col).order_by(func.count().desc()).limit(8)
+    return [dict(r._mapping) for r in db.execute(q)]
 
 
 def check_category(check_id: str | None, title: str | None = "") -> str:

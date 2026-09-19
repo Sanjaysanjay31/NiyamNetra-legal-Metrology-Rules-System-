@@ -216,6 +216,8 @@ export const endpoints = {
     create: (body) => unwrap(api.post('/inspections', body)),
     submit: (id, body) => unwrap(api.post(`/inspections/${id}/submit`, body)),
     createScan: (id, body) => unwrap(api.post(`/inspections/${id}/scans`, body)),
+    addRemark: (inspectionId, findingId, remark) =>
+      unwrap(api.post(`/inspections/${inspectionId}/findings/${findingId}/remark`, { remark })),
   },
 
   scans: {

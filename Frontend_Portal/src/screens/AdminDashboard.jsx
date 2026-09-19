@@ -855,22 +855,28 @@ function RecentInspections({ data, stores, officers, areaFilter, query, navigate
   const filtered = useMemo(() => {
     let rows = data ?? []
     if (areaFilter && areaFilter !== 'all') {
-      rows = rows.filter((r) => stores[r.store_id]?.city === areaFilter)
+      const af = areaFilter.toLowerCase()
+      rows = rows.filter((r) => {
+        const city = stores[r.store_id]?.city ?? r.store_city ?? ''
+        const district = stores[r.store_id]?.district ?? r.store_district ?? ''
+        return city.toLowerCase().includes(af) || district.toLowerCase().includes(af)
+      })
     }
     if (query.trim()) {
       const q = query.trim().toLowerCase()
       rows = rows.filter((r) => {
-        const storeName = stores[r.store_id]?.name ?? ''
-        const officerName = officers[r.user_id]?.full_name ?? ''
+        const storeName = stores[r.store_id]?.name ?? r.store_name ?? ''
+        const officerName = officers[r.user_id]?.full_name ?? r.inspector_name ?? ''
+        const city = stores[r.store_id]?.city ?? r.store_city ?? ''
         return (
           String(r.id ?? '').toLowerCase().includes(q) ||
           storeName.toLowerCase().includes(q) ||
           officerName.toLowerCase().includes(q) ||
-          (stores[r.store_id]?.city ?? '').toLowerCase().includes(q)
+          city.toLowerCase().includes(q)
         )
       })
     }
-    return rows.slice(0, 2)
+    return rows
   }, [data, areaFilter, query, stores, officers])
 
   if (filtered.length === 0) {
@@ -901,8 +907,9 @@ function RecentInspections({ data, stores, officers, areaFilter, query, navigate
               <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Inspector</th>
               <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Area</th>
               <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Date &amp; Time</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Products</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Rule Result</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Status</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Total Products</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Violation Products</th>
               <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Action</th>
             </tr>
           </thead>
@@ -911,6 +918,8 @@ function RecentInspections({ data, stores, officers, areaFilter, query, navigate
               const dateLabel = r.submitted_at
                 ? `${format(parseISO(r.submitted_at.slice(0, 10)), 'd MMM yyyy')} ${r.submitted_at.slice(11, 16)}`
                 : pretty(r.inspection_date)
+              const totalProds = r.total_products ?? r.scanned_count ?? r.scan_count ?? 0
+              const violProds = r.violation_products ?? r.violations_count ?? 0
               return (
                 <tr key={r.id} className="border-b border-divider transition-colors duration-fast hover:bg-surface-2">
                   <td className="px-4 py-3">
@@ -921,13 +930,19 @@ function RecentInspections({ data, stores, officers, areaFilter, query, navigate
                       INS-{r.id}
                     </Link>
                   </td>
-                  <td className="px-4 py-3 font-medium text-ink">{stores[r.store_id]?.name ?? `Store #${r.store_id}`}</td>
-                  <td className="px-4 py-3 text-ink-2">{officers[r.user_id]?.full_name ?? `Officer #${r.user_id}`}</td>
-                  <td className="px-4 py-3 text-ink-2">{stores[r.store_id]?.city ?? '—'}</td>
+                  <td className="px-4 py-3 font-medium text-ink">{stores[r.store_id]?.name ?? r.store_name ?? `Store #${r.store_id}`}</td>
+                  <td className="px-4 py-3 text-ink-2">{officers[r.user_id]?.full_name ?? r.inspector_name ?? `Officer #${r.user_id}`}</td>
+                  <td className="px-4 py-3 text-ink-2">{stores[r.store_id]?.city ?? r.store_city ?? '—'}</td>
                   <td className="px-4 py-3 text-ink-2">{dateLabel}</td>
-                  <td className="nn-mono px-4 py-3 text-right text-ink">{r.scan_count}</td>
                   <td className="px-4 py-3">
-                    <StatusPill verdict={r.status === 'submitted' ? (r.in_scope === false ? 'out_of_scope' : (r.violations_count > 0 || r.has_violations || r.resultVerdict === 'violation' ? 'violation' : 'pass')) : 'not_assessed'} />
+                    <StatusPill verdict={r.status === 'submitted' ? 'submitted' : 'draft'} />
+                  </td>
+                  <td className="nn-mono px-4 py-3 text-right text-ink font-semibold">{totalProds}</td>
+                  <td className={cx(
+                    "nn-mono px-4 py-3 text-right font-semibold",
+                    violProds > 0 ? "text-violation-graphic" : "text-pass-graphic"
+                  )}>
+                    {violProds}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Link
@@ -974,11 +989,14 @@ export default function AdminDashboard() {
   const today = startOfDay(new Date())
   const maxDate = iso(today)
 
-  const dash = useResource(() => endpoints.admin.dashboard({ start, end }), {
-    deps: [start, end],
-    fallback: adminDashboard,
-    label: 'admin-dashboard',
-  })
+  const dash = useResource(
+    () => endpoints.admin.dashboard({ start, end, ...(area !== 'all' ? { area } : {}) }),
+    {
+      deps: [start, end, area],
+      fallback: adminDashboard,
+      label: 'admin-dashboard',
+    }
+  )
 
   const todayReport = useResource(
     () => endpoints.reports.today(iso(anchor) ? { day: iso(anchor) } : {}),
@@ -989,10 +1007,14 @@ export default function AdminDashboard() {
     }
   )
 
-  const inspections = useResource(() => endpoints.inspections.list({}), {
-    fallback: inspectionsFixture,
-    label: 'admin-dashboard-inspections',
-  })
+  const inspections = useResource(
+    () => endpoints.inspections.list({ ...(area !== 'all' ? { area } : {}) }),
+    {
+      deps: [area],
+      fallback: inspectionsFixture,
+      label: 'admin-dashboard-inspections',
+    }
+  )
   const stores = useResource(() => endpoints.inspections.stores(), {
     fallback: Object.values(storesById),
     label: 'admin-dashboard-stores',
@@ -1006,10 +1028,7 @@ export default function AdminDashboard() {
   const c = d.counts ?? {}
   const total = c.total ?? 0
 
-  /* Per-field fallbacks so live data and demo data cooperate: the live
-     /admin/dashboard endpoint does not return violations_by_category or
-     violations_by_area, so derive them from the inspections list when
-     the dashboard does not carry them. */
+  /* Per-field fallbacks so live data and demo data cooperate */
   const storesArr = stores.data ?? Object.values(storesById)
   const storesByIdx = useMemo(
     () => Object.fromEntries((storesArr).map((s) => [s.id, s])),
@@ -1039,7 +1058,11 @@ export default function AdminDashboard() {
   }, [d.violations_by_area, inspections.data, storesByIdx])
 
   const areaOptions = useMemo(() => {
-    const set = new Set(storesArr.map((s) => s.city).filter(Boolean))
+    const set = new Set()
+    for (const s of storesArr) {
+      if (s.city) set.add(s.city)
+      if (s.district) set.add(s.district)
+    }
     return ['all', ...Array.from(set).sort()]
   }, [storesArr])
 

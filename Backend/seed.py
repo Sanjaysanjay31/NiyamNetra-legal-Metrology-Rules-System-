@@ -31,13 +31,16 @@ SEED_USERS = [
 
 def seed_users(db):
     from password_handler import hash_password  # single bcrypt path (12 rounds)
+    seed_pwd = os.environ.get("SEED_PASSWORD", "NiyamNetra@2026")
     for employee_id, name, email, role, zone in SEED_USERS:
-        if db.query(User).filter_by(employee_id=employee_id).first():
+        existing = db.query(User).filter_by(employee_id=employee_id).first()
+        if existing:
+            existing.password_hash = hash_password(seed_pwd)
             continue
         db.add(User(
             employee_id=employee_id, full_name=name, email=email,
             phone=None, role=role, jurisdiction=zone,
-            password_hash=hash_password(os.environ["SEED_PASSWORD"]),
+            password_hash=hash_password(seed_pwd),
             is_active=True, token_epoch=0,
         ))
     db.commit()

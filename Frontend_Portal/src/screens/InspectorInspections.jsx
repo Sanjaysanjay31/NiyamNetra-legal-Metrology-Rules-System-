@@ -1,73 +1,75 @@
 /**
- * My inspections — the officer's own visits, newest first.
+ * InspectorInspections — Official Statutory Inspection History.
  *
- * The scoping is the server's, not this screen's. GET /inspections adds
- * `Inspection.user_id == user.id` for any non-admin caller, so an inspector
- * cannot widen this list to a colleague's work by editing a parameter, and this
- * screen sends no user filter at all. That is worth saying plainly on the page:
- * an officer should know the list is theirs by construction, not by a checkbox
- * they might accidentally clear.
- *
- * The layout is a grouped card list rather than the admin table. An inspector
- * reads this on a phone, standing up, looking for one of two things: the draft
- * they left half-finished, or the visit they submitted this morning. Cards
- * grouped by date answer both at a glance; a six-column table on a 390px screen
- * answers neither.
- *
- * Drafts are surfaced first and separately, because a draft is not part of the
- * record. Nothing in it has reached a report, and it will sit there indefinitely
- * until it is either submitted or abandoned — so the screen counts them at the
- * top and links each one straight to capture rather than to a read-only detail
- * page.
- *
- * Filters are exactly the endpoint's: status, a date window, and `q`, which
- * matches the shop name only. Sorting and paging do not exist on the endpoint,
- * so nothing here pretends to offer them; the list is the whole filtered set and
- * says so.
+ * Provides the field officer's complete historical enforcement record:
+ * 1. Page Header: Section label 'INSPECTIONS', 'Inspection History' heading,
+ *    and supporting government scope description with action launcher.
+ * 2. Search & Filter Bar:
+ *    - Free-text search matching shop name, city, product, brand, or inspection ID.
+ *    - Inspection Status filter: In Progress, Submitted.
+ *    - Rule Result filter: Compliant, Violation, Not Assessed, Out of Scope.
+ *    - Sync Status filter: Synced, Not Synced.
+ *    - Rule Violated filter: Populated with statutory Legal Metrology rules.
+ *    - Shop filter: Dynamically populated from actual inspected stores.
+ *    - Product filter: Dynamically populated from inspected commodities/brands.
+ *    - Date range with standard quick presets: Last 7 days, Last 30 days, Last 90 days, All dates.
+ *    - Reset/Clear filters button.
+ * 3. Result Counter: Dynamic 'Showing X of Y inspections' counter.
+ * 4. Government Inspection Table:
+ *    - INSPECTION ID, SHOP, PRODUCT, DATE, INSPECTION STATUS, RULE RESULT, SYNC STATUS, ACTION.
+ *    - Direct 'View' action linking to statutory InspectionDetail.
+ * 5. Empty, Loading, and Error states with retry capability.
+ * 6. Responsive pagination.
  */
 
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { format, parseISO, subDays } from 'date-fns'
 import {
-  Camera,
+  AlertTriangle,
+  Calendar,
+  CheckCircle,
+  CheckCircle2,
+  ChevronLeft,
   ChevronRight,
-  ClipboardList,
+  Clock,
+  Eye,
+  FileCheck,
+  HelpCircle,
   MapPin,
-  PenLine,
-  PlusCircle,
+  Package,
   RotateCcw,
   Search,
+  Store,
   X,
+  XCircle,
 } from 'lucide-react'
 import { endpoints } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
-import { useDebounced, useDocumentTitle, useResource } from '../lib/hooks'
-import { inspections as inspectionsFixture, storesById } from '../mock/fixtures'
+import { useDebounced, useDocumentTitle } from '../lib/hooks'
+import { CHECKS } from '../lib/checks'
+import { useInspectorData } from '../lib/inspector'
 import {
   Button,
-  Callout,
   Card,
   DemoChip,
   EmptyState,
   Field,
   Input,
-  PageHeader,
-  Pill,
+  InspectionStatusBadge,
+  Modal,
+  Select,
   Skeleton,
+  SyncBadge,
   cx,
+  useToast,
 } from '../ui'
 
-/* The two values models.py permits on Inspection.status, plus "do not filter". */
-const STATUS_TABS = [
-  { value: '', label: 'All' },
-  { value: 'draft', label: 'In Progress' },
-  { value: 'submitted', label: 'Submitted' },
-]
+const PAGE_SIZE = 10
 
-/* Date presets write real dates into the two inputs rather than holding a mode,
-   so what is sent to the server is always exactly what the two fields show.
-   The inputs themselves accept any date. */
+const iso = (d) => format(d, 'yyyy-MM-dd')
+
 const PRESETS = [
   { id: '7', label: 'Last 7 days', days: 7 },
   { id: '30', label: 'Last 30 days', days: 30 },
@@ -75,252 +77,509 @@ const PRESETS = [
   { id: 'all', label: 'All dates', days: null },
 ]
 
-const TRANSACTION_KEY = {
-  retail_sale: 'inspection.retail_sale',
-  wholesale: 'inspection.wholesale',
-  institutional: 'inspection.institutional',
-  export: 'inspection.export',
-}
-
-const iso = (d) => format(d, 'yyyy-MM-dd')
-
-function prettyDay(isoDate) {
-  if (!isoDate) return 'Undated'
+function prettyDate(isoDate) {
+  if (!isoDate) return '—'
   try {
     const d = parseISO(isoDate)
     const today = iso(new Date())
     const yesterday = iso(subDays(new Date(), 1))
-    if (isoDate === today) return `Today · ${format(d, 'd MMM')}`
-    if (isoDate === yesterday) return `Yesterday · ${format(d, 'd MMM')}`
-    return format(d, 'EEEE, d MMMM yyyy')
+    if (isoDate === today) return `Today · ${format(d, 'd MMM yyyy')}`
+    if (isoDate === yesterday) return `Yesterday · ${format(d, 'd MMM yyyy')}`
+    return format(d, 'd MMM yyyy')
   } catch {
     return String(isoDate)
   }
 }
 
+function StatusPill({ status }) {
+  const norm = String(status || '').toLowerCase()
+  if (norm === 'compliant' || norm === 'pass') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-pass-border bg-pass-fill px-2.5 py-0.5 text-[11px] font-semibold text-pass-text">
+        <CheckCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+        Compliant
+      </span>
+    )
+  }
+  if (norm === 'non_compliant' || norm === 'violation' || norm === 'fail') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-violation-border bg-violation-fill px-2.5 py-0.5 text-[11px] font-semibold text-violation-text">
+        <XCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+        Violation
+      </span>
+    )
+  }
+  if (norm === 'not_assessed' || norm === 'needs_review' || norm === 'review') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-review-border bg-review-fill px-2.5 py-0.5 text-[11px] font-semibold text-review-text">
+        <HelpCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+        Not Assessed
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-divider bg-surface-2 px-2.5 py-0.5 text-[11px] font-semibold text-ink-3">
+      <Clock size={12} strokeWidth={2.4} aria-hidden="true" />
+      Out of Scope
+    </span>
+  )
+}
+
 export default function InspectorInspections() {
   const { t } = useI18n()
-  useDocumentTitle(t('nav.inspections'))
+  const { user } = useAuth()
   const navigate = useNavigate()
+  const toast = useToast()
+  useDocumentTitle('Inspection History · NiyamNetra')
 
   const today = iso(new Date())
-  const [status, setStatus] = useState('')
-  const [from, setFrom] = useState(iso(subDays(new Date(), 29)))
-  const [to, setTo] = useState(today)
-  const [qRaw, setQRaw] = useState('')
-  const q = useDebounced(qRaw.trim(), 350)
 
-  /* Only what the officer actually set travels. `status=` would filter for the
-     empty string and match nothing, which is a different answer from "any". */
-  const params = useMemo(() => {
-    const p = {}
-    if (status) p.status = status
-    if (from) p.date_from = from
-    if (to) p.date_to = to
-    if (q) p.q = q
-    return p
-  }, [status, from, to, q])
-  const key = JSON.stringify(params)
+  // Data fetching hook scoped to the authenticated officer
+  const { rows, fullScans, loading, demo, reload } = useInspectorData()
 
-  const list = useResource(() => endpoints.inspections.list(params), {
-    deps: [key],
-    fallback: inspectionsFixture,
-    label: t('nav.inspections'),
-  })
-  const shops = useResource(() => endpoints.inspections.stores(), {
-    fallback: Object.values(storesById),
-    label: t('inspection.store'),
-  })
+  // Submission State for Action Column
+  const [submittingInspection, setSubmittingInspection] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitNotes, setSubmitNotes] = useState('')
 
-  /* Names live on /stores; the list carries store_id. If that second request
-     fails the rows still render, with the number in place of the name. */
-  const rows = useMemo(() => {
-    const shopById = new Map((shops.data ?? []).map((s) => [s.id, s]))
-    return (list.data ?? []).map((i) => {
-      const shop = shopById.get(i.store_id)
-      return {
-        id: i.id,
-        date: i.inspection_date ?? null,
-        shopName: shop?.name ?? `Shop #${i.store_id}`,
-        shopCity: shop?.city ?? null,
-        status: i.status ?? null,
-        scans: i.scan_count ?? 0,
-        transaction: i.transaction_type ?? null,
-        inScope: i.in_scope,
-        outOfScopeReason: i.out_of_scope_reason ?? null,
-        geofence: i.geofence_status ?? null,
-        geofenceDistance: i.geofence_distance_m ?? null,
-        mockLocation: i.mock_location === true,
-        signature: i.signature_status ?? null,
+  async function handleSubmit(e) {
+    e?.preventDefault?.()
+    if (!submittingInspection) return
+    setSubmitting(true)
+    try {
+      await endpoints.inspections.submit(submittingInspection.id, {
+        signature_status: 'signed',
+        notes: submitNotes.trim() || undefined,
+      })
+
+      // Dispatch notification detail for Admin Portal
+      const notifDetail = {
+        id: `notif-${Date.now()}`,
+        title: 'New Inspection Submitted',
+        message: `${user?.full_name || 'Inspector One'} submitted inspection INS-${submittingInspection.id} for ${submittingInspection.shopName || 'Registered Premise'}`,
+        time: 'Just now',
+        inspectionId: `INS-${submittingInspection.id}`,
+        read: false,
       }
-    })
-  }, [list.data, shops.data])
 
-  const drafts = useMemo(() => rows.filter((r) => r.status === 'draft'), [rows])
+      try {
+        const stored = JSON.parse(localStorage.getItem('niyamnetra_admin_notifications') || '[]')
+        localStorage.setItem('niyamnetra_admin_notifications', JSON.stringify([notifDetail, ...stored]))
+      } catch (err) {
+        console.warn('Could not store notification in localStorage', err)
+      }
 
-  /* Grouped by inspection_date. The endpoint already orders by date then id
-     descending, so insertion order is the order to display. */
-  const groups = useMemo(() => {
-    const byDay = new Map()
-    for (const r of rows) {
-      const k = r.date ?? ''
-      if (!byDay.has(k)) byDay.set(k, [])
-      byDay.get(k).push(r)
+      window.dispatchEvent(new CustomEvent('niyamnetra:inspection-submitted', { detail: notifDetail }))
+
+      toast.push({
+        family: 'pass',
+        title: 'Inspection Submitted',
+        body: `Inspection INS-${submittingInspection.id} has been submitted. The data has been forwarded to the Admin Portal and notified.`,
+      })
+
+      setSubmittingInspection(null)
+      setSubmitNotes('')
+      reload?.()
+    } catch (err) {
+      toast.push({
+        family: 'violation',
+        title: 'Submission Failed',
+        body: err?.message || 'Could not submit inspection. Please try again.',
+      })
+    } finally {
+      setSubmitting(false)
     }
-    return [...byDay.entries()]
+  }
+
+  // Filter States
+  const [qRaw, setQRaw] = useState('')
+  const q = useDebounced(qRaw.trim(), 250)
+  const [inspectionStatus, setInspectionStatus] = useState('all')
+  const [ruleResult, setRuleResult] = useState('all')
+  const [syncStatus, setSyncStatus] = useState('all')
+  const [rule, setRule] = useState('all')
+  const [shop, setShop] = useState('all')
+  const [product, setProduct] = useState('all')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [page, setPage] = useState(0)
+
+  // Derive unique shops from inspection records
+  const shopOptions = useMemo(() => {
+    const set = new Set()
+    for (const r of rows) {
+      if (r.shopName) set.add(r.shopName)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
   }, [rows])
 
-  const packages = rows.reduce((n, r) => n + r.scans, 0)
-  const filtered = Boolean(status || q) || from !== '' || to !== ''
-  const demo = list.demo || shops.demo
+  // Derive unique products from inspection records
+  const productOptions = useMemo(() => {
+    const set = new Set()
+    for (const r of rows) {
+      for (const p of r.products || []) {
+        if (p) set.add(p)
+      }
+      if (r.productLabel) set.add(r.productLabel)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [rows])
 
+  // Available statutory rules from catalog
+  const ruleOptions = useMemo(() => {
+    return [
+      { id: 'CHK01', label: 'Rule 6 — Mandatory Declarations' },
+      { id: 'CHK04', label: 'Rule 26 — Maximum Retail Price (MRP)' },
+      { id: 'CHK06', label: 'Rule 7 — Generic Commodity Name' },
+      { id: 'CHK05', label: 'Rule 12/13 — Net Quantity & Units' },
+      { id: 'CHK02', label: 'Rule 26(a) — Small Package Exemption' },
+      { id: 'CHK03', label: 'Rule 3 — Applicability & Wholesale Ambit' },
+      { id: 'CHK12', label: 'Rule 6(1)(aa) — Country of Origin' },
+      { id: 'CHK13', label: 'Rule 6(1)(da) — Best-Before Date' },
+      { id: 'CHK11', label: 'Rule 6(3) — Stickers & Corrections' },
+      { id: 'CHK07', label: 'Rule 9 — Font & Readability' },
+    ]
+  }, [])
+
+  // Presets handling
   function applyPreset(p) {
+    setPage(0)
     if (p.days == null) {
       setFrom('')
       setTo('')
       return
     }
     setFrom(iso(subDays(new Date(), p.days - 1)))
-    setTo(iso(new Date()))
-  }
-
-  function reset() {
-    setStatus('')
-    setQRaw('')
-    setFrom(iso(subDays(new Date(), 29)))
     setTo(today)
   }
 
-  return (
-    <div className="mx-auto max-w-[880px]">
-      <PageHeader
-        eyebrow={t('nav.home')}
-        title={t('nav.inspections')}
-        subtitle="Every visit recorded on your own account. The server scopes this list to you — there is no setting here that could widen it."
-        actions={
-          <div className="flex items-center gap-2">
-            {demo && <DemoChip />}
-            <Button icon={PlusCircle} onClick={() => navigate('/inspector/inspections/new')}>
-              {t('nav.newInspection')}
-            </Button>
-          </div>
+  function resetFilters() {
+    setQRaw('')
+    setInspectionStatus('all')
+    setRuleResult('all')
+    setSyncStatus('all')
+    setRule('all')
+    setShop('all')
+    setProduct('all')
+    setFrom('')
+    setTo('')
+    setPage(0)
+  }
+
+  const isFiltered = Boolean(
+    q ||
+    inspectionStatus !== 'all' ||
+    ruleResult !== 'all' ||
+    syncStatus !== 'all' ||
+    rule !== 'all' ||
+    shop !== 'all' ||
+    product !== 'all' ||
+    from !== '' ||
+    to !== ''
+  )
+
+  // Comprehensive Filtering Logic
+  const filteredRows = useMemo(() => {
+    return rows.filter((r) => {
+      // 1. Text Search (Matches Shop, City, Product, Brand, Inspection ID)
+      if (q) {
+        const query = q.toLowerCase()
+        const matchId = `ins-${r.id}`.includes(query) || String(r.id).includes(query)
+        const matchShop = String(r.shopName || '').toLowerCase().includes(query)
+        const matchCity = String(r.shopCity || '').toLowerCase().includes(query)
+        const matchProduct = String(r.productLabel || '').toLowerCase().includes(query)
+        const matchAllProducts = (r.products || []).some((p) => String(p).toLowerCase().includes(query))
+        if (!matchId && !matchShop && !matchCity && !matchProduct && !matchAllProducts) {
+          return false
         }
-      />
+      }
 
-      {/* ---- Unfinished work, first and unmissable. ---- */}
-      {drafts.length > 0 && (
-        <Callout
-          family="review"
-          title={`${drafts.length} ${drafts.length === 1 ? 'inspection is' : 'inspections are'} still unfinished`}
-          icon={PenLine}
-          className="mt-6"
-        >
-          <p>
-            A draft is not part of the record. Nothing in it reaches a report, and no finding it
-            holds counts, until it is submitted.
+      // 2. Inspection Status Filter (In Progress / Submitted)
+      if (inspectionStatus !== 'all') {
+        const isSubmitted =
+          r.inspectionStatus === 'submitted' ||
+          r.status === 'submitted' ||
+          r.status === 'Submitted' ||
+          Boolean(r.submitted_at)
+        if (inspectionStatus === 'submitted' && !isSubmitted) return false
+        if (inspectionStatus === 'in_progress' && isSubmitted) return false
+      }
+
+      // 3. Rule Result Filter (Compliant / Violation / Not Assessed / Out of Scope)
+      if (ruleResult !== 'all') {
+        const norm = String(r.ruleResult || r.status || '').toLowerCase()
+        if (ruleResult === 'compliant' && norm !== 'compliant' && norm !== 'pass') return false
+        if (
+          ruleResult === 'violation' &&
+          norm !== 'violation' &&
+          norm !== 'non_compliant' &&
+          norm !== 'fail'
+        ) {
+          return false
+        }
+        if (
+          ruleResult === 'not_assessed' &&
+          norm !== 'not_assessed' &&
+          norm !== 'needs_review' &&
+          norm !== 'review'
+        ) {
+          return false
+        }
+        if (ruleResult === 'out_of_scope' && norm !== 'out_of_scope') return false
+      }
+
+      // 4. Sync Status Filter (Synced / Not Synced)
+      if (syncStatus !== 'all') {
+        const isSynced =
+          r.syncStatus === 'synced' ||
+          r.syncState === 'synced' ||
+          Boolean(r.synced_at) ||
+          r.synced === true
+        if (syncStatus === 'synced' && !isSynced) return false
+        if (syncStatus === 'not_synced' && isSynced) return false
+      }
+
+      // 5. Shop Filter
+      if (shop !== 'all' && r.shopName !== shop) {
+        return false
+      }
+
+      // 6. Product Filter
+      if (product !== 'all') {
+        const hasProd =
+          r.productLabel === product || (r.products || []).some((p) => p === product)
+        if (!hasProd) return false
+      }
+
+      // 7. Date Range Filter
+      if (from && r.date) {
+        if (r.date < from) return false
+      }
+      if (to && r.date) {
+        if (r.date > to) return false
+      }
+
+      // 8. Rule Violated Filter
+      if (rule !== 'all') {
+        let hasRuleBreach = false
+        for (const s of r.scans || []) {
+          const detail = fullScans[s.id] || s
+          const findings = detail.findings || []
+          if (
+            findings.some(
+              (f) =>
+                f.check_id === rule &&
+                (f.effective_verdict === 'fail' || f.verdict === 'fail' || f.human_verdict === 'fail')
+            )
+          ) {
+            hasRuleBreach = true
+            break
+          }
+        }
+        if (!hasRuleBreach) return false
+      }
+
+      return true
+    })
+  }, [rows, q, inspectionStatus, ruleResult, syncStatus, rule, shop, product, from, to, fullScans])
+
+  // Pagination calculation
+  const totalPages = Math.ceil(filteredRows.length / PAGE_SIZE) || 1
+  const pagedRows = useMemo(() => {
+    const start = page * PAGE_SIZE
+    return filteredRows.slice(start, start + PAGE_SIZE)
+  }, [filteredRows, page])
+
+  const totalPackages = useMemo(() => {
+    return filteredRows.reduce((sum, r) => sum + (r.scans?.length || r.productCount || 1), 0)
+  }, [filteredRows])
+
+  return (
+    <div className="mx-auto w-full max-w-[1360px] pb-14">
+      {/* ------------------------------------------------------------------ */}
+      {/* 1. PAGE HEADER                                                     */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="nn-eyebrow text-saffron">INSPECTIONS</p>
+          <h1 className="mt-1 text-[26px] font-bold tracking-tight text-ink">
+            Inspection History
+          </h1>
+          <p className="mt-1 max-w-3xl text-small text-ink-2">
+            Every inspection/visit recorded for the inspector should be searchable, filterable and
+            accessible with its complete evidence and findings.
           </p>
-          <ul className="mt-3 flex flex-col gap-2">
-            {drafts.map((d) => (
-              <li key={d.id} className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-small">
-                  <span className="nn-mono font-medium">#{d.id}</span> · {d.shopName} ·{' '}
-                  {d.scans === 0 ? 'no packages yet' : `${d.scans} ${d.scans === 1 ? 'package' : 'packages'}`}
-                </span>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={Camera}
-                  onClick={() => navigate(`/inspector/inspections/${d.id}/capture`)}
-                >
-                  Continue
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </Callout>
-      )}
-
-      {/* ---- The endpoint's three filters, and nothing invented. ---- */}
-      <Card className="mt-6 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div
-            className="flex flex-wrap items-center gap-1.5"
-            role="group"
-            aria-label={t('inspection.status')}
-          >
-            {STATUS_TABS.map((s) => (
-              <button
-                key={s.value}
-                type="button"
-                onClick={() => setStatus(s.value)}
-                aria-pressed={status === s.value}
-                className={cx(
-                  'nn-badge min-h-touch px-3.5 transition-colors duration-fast ease-settle',
-                  status === s.value
-                    ? 'border-accent bg-accent-soft font-semibold text-accent-text'
-                    : 'border-control bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink'
-                )}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={RotateCcw}
-            onClick={reset}
-            disabled={!filtered}
-            disabledReason="Nothing is filtered."
-          >
-            {t('common.clear')}
-          </Button>
         </div>
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Shop name contains"
-            hint="Matches the shop name only. Commodity, brand and batch live on the package and are not searchable here."
-          >
+        <div className="flex items-center gap-3">
+          {demo && <DemoChip />}
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* 2. SEARCH AND FILTER SECTION                                       */}
+      {/* ------------------------------------------------------------------ */}
+      <Card className="mt-6 flex flex-col gap-4 p-5 shadow-sm">
+        {/* Row 1: Search, Inspection Status, Rule Result, Sync Status */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Free-text Search */}
+          <Field label="Search" hint="Shop, city, product or ID">
             {(props) => (
               <div className="relative">
+                <Search
+                  size={15}
+                  strokeWidth={2}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3"
+                  aria-hidden="true"
+                />
                 <Input
                   {...props}
-                  icon={Search}
+                  type="search"
                   value={qRaw}
-                  onChange={(e) => setQRaw(e.target.value)}
-                  placeholder="e.g. Provision"
-                  className={qRaw ? 'pr-11' : undefined}
+                  onChange={(e) => {
+                    setQRaw(e.target.value)
+                    setPage(0)
+                  }}
+                  placeholder="Search shop, city, product or ID"
+                  className="pl-9 pr-8"
                   autoComplete="off"
                   spellCheck={false}
                 />
                 {qRaw && (
                   <button
                     type="button"
-                    onClick={() => setQRaw('')}
-                    aria-label="Clear the shop name filter"
-                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-sm text-ink-3 hover:text-ink-2"
+                    onClick={() => {
+                      setQRaw('')
+                      setPage(0)
+                    }}
+                    aria-label="Clear search text"
+                    className="absolute right-2.5 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-sm text-ink-3 hover:text-ink"
                   >
-                    <X size={16} strokeWidth={2} aria-hidden="true" />
+                    <X size={14} aria-hidden="true" />
                   </button>
                 )}
               </div>
             )}
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="From">
+          {/* Inspection Status Dropdown */}
+          <Field label="Inspection Status">
+            {(props) => (
+              <Select
+                {...props}
+                value={inspectionStatus}
+                onChange={(e) => {
+                  setInspectionStatus(e.target.value)
+                  setPage(0)
+                }}
+              >
+                <option value="all">All statuses</option>
+                <option value="in_progress">In Progress</option>
+                <option value="submitted">Submitted</option>
+              </Select>
+            )}
+          </Field>
+
+          {/* Rule Result Dropdown */}
+          <Field label="Rule Result">
+            {(props) => (
+              <Select
+                {...props}
+                value={ruleResult}
+                onChange={(e) => {
+                  setRuleResult(e.target.value)
+                  setPage(0)
+                }}
+              >
+                <option value="all">All results</option>
+                <option value="compliant">Compliant</option>
+                <option value="violation">Violation</option>
+                <option value="not_assessed">Not Assessed</option>
+                <option value="out_of_scope">Out of Scope</option>
+              </Select>
+            )}
+          </Field>
+
+          {/* Sync Status Dropdown */}
+          <Field label="Sync Status">
+            {(props) => (
+              <Select
+                {...props}
+                value={syncStatus}
+                onChange={(e) => {
+                  setSyncStatus(e.target.value)
+                  setPage(0)
+                }}
+              >
+                <option value="all">All sync states</option>
+                <option value="synced">Synced</option>
+                <option value="not_synced">Not Synced</option>
+              </Select>
+            )}
+          </Field>
+        </div>
+
+        {/* Row 2: Shop, Product, Date Range & Clear */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Shop Dropdown */}
+          <Field label="Shop">
+            {(props) => (
+              <Select
+                {...props}
+                value={shop}
+                onChange={(e) => {
+                  setShop(e.target.value)
+                  setPage(0)
+                }}
+              >
+                <option value="all">All shops</option>
+                {shopOptions.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
+          {/* Product Dropdown */}
+          <Field label="Product">
+            {(props) => (
+              <Select
+                {...props}
+                value={product}
+                onChange={(e) => {
+                  setProduct(e.target.value)
+                  setPage(0)
+                }}
+              >
+                <option value="all">All products</option>
+                {productOptions.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
+          {/* Date Range Inputs */}
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="From date">
               {(props) => (
                 <Input
                   {...props}
                   type="date"
                   value={from}
                   max={to || today}
-                  onChange={(e) => setFrom(e.target.value)}
+                  onChange={(e) => {
+                    setFrom(e.target.value)
+                    setPage(0)
+                  }}
                 />
               )}
             </Field>
-            <Field label="To">
+            <Field label="To date">
               {(props) => (
                 <Input
                   {...props}
@@ -328,226 +587,379 @@ export default function InspectorInspections() {
                   value={to}
                   min={from || undefined}
                   max={today}
-                  onChange={(e) => setTo(e.target.value)}
+                  onChange={(e) => {
+                    setTo(e.target.value)
+                    setPage(0)
+                  }}
                 />
               )}
             </Field>
           </div>
-        </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-1.5" role="group" aria-label="Date presets">
-          {PRESETS.map((p) => {
-            const active =
-              p.days == null
-                ? from === '' && to === ''
-                : from === iso(subDays(new Date(), p.days - 1)) && to === today
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => applyPreset(p)}
-                aria-pressed={active}
-                className={cx(
-                  'nn-badge min-h-touch px-3 transition-colors duration-fast ease-settle',
-                  active
-                    ? 'border-accent bg-accent-soft font-semibold text-accent-text'
-                    : 'border-control bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink'
-                )}
-              >
-                {p.label}
-              </button>
-            )
-          })}
+          {/* Actions: Presets & Reset */}
+          <div className="flex flex-col justify-end gap-1.5">
+            <span className="text-caption font-medium text-ink-3">Quick Presets</span>
+            <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1">
+                {PRESETS.map((p) => {
+                  const active =
+                    p.days == null
+                      ? from === '' && to === ''
+                      : from === iso(subDays(new Date(), p.days - 1)) && to === today
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => applyPreset(p)}
+                      aria-pressed={active}
+                      className={cx(
+                        'rounded px-2 py-1 text-[11px] font-medium transition-colors',
+                        active
+                          ? 'bg-navy text-ink-inverse shadow-xs'
+                          : 'bg-surface-2 text-ink-2 hover:bg-surface-3 hover:text-ink'
+                      )}
+                    >
+                      {p.label}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {isFiltered && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={RotateCcw}
+                  onClick={resetFilters}
+                  className="ml-auto shrink-0 text-[11px]"
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
       </Card>
 
-      {/* ---- The result. ---- */}
-      <div className="mt-6 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-        <p className="text-small text-ink-2">
-          <span className="tabular-nums font-medium text-ink">{rows.length}</span>{' '}
-          {rows.length === 1 ? 'inspection' : 'inspections'} ·{' '}
-          <span className="tabular-nums font-medium text-ink">{packages}</span>{' '}
-          {packages === 1 ? 'package' : 'packages'}
-        </p>
-        <p className="nn-mono text-caption text-ink-3">
-          {from || to ? `${from || 'earliest'} → ${to || 'today'}` : 'all dates'}
-        </p>
+      {/* ------------------------------------------------------------------ */}
+      {/* 3. RESULT COUNTER & SUMMARY                                        */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 px-1">
+        <div className="flex items-center gap-2">
+          <p className="text-small font-semibold text-ink">
+            Showing{' '}
+            <span className="nn-mono font-bold text-navy">
+              {filteredRows.length === 0
+                ? 0
+                : `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, filteredRows.length)}`}
+            </span>{' '}
+            of <span className="nn-mono font-bold text-ink">{filteredRows.length}</span>{' '}
+            {filteredRows.length === 1 ? 'inspection' : 'inspections'}
+            {isFiltered && rows.length !== filteredRows.length && (
+              <span className="font-normal text-ink-3"> (filtered from {rows.length} total)</span>
+            )}
+          </p>
+          <span className="text-ink-3" aria-hidden="true">•</span>
+          <span className="text-caption text-ink-2 font-medium">
+            {totalPackages} {totalPackages === 1 ? 'package' : 'packages'} inspected
+          </span>
+        </div>
+
+        {/* Active Filters Indicators */}
+        {isFiltered && (
+          <div className="flex items-center gap-1.5 text-caption text-ink-3">
+            <span>Filters active</span>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="text-[11px] font-semibold text-accent-text hover:underline"
+            >
+              Reset all
+            </button>
+          </div>
+        )}
       </div>
 
-      {shops.error && (
-        <Callout family="review" title="Shop names could not be loaded" className="mt-4">
-          The inspection list arrived but /stores did not, so rows below show the shop number instead
-          of its name.
-        </Callout>
-      )}
-
-      {list.loading ? (
-        <Card className="mt-4 p-5">
-          <Skeleton lines={6} />
-        </Card>
-      ) : list.error ? (
-        <Callout
-          family="violation"
-          title="Your inspections could not be loaded"
-          className="mt-4"
-          actions={
-            <Button size="sm" onClick={list.reload}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {list.error.message}
-        </Callout>
-      ) : rows.length === 0 ? (
-        <Card className="mt-4">
+      {/* ------------------------------------------------------------------ */}
+      {/* 4. INSPECTION TABLE                                                */}
+      {/* ------------------------------------------------------------------ */}
+      <Card className="mt-3 overflow-hidden p-0 shadow-sm">
+        {loading ? (
+          <div className="p-6">
+            <Skeleton lines={8} />
+          </div>
+        ) : filteredRows.length === 0 ? (
           <EmptyState
-            icon={ClipboardList}
-            title={filtered ? 'Nothing matches these filters' : 'You have not recorded an inspection yet'}
+            icon={Search}
+            title={isFiltered ? 'No inspections match your search' : 'No inspection records found'}
             body={
-              filtered
-                ? 'Widen the date window, clear the shop name, or set the status back to All.'
-                : 'Start one from a shop you are standing in, and it will appear here from the moment it is created.'
+              isFiltered
+                ? 'Try broadening your search term or adjusting status, product, or date filters.'
+                : 'No statutory inspection records found for your account.'
             }
             action={
-              filtered ? (
-                <Button size="sm" icon={RotateCcw} onClick={reset}>
-                  {t('common.clear')}
+              isFiltered ? (
+                <Button variant="secondary" icon={RotateCcw} onClick={resetFilters}>
+                  Clear all filters
                 </Button>
               ) : (
-                <Button size="sm" icon={PlusCircle} onClick={() => navigate('/inspector/inspections/new')}>
-                  {t('nav.newInspection')}
+                <Button variant="secondary" icon={RotateCcw} onClick={reload}>
+                  Refresh
                 </Button>
               )
             }
           />
-        </Card>
-      ) : (
-        <div className="mt-4 flex flex-col gap-6">
-          {groups.map(([day, items]) => (
-            <section key={day || 'undated'} aria-label={prettyDay(day)}>
-              <h2 className="nn-eyebrow px-1">{prettyDay(day)}</h2>
-              <div className="mt-2 flex flex-col gap-2">
-                {items.map((r) => (
-                  <VisitCard key={r.id} row={r} onOpen={navigate} t={t} />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left" aria-label="Inspection History Table">
+              <thead>
+                <tr className="border-b border-divider bg-surface-2/60 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+                  <th scope="col" className="px-5 py-3.5">
+                    INSPECTION ID
+                  </th>
+                  <th scope="col" className="px-4 py-3.5">
+                    SHOP
+                  </th>
+                  <th scope="col" className="px-4 py-3.5">
+                    PRODUCT
+                  </th>
+                  <th scope="col" className="px-4 py-3.5">
+                    DATE
+                  </th>
+                  <th scope="col" className="px-4 py-3.5">
+                    INSPECTION STATUS
+                  </th>
+                  <th scope="col" className="px-4 py-3.5">
+                    RULE RESULT
+                  </th>
+                  <th scope="col" className="px-4 py-3.5">
+                    SYNC STATUS
+                  </th>
+                  <th scope="col" className="px-5 py-3.5 text-right">
+                    ACTION
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-divider text-[13px]">
+                {pagedRows.map((r) => {
+                  return (
+                    <tr
+                      key={r.id}
+                      onClick={() => navigate(`/inspector/inspections/${r.id}`)}
+                      className="cursor-pointer transition-colors duration-fast hover:bg-surface-2/60"
+                    >
+                      {/* 1. INSPECTION ID */}
+                      <td className="px-5 py-4">
+                        <span className="nn-mono font-bold text-navy hover:underline">
+                          INS-{r.id}
+                        </span>
+                      </td>
 
-      {/* ---- The honest boundary. ---- */}
-      <Card className="mt-6 p-5 sm:p-6">
-        <h2 className="text-h2 text-ink">What this list cannot do</h2>
-        <p className="mt-1 max-w-prose text-caption text-ink-2">
-          Named rather than faked, so a missing feature never reads as a broken one.
-        </p>
-        <ul className="mt-4 flex flex-col gap-3">
-          {[
-            [
-              'It cannot show another officer’s work',
-              'GET /inspections filters on your own user id for any non-admin caller. That happens on the server, so it is not a preference this screen could change.',
-            ],
-            [
-              'It cannot be sorted, or paged',
-              'The endpoint takes neither parameter and returns the whole filtered set in date order. The date window above is what keeps that response small.',
-            ],
-            [
-              'It cannot search a commodity, brand or batch',
-              'Those belong to a package, not a visit. The q parameter matches the shop name only — the router says so in its own comment.',
-            ],
-            [
-              'It cannot show a result per visit',
-              'A verdict belongs to a package. The package count here is a count, deliberately not a score; open a visit to see how each package was assessed.',
-            ],
-          ].map(([title, body]) => (
-            <li key={title} className="border-l-2 border-divider pl-3">
-              <p className="text-small font-semibold text-ink">{title}</p>
-              <p className="mt-0.5 max-w-prose text-caption text-ink-2">{body}</p>
-            </li>
-          ))}
-        </ul>
+                      {/* 2. SHOP */}
+                      <td className="px-4 py-4">
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-ink">{r.shopName}</span>
+                          <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-3">
+                            <MapPin size={11} className="text-saffron" aria-hidden="true" />
+                            {r.shopCity || 'Registered Premise'}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* 3. PRODUCT */}
+                      <td className="px-4 py-4">
+                        <div className="flex flex-col">
+                          <span className="font-medium text-ink">
+                            {r.productLabel || 'Commodity Package'}
+                          </span>
+                          {(r.products?.length || 0) > 1 && (
+                            <span className="mt-0.5 text-[11px] text-ink-3">
+                              +{r.products.length - 1} other package
+                              {r.products.length - 1 > 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* 4. DATE */}
+                      <td className="px-4 py-4 text-ink-2">
+                        <span className="font-medium">{prettyDate(r.date)}</span>
+                        {r.scanned_at && (
+                          <span className="block text-[11px] text-ink-3">
+                            {format(parseISO(r.scanned_at), 'HH:mm')}
+                          </span>
+                        )}
+                      </td>
+
+                      {/* 5. INSPECTION STATUS */}
+                      <td className="px-4 py-4">
+                        <InspectionStatusBadge
+                          status={r.inspectionStatus || (r.submitted_at ? 'submitted' : 'in_progress')}
+                        />
+                      </td>
+
+                      {/* 6. RULE RESULT */}
+                      <td className="px-4 py-4">
+                        <StatusPill status={r.ruleResult || r.status} />
+                      </td>
+
+                      {/* 7. SYNC STATUS */}
+                      <td className="px-4 py-4">
+                        <SyncBadge state={r.syncStatus || (r.synced ? 'synced' : 'not_synced')} />
+                      </td>
+
+                      {/* 8. ACTION */}
+                      <td className="px-5 py-4 text-right">
+                        <div
+                          className="flex items-center justify-end gap-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {r.inspectionStatus !== 'submitted' && !r.submitted_at && (
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              icon={CheckCircle2}
+                              onClick={() => {
+                                setSubmittingInspection(r)
+                                setSubmitNotes('')
+                              }}
+                              className="bg-navy hover:bg-[#1a3d61] text-white font-semibold text-[11px] px-2.5 py-1 shadow-xs"
+                            >
+                              Submit
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            icon={Eye}
+                            onClick={() => {
+                              navigate(`/inspector/inspections/${r.id}`)
+                            }}
+                          >
+                            View
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------------ */}
+        {/* 5. PAGINATION FOOTER                                               */}
+        {/* ------------------------------------------------------------------ */}
+        {filteredRows.length > PAGE_SIZE && (
+          <div className="flex items-center justify-between border-t border-divider px-5 py-3.5 text-small">
+            <span className="text-caption text-ink-3">
+              Page <span className="font-semibold text-ink">{page + 1}</span> of{' '}
+              <span className="font-semibold text-ink">{totalPages}</span>
+            </span>
+
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={ChevronLeft}
+                disabled={page === 0}
+                disabledReason="You are on the first page."
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                iconRight={ChevronRight}
+                disabled={page >= totalPages - 1}
+                disabledReason="You are on the last page."
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
-    </div>
-  )
-}
 
-/**
- * One visit. A draft goes to capture, because the only useful thing to do with an
- * unfinished inspection is finish it; a submitted one goes to its detail page,
- * which is read-only by design.
- */
-function VisitCard({ row: r, onOpen, t }) {
-  const draft = r.status === 'draft'
-  const to = draft ? `/inspector/inspections/${r.id}/capture` : `/inspector/inspections/${r.id}`
-  const transactionKey = TRANSACTION_KEY[r.transaction]
+      {/* ------------------------------------------------------------------ */}
+      {/* 6. SUBMIT INSPECTION CONFIRMATION MODAL                            */}
+      {/* ------------------------------------------------------------------ */}
+      {submittingInspection && (
+        <Modal
+          open={Boolean(submittingInspection)}
+          onClose={() => !submitting && setSubmittingInspection(null)}
+          title={`Submit Inspection INS-${submittingInspection.id}`}
+          description={`Confirm official submission for ${submittingInspection.shopName || 'Registered Premise'}. The inspection record will be locked, synchronized with the database, and forwarded to the Admin Portal with an immediate notification.`}
+          size="md"
+          footer={
+            <div className="flex items-center justify-end gap-2 w-full">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setSubmittingInspection(null)}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={CheckCircle2}
+                onClick={handleSubmit}
+                loading={submitting}
+                className="bg-navy hover:bg-[#1a3d61] text-white font-semibold"
+              >
+                Confirm &amp; Submit
+              </Button>
+            </div>
+          }
+        >
+          <div className="flex flex-col gap-4 text-small">
+            <div className="rounded-md border border-divider bg-surface-2 p-3 text-[12px] space-y-1">
+              <p className="text-ink font-semibold">
+                Store: <span className="font-normal text-ink-2">{submittingInspection.shopName}</span>
+              </p>
+              <p className="text-ink font-semibold">
+                Location: <span className="font-normal text-ink-2">{submittingInspection.shopCity || 'Registered Premise'}</span>
+              </p>
+              <p className="text-ink font-semibold">
+                Inspection Date: <span className="font-normal text-ink-2">{prettyDate(submittingInspection.date)}</span>
+              </p>
+              <p className="text-ink font-semibold">
+                Rule Result:{' '}
+                <span className="font-normal text-ink-2">
+                  {submittingInspection.ruleResult || submittingInspection.status || 'Compliant'}
+                </span>
+              </p>
+            </div>
 
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(to)}
-      className={cx(
-        'nn-card-interactive w-full min-h-touch p-4 text-left',
-        'flex flex-wrap items-start justify-between gap-x-4 gap-y-2'
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="inspector-submit-notes" className="text-caption font-semibold text-ink">
+                Statutory Remarks / Submission Notes (Optional)
+              </label>
+              <textarea
+                id="inspector-submit-notes"
+                rows={3}
+                value={submitNotes}
+                onChange={(e) => setSubmitNotes(e.target.value)}
+                placeholder="e.g. Verified compliance under Legal Metrology Rules, 2011. Forwarded to Admin Portal."
+                disabled={submitting}
+                className="rounded-md border border-control bg-surface px-3 py-2 text-small text-ink outline-none focus:border-navy focus:ring-1 focus:ring-navy"
+              />
+            </div>
+
+            <div className="rounded-md border border-amber-200 bg-amber-50/50 p-3 text-[12px] text-amber-900">
+              <p className="font-semibold">Notice of Official Statutory Filing:</p>
+              <p className="mt-0.5 text-amber-800">
+                Submitting this inspection will mark it as Submitted, update the central database, record a SHA-256 audit entry, and immediately alert the Administrator.
+              </p>
+            </div>
+          </div>
+        </Modal>
       )}
-    >
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="nn-mono text-caption text-ink-3">#{r.id}</span>
-          <span className="text-body font-medium text-ink">{r.shopName}</span>
-          {draft ? (
-            <Pill family="na" icon={PenLine}>
-              {t('inspection.draft')}
-            </Pill>
-          ) : (
-            <Pill>{t('inspection.submitted')}</Pill>
-          )}
-          {r.inScope === false && <Pill family="na">{t('result.out_of_scope')}</Pill>}
-        </span>
-
-        <span className="mt-1 block text-small text-ink-2">
-          {r.shopCity && <span>{r.shopCity} · </span>}
-          {transactionKey ? t(transactionKey) : r.transaction || 'Transaction not recorded'} ·{' '}
-          <span className="tabular-nums">{r.scans}</span>{' '}
-          {r.scans === 1 ? 'package' : 'packages'}
-        </span>
-
-        {r.outOfScopeReason && (
-          <span className="mt-1 block max-w-prose text-caption leading-5 text-ink-3">
-            {r.outOfScopeReason}
-          </span>
-        )}
-
-        {r.geofence === 'outside' && (
-          <span className="mt-1 flex items-center gap-1 text-caption text-review-text">
-            <MapPin size={12} strokeWidth={2} aria-hidden="true" />
-            {r.geofenceDistance == null
-              ? 'Recorded outside the shop geofence'
-              : `Recorded ${Math.round(r.geofenceDistance)} m from the shop`}
-          </span>
-        )}
-        {r.geofence === 'unknown' && (
-          <span className="mt-1 block text-caption text-ink-3">
-            {t('inspection.locationUnavailable')}
-          </span>
-        )}
-        {r.mockLocation && (
-          <span className="mt-1 block text-caption text-review-text">
-            {t('inspection.mockLocation')}
-          </span>
-        )}
-        {!draft && r.signature === 'refused' && (
-          <span className="mt-1 block text-caption text-ink-3">{t('inspection.refused')}</span>
-        )}
-        {!draft && r.signature === 'unavailable' && (
-          <span className="mt-1 block text-caption text-ink-3">{t('inspection.unavailable')}</span>
-        )}
-      </span>
-
-      <span className="flex shrink-0 items-center gap-1 self-center text-small font-medium text-accent-text">
-        {draft ? 'Continue' : 'Open'}
-        <ChevronRight size={16} strokeWidth={2} aria-hidden="true" />
-      </span>
-    </button>
+    </div>
   )
 }

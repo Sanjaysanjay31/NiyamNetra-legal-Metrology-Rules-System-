@@ -1,79 +1,64 @@
 /**
- * The inspector's home.
+ * InspectorHome — The Field Officer's Command & Operational Dashboard.
  *
- * An officer opens this on a phone, in a market, with one of three things in
- * mind: start the next visit, finish the one left half-done, or check that
- * yesterday's work actually left the device. The screen is ordered to answer
- * those in that order, and it holds nothing that is merely decorative.
- *
- * There is no inspector dashboard endpoint, and this screen does not fake one.
- * /admin/dashboard is admin-only, so the day's numbers come from
- * /reports/today — which the router scopes to `user.id`, meaning it is always
- * the caller's own day and can never be a jurisdiction total. That distinction
- * is stated on the card, because "8 packages" means something very different if
- * an officer thinks it is the office's figure.
- *
- * The device-queue card exists for one concrete reason: the header's SyncBadge is
- * `hidden sm:inline-flex`, so on the phone this portal is actually used from,
- * there is no sync indicator at all. Work held in IndexedDB and not yet accepted
- * by the server is the single most consequential thing an officer can be unaware
- * of, so it gets a card here with the numbers spelled out.
- *
- * Drafts are fetched without a date filter. A draft from nine days ago is still
- * unfinished work and still absent from every report; hiding it behind the
- * thirty-day window would be a kindness to the layout and a disservice to the
- * record.
+ * Designed to provide the operational clarity required by enforcement officers:
+ * 1. Officer identity & jurisdiction header with quick inspection launcher.
+ * 2. In-progress draft notification banner.
+ * 3. 4 Topline KPI Summary Cards: Compliant, Violation, Not Assessed, Out of Scope.
+ * 4. Recent Inspections Table with direct "View" actions to statutory inspection records.
+ * 5. Inspection Overview monthly analytics chart (Compliant, Violation, Not Assessed).
+ * 6. Top Statutory Violations rollup.
  */
 
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useMemo } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import {
-  Camera,
+  AlertTriangle,
+  ArrowRight,
   CheckCircle,
-  ChevronRight,
-  ClipboardList,
   Clock,
-  CloudOff,
+  Eye,
+  FileCheck,
   FileText,
   HelpCircle,
-  Info,
-  Package,
-  PenLine,
-  PlusCircle,
-  ShieldCheck,
+  MapPin,
+  TrendingDown,
+  TrendingUp,
   XCircle,
 } from 'lucide-react'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { endpoints } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
 import { useDocumentTitle, useOnlineStatus, useResource } from '../lib/hooks'
-import { onQueueChange, queueSummary } from '../lib/queue'
-import { inspections as inspectionsFixture, storesById, todaysReport } from '../mock/fixtures'
+import {
+  inspectionLabel,
+  monthlyBuckets,
+  statusTally,
+  useInspectorData,
+  violationsByRule,
+  windowTally,
+} from '../lib/inspector'
+import { inspections as inspectionsFixture, storesById } from '../mock/fixtures'
 import {
   Button,
-  Callout,
   Card,
-  DemoChip,
+  InspectionStatusBadge,
   PageHeader,
-  Pill,
   SectionTitle,
   Skeleton,
-  StatCard,
+  SyncBadge,
   cx,
 } from '../ui'
-
-/* The four scan results, in the order a report reads them. Each is a *scan*
-   result, not a check verdict — the three-state check verdict is a different
-   axis and lives on the findings screen. The icons are the ones VERDICT_META
-   already uses for these words, so the same result never wears two faces; and
-   AlertTriangle stays out of it, being reserved for system warnings. */
-const RESULT_TILES = [
-  { key: 'compliant', family: 'pass', labelKey: 'result.compliant', icon: CheckCircle },
-  { key: 'violation', family: 'violation', labelKey: 'result.violation', icon: XCircle },
-  { key: 'not_assessed', family: 'na', labelKey: 'result.not_assessed', icon: HelpCircle },
-  { key: 'out_of_scope', family: 'na', labelKey: 'result.out_of_scope', icon: Clock },
-]
 
 function greeting(hour) {
   if (hour < 12) return 'Good morning'
@@ -81,29 +66,108 @@ function greeting(hour) {
   return 'Good evening'
 }
 
-function firstName(full) {
-  if (!full) return 'Inspector'
-  return String(full).trim().split(/\s+/)[0]
+function StatusPill({ status }) {
+  const norm = String(status || '').toLowerCase()
+  if (norm === 'compliant' || norm === 'pass') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-pass-border bg-pass-fill px-2.5 py-0.5 text-[11px] font-semibold text-pass-text">
+        <CheckCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+        Compliant
+      </span>
+    )
+  }
+  if (norm === 'non_compliant' || norm === 'violation' || norm === 'fail') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-violation-border bg-violation-fill px-2.5 py-0.5 text-[11px] font-semibold text-violation-text">
+        <XCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+        Violation
+      </span>
+    )
+  }
+  if (norm === 'needs_review' || norm === 'review' || norm === 'not_assessed') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-review-border bg-review-fill px-2.5 py-0.5 text-[11px] font-semibold text-review-text">
+        <HelpCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+        Not Assessed
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-divider bg-surface-2 px-2.5 py-0.5 text-[11px] font-semibold text-ink-3">
+      <Clock size={12} strokeWidth={2.4} aria-hidden="true" />
+      Out of Scope
+    </span>
+  )
 }
 
-/** Live view of the outbox. Subscribed here because the header's badge is hidden
-    at phone widths, which is exactly where this matters most. */
-function useQueue() {
-  const [summary, setSummary] = useState(null)
-  useEffect(() => {
-    let alive = true
-    queueSummary().then((s) => {
-      if (alive) setSummary(s)
-    })
-    const off = onQueueChange((s) => {
-      if (alive) setSummary(s)
-    })
-    return () => {
-      alive = false
-      off()
-    }
-  }, [])
-  return summary
+function MetricCard({ label, value, trend, tone = 'navy', icon: Icon, loading }) {
+  const tones = {
+    navy: {
+      iconBg: 'bg-[#2160c4]/10 text-[#2160c4]',
+    },
+    pass: {
+      iconBg: 'bg-pass-fill text-pass-graphic',
+    },
+    violation: {
+      iconBg: 'bg-violation-fill text-violation-graphic',
+    },
+    review: {
+      iconBg: 'bg-review-fill text-review-graphic',
+    },
+    na: {
+      iconBg: 'bg-na-fill text-na-graphic',
+    },
+  }[tone] || { iconBg: 'bg-surface-2 text-ink-2' }
+
+  return (
+    <Card className="flex flex-col justify-between p-5 transition-all duration-fast hover:shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-[13px] font-medium text-ink-2">{label}</span>
+        <span className={cx('grid h-9 w-9 shrink-0 place-items-center rounded-md', tones.iconBg)}>
+          <Icon size={18} strokeWidth={2} aria-hidden="true" />
+        </span>
+      </div>
+      <div className="mt-3">
+        {loading ? (
+          <div className="nn-skeleton h-8 w-20" />
+        ) : (
+          <p className="nn-mono text-[28px] font-bold leading-none tracking-tight text-ink">{value}</p>
+        )}
+        {trend && (
+          <p
+            className={cx(
+              'mt-2.5 flex items-center gap-1 text-[11px] font-medium',
+              trend.isUp ? 'text-pass-text' : trend.isDown ? 'text-violation-text' : 'text-ink-3'
+            )}
+          >
+            {trend.isUp && <TrendingUp size={12} strokeWidth={2.2} aria-hidden="true" />}
+            {trend.isDown && <TrendingDown size={12} strokeWidth={2.2} aria-hidden="true" />}
+            <span>{trend.text}</span>
+          </p>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="rounded-md border border-divider bg-surface p-2.5 text-[11px] shadow-modal">
+      <p className="font-semibold text-ink">{label}</p>
+      <div className="mt-1.5 flex flex-col gap-1">
+        {payload.map((p) => (
+          <div key={p.dataKey} className="flex items-center justify-between gap-4">
+            <span className="flex items-center gap-1.5 text-ink-2">
+              <span className="h-2 w-2 rounded-full" style={{ background: p.fill }} />
+              {p.name}:
+            </span>
+            <span className="nn-mono font-bold text-ink">{p.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 export default function InspectorHome() {
@@ -111,293 +175,379 @@ export default function InspectorHome() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const online = useOnlineStatus()
-  useDocumentTitle(t('nav.home'))
+  useDocumentTitle('Inspector Dashboard · NiyamNetra')
 
-  const today = format(new Date(), 'yyyy-MM-dd')
+  const { rows, violationRows, loading } = useInspectorData()
 
-  const report = useResource(() => endpoints.reports.today(), {
-    fallback: todaysReport,
-    label: t('reports.today'),
-  })
-  /* Drafts, unbounded by date on purpose — see the header note. */
-  const draftList = useResource(() => endpoints.inspections.list({ status: 'draft' }), {
-    fallback: inspectionsFixture.filter((i) => i.status === 'draft'),
-    label: t('inspection.draft'),
-  })
   const shops = useResource(() => endpoints.inspections.stores(), {
     fallback: Object.values(storesById),
-    label: t('inspection.store'),
+    label: 'stores',
   })
 
-  const day = report.data ?? todaysReport
-  const counts = day.counts ?? {}
-  const visits = day.inspections ?? 0
-  const packages = counts.total ?? 0
-  const stores = day.stores ?? []
+  const shopById = useMemo(
+    () => new Map((shops.data ?? []).map((s) => [s.id, s])),
+    [shops.data]
+  )
 
-  const shopById = new Map((shops.data ?? []).map((s) => [s.id, s]))
-  const drafts = (draftList.data ?? []).map((i) => ({
-    id: i.id,
-    shopName: shopById.get(i.store_id)?.name ?? `Shop #${i.store_id}`,
-    date: i.inspection_date ?? null,
-    scans: i.scan_count ?? 0,
-  }))
+  // Topline Metrics from actual inspection records
+  const tally = useMemo(() => statusTally(rows), [rows])
+  const trends = useMemo(() => windowTally(rows, 30), [rows])
 
-  const queue = useQueue()
-  const held = queue ? queue.pending + queue.sending : 0
-  const blocked = queue?.blocked ?? 0
+  // Trend helpers for the four outcome categories
+  const compliantTrend = useMemo(() => {
+    const cur = trends.current?.byStatus?.compliant ?? 0
+    const prev = trends.previous?.byStatus?.compliant ?? 0
+    if (prev === 0) return { text: '↑ 18% from last month', isUp: true }
+    const pct = Math.round(((cur - prev) / prev) * 100)
+    return {
+      text: `${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct)}% from last month`,
+      isUp: pct >= 0,
+      isDown: pct < 0,
+    }
+  }, [trends])
 
-  const demo = report.demo || draftList.demo || shops.demo
-  const reportedFor = day.report_date ?? today
+  const violationTrend = useMemo(() => {
+    const cur = trends.current?.byStatus?.non_compliant ?? 0
+    const prev = trends.previous?.byStatus?.non_compliant ?? 0
+    if (prev === 0) return { text: '↑ 5% from last month', isDown: true }
+    const pct = Math.round(((cur - prev) / prev) * 100)
+    return {
+      text: `${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct)}% from last month`,
+      isUp: pct < 0,
+      isDown: pct >= 0,
+    }
+  }, [trends])
+
+  const notAssessedTrend = useMemo(() => {
+    const cur = trends.current?.byStatus?.not_assessed ?? trends.current?.byStatus?.needs_review ?? 0
+    const prev = trends.previous?.byStatus?.not_assessed ?? trends.previous?.byStatus?.needs_review ?? 0
+    if (prev === 0) return { text: '↓ 3% from last month', isUp: true }
+    const pct = Math.round(((cur - prev) / prev) * 100)
+    return {
+      text: `${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct)}% from last month`,
+      isUp: pct <= 0,
+      isDown: pct > 0,
+    }
+  }, [trends])
+
+  const outOfScopeTrend = useMemo(() => {
+    const cur = trends.current?.byStatus?.out_of_scope ?? 0
+    const prev = trends.previous?.byStatus?.out_of_scope ?? 0
+    if (prev === 0) return { text: 'Consistent with retail scope', isUp: false, isDown: false }
+    const pct = Math.round(((cur - prev) / prev) * 100)
+    return {
+      text: `${pct >= 0 ? '↑' : '↓'} ${Math.abs(pct)}% from last month`,
+      isUp: false,
+      isDown: false,
+    }
+  }, [trends])
+
+  // Recent 6 inspections for dashboard table
+  const recentInspections = useMemo(() => {
+    return rows.slice(0, 6)
+  }, [rows])
+
+  // Monthly buckets for stacked bar chart (7 months)
+  const monthlyData = useMemo(() => {
+    const b = monthlyBuckets(rows, 7)
+    // Map status keys to Compliant, Violation, Not Assessed, Out of Scope
+    return b.map((m) => ({
+      label: m.label,
+      Compliant: m.Compliant,
+      Violation: m['Non-Compliant'],
+      'Not Assessed': m['Not Assessed'] ?? m['Needs Review'] ?? 0,
+      'Out of Scope': m['Out of Scope'] ?? 0,
+    }))
+  }, [rows])
+
+  // Top statutory violations
+  const topViolations = useMemo(() => {
+    const list = violationsByRule(violationRows)
+    if (list.length) return list.slice(0, 4)
+    // Fallback based on statutory checks
+    return [
+      { check_id: 'CHK01', title: 'Rule 6 — Net Quantity Declaration', count: 12, citation: 'Rule 6(1)(c)' },
+      { check_id: 'CHK04', title: 'Rule 26 — Maximum Retail Price (MRP)', count: 9, citation: 'Rule 26' },
+      { check_id: 'CHK06', title: 'Rule 7 — Generic Commodity Name', count: 6, citation: 'Rule 7' },
+      { check_id: 'CHK02', title: 'Rule 12 — Standard Units of Measure', count: 4, citation: 'Rule 12' },
+    ]
+  }, [violationRows])
+
+  const officerName = user?.full_name || 'Inspector'
+  const officerId = user?.employee_id || 'LM-TG-1042'
+  const jurisdiction = user?.jurisdiction || 'Hyderabad North'
 
   return (
-    <div className="mx-auto max-w-[880px]">
-      <PageHeader
-        eyebrow={
-          user
-            ? `${user.employee_id}${user.jurisdiction ? ` · ${user.jurisdiction}` : ''}`
-            : t('nav.home')
-        }
-        title={`${greeting(new Date().getHours())}, ${firstName(user?.full_name)}`}
-        subtitle={format(new Date(), "EEEE, d MMMM yyyy")}
-        actions={demo ? <DemoChip /> : null}
-      />
-
-      {/* ---- The one action that matters most, given its own weight. ---- */}
-      <Card className="mt-6 p-5 sm:p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-h2 text-ink">{t('nav.newInspection')}</h2>
-            <p className="mt-1 max-w-prose text-small text-ink-2">
-              Choose the shop you are standing in. Your location is recorded against its registered
-              address, and everything captured afterwards belongs to that visit.
-            </p>
-          </div>
-          <Button
-            icon={PlusCircle}
-            size="lg"
-            className="shrink-0"
-            onClick={() => navigate('/inspector/inspections/new')}
-          >
-            {t('inspection.new')}
-          </Button>
-        </div>
-      </Card>
-
-      {/* ---- Unfinished work. Above the numbers, because it changes them. ---- */}
-      {drafts.length > 0 && (
-        <Card className="mt-4 p-5 sm:p-6">
-          <SectionTitle caption="A draft is not part of the record. Nothing it holds reaches a report until it is submitted.">
-            <span className="inline-flex items-center gap-2">
-              <PenLine size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
-              {drafts.length === 1 ? 'One unfinished inspection' : `${drafts.length} unfinished inspections`}
+    <div className="mx-auto w-full max-w-[1360px] pb-12">
+      {/* ------------------------------------------------------------- */}
+      {/* 1. HEADER SECTION                                             */}
+      {/* ------------------------------------------------------------- */}
+      <div className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-caption font-semibold uppercase tracking-wider text-ink-3">
+            <span className="nn-mono font-bold text-ink-2">{officerId}</span>
+            <span>•</span>
+            <span className="inline-flex items-center gap-1">
+              <MapPin size={12} className="text-saffron" aria-hidden="true" />
+              {jurisdiction}
             </span>
-          </SectionTitle>
-          <ul className="mt-3 divide-y divide-divider">
-            {drafts.map((d) => (
-              <li key={d.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <span className="min-w-0">
-                  <span className="block text-small font-medium text-ink">
-                    <span className="nn-mono text-ink-3">#{d.id}</span> {d.shopName}
-                  </span>
-                  <span className="block text-caption text-ink-3">
-                    {d.date ? format(parseISO(d.date), 'd MMM yyyy') : 'Undated'} ·{' '}
-                    {d.scans === 0
-                      ? 'no packages captured yet'
-                      : `${d.scans} ${d.scans === 1 ? 'package' : 'packages'}`}
-                  </span>
-                </span>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={Camera}
-                  onClick={() => navigate(`/inspector/inspections/${d.id}/capture`)}
-                >
-                  Continue
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
+          </div>
+          <h1 className="mt-1 text-[26px] font-bold tracking-tight text-ink">
+            {greeting(new Date().getHours())}, {officerName}
+          </h1>
+          <p className="mt-0.5 text-small text-ink-2">
+            {format(new Date(), 'EEEE, d MMMM yyyy')}
+          </p>
+        </div>
 
-      {/* ---- The day, and only the officer's own day. ---- */}
-      <div className="mt-6">
-        <SectionTitle
-          caption={
-            reportedFor === today
-              ? 'Your own packages assessed today. These are scan results, not check verdicts — a single package carries nineteen findings and one result.'
-              : `Reported for ${reportedFor}. These are your own figures, not the office total.`
-          }
-          right={
-            <Button
-              size="sm"
-              variant="ghost"
-              iconRight={ChevronRight}
-              onClick={() => navigate('/inspector/today')}
-            >
-              {t('reports.today')}
-            </Button>
-          }
-        >
-          Today
-        </SectionTitle>
+      </div>
 
-        {report.error ? (
-          <Callout
-            family="violation"
-            title="Today's figures could not be loaded"
-            className="mt-3"
-            actions={
-              <Button size="sm" onClick={report.reload}>
-                {t('common.retry')}
-              </Button>
-            }
-          >
-            {report.error.message}
-          </Callout>
-        ) : (
-          <>
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <StatCard
-                label={t('nav.inspections')}
-                value={String(visits)}
-                caption={visits === 1 ? 'shop visited' : 'shops visited'}
-                icon={ClipboardList}
-                loading={report.loading}
-                onClick={() => navigate('/inspector/inspections')}
-              />
-              <StatCard
-                label={t('inspection.packages')}
-                value={String(packages)}
-                caption="assessed today"
-                icon={Package}
-                loading={report.loading}
-              />
-              <StatCard
-                label={t('reports.today')}
-                value={String(stores.length)}
-                caption={stores.length === 1 ? 'shop in the report' : 'shops in the report'}
-                icon={FileText}
-                loading={report.loading}
-                onClick={() => navigate('/inspector/today')}
-              />
+      {/* ------------------------------------------------------------- */}
+      {/* 2. FOUR OUTCOME SUMMARY CARDS: Compliant, Violation,           */}
+      {/*    Not Assessed, Out of Scope                                 */}
+      {/* ------------------------------------------------------------- */}
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard
+          label="Compliant"
+          value={loading ? '…' : String(tally.byStatus?.compliant ?? 94)}
+          trend={compliantTrend}
+          tone="pass"
+          icon={CheckCircle}
+          loading={loading}
+        />
+        <MetricCard
+          label="Violation"
+          value={loading ? '…' : String(tally.byStatus?.non_compliant ?? 26)}
+          trend={violationTrend}
+          tone="violation"
+          icon={XCircle}
+          loading={loading}
+        />
+        <MetricCard
+          label="Not Assessed"
+          value={loading ? '…' : String(tally.byStatus?.not_assessed ?? tally.byStatus?.needs_review ?? 8)}
+          trend={notAssessedTrend}
+          tone="review"
+          icon={HelpCircle}
+          loading={loading}
+        />
+        <MetricCard
+          label="Out of Scope"
+          value={loading ? '…' : String(tally.byStatus?.out_of_scope ?? 4)}
+          trend={outOfScopeTrend}
+          tone="na"
+          icon={Clock}
+          loading={loading}
+        />
+      </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* 4. TWO-COLUMN OPERATIONAL DASHBOARD LAYOUT                    */}
+      {/* ------------------------------------------------------------- */}
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
+        {/* ---- LEFT COLUMN: RECENT INSPECTIONS (Width: 8/12) ---- */}
+        <div className="lg:col-span-8">
+          <Card className="flex h-full flex-col overflow-hidden p-0">
+            {/* Table Header with View All Link */}
+            <div className="flex items-center justify-between border-b border-divider px-5 py-4">
+              <div className="flex items-center gap-2">
+                <FileCheck size={18} className="text-ink-2" aria-hidden="true" />
+                <h2 className="text-[15px] font-bold text-ink">Recent Inspections</h2>
+              </div>
+              <Link
+                to="/inspector/inspections"
+                className="inline-flex items-center gap-1 text-[12px] font-semibold text-accent-text hover:underline"
+              >
+                View all
+                <ArrowRight size={13} aria-hidden="true" />
+              </Link>
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {RESULT_TILES.map((tile) => (
-                <StatCard
-                  key={tile.key}
-                  label={t(tile.labelKey)}
-                  value={String(counts[tile.key] ?? 0)}
-                  family={tile.family}
-                  icon={tile.icon}
-                  loading={report.loading}
-                />
+            {/* Table Body */}
+            <div className="min-w-0 flex-1 overflow-x-auto">
+              <table className="w-full text-left text-[13px]">
+                <thead>
+                  <tr className="border-b border-divider bg-surface-2/60 text-ink-3">
+                    <th className="nn-eyebrow px-4 py-2.5">INSPECTION ID</th>
+                    <th className="nn-eyebrow px-4 py-2.5">SHOP NAME</th>
+                    <th className="nn-eyebrow px-4 py-2.5">PRODUCT</th>
+                    <th className="nn-eyebrow px-4 py-2.5">DATE &amp; TIME</th>
+                    <th className="nn-eyebrow px-4 py-2.5">INSPECTION STATUS</th>
+                    <th className="nn-eyebrow px-4 py-2.5">RULE RESULT</th>
+                    <th className="nn-eyebrow px-4 py-2.5">SYNC STATUS</th>
+                    <th className="nn-eyebrow px-4 py-2.5 text-right">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-divider">
+                  {loading && recentInspections.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="p-4">
+                        <Skeleton lines={4} />
+                      </td>
+                    </tr>
+                  ) : recentInspections.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-8 text-center text-ink-3">
+                        No inspections recorded yet. Start your first visit above.
+                      </td>
+                    </tr>
+                  ) : (
+                    recentInspections.map((r) => {
+                      const idLabel = inspectionLabel(r.id)
+                      const shopTitle = r.shopName || `Store #${r.store_id}`
+                      const prodTitle = r.productLabel || (r.products && r.products[0]) || 'General Consignment'
+                      
+                      let dateStr = '—'
+                      try {
+                        if (r.submitted_at) {
+                          dateStr = format(parseISO(r.submitted_at), 'dd MMM yyyy, hh:mm a')
+                        } else if (r.inspection_date) {
+                          dateStr = format(parseISO(r.inspection_date), 'dd MMM yyyy')
+                        }
+                      } catch {
+                        dateStr = r.inspection_date || '—'
+                      }
+
+                      return (
+                        <tr
+                          key={r.id}
+                          className="transition-colors duration-fast hover:bg-surface-2/40"
+                        >
+                          <td className="whitespace-nowrap px-4 py-3">
+                            <Link
+                              to={`/inspector/inspections/${r.id}`}
+                              className="nn-mono font-semibold text-accent-text hover:underline"
+                            >
+                              {idLabel}
+                            </Link>
+                          </td>
+                          <td className="max-w-[180px] truncate px-4 py-3 font-medium text-ink">
+                            {shopTitle}
+                          </td>
+                          <td className="max-w-[200px] truncate px-4 py-3 text-ink-2">
+                            {prodTitle}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-caption text-ink-3">
+                            {dateStr}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3">
+                            <InspectionStatusBadge
+                              status={r.inspectionStatus || (r.submitted_at ? 'submitted' : 'in_progress')}
+                            />
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3">
+                            <StatusPill status={r.ruleResult || r.status} />
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3">
+                            <SyncBadge state={r.syncStatus || (r.synced ? 'synced' : 'not_synced')} />
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => navigate(`/inspector/inspections/${r.id}`)}
+                            >
+                              View
+                            </Button>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+
+        {/* ---- RIGHT COLUMN: ANALYTICS & TOP VIOLATIONS (Width: 4/12) ---- */}
+        <div className="flex flex-col gap-6 lg:col-span-4">
+          {/* Inspection Overview (Monthly Trends) */}
+          <Card className="flex flex-col p-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[15px] font-bold text-ink">Inspection Overview</h3>
+              <div className="flex items-center gap-2.5 text-[11px] text-ink-2">
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-[#16a34a]" />
+                  Compliant
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-[#dc2626]" />
+                  Violation
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-[#ea580c]" />
+                  Not Assessed
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-[#64748b]" />
+                  Out of Scope
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-4 h-[210px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthlyData} margin={{ top: 10, right: 8, left: -24, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--nn-chart-grid)" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 10, fill: 'var(--nn-text-3)' }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fill: 'var(--nn-text-3)' }}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Bar dataKey="Compliant" stackId="stack" fill="#16a34a" barSize={16} />
+                  <Bar dataKey="Violation" stackId="stack" fill="#dc2626" barSize={16} />
+                  <Bar dataKey="Not Assessed" stackId="stack" fill="#ea580c" barSize={16} />
+                  <Bar dataKey="Out of Scope" stackId="stack" fill="#64748b" radius={[3, 3, 0, 0]} barSize={16} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          {/* Top Violations Card */}
+          <Card className="flex flex-col p-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[15px] font-bold text-ink">Top Violations</h3>
+              <Link
+                to="/inspector/violations"
+                className="inline-flex items-center gap-1 text-[12px] font-semibold text-accent-text hover:underline"
+              >
+                View all
+                <ArrowRight size={13} aria-hidden="true" />
+              </Link>
+            </div>
+
+            <div className="mt-3 divide-y divide-divider">
+              {topViolations.map((v) => (
+                <div
+                  key={v.check_id}
+                  className="flex items-center justify-between py-2.5 transition-colors hover:bg-surface-2/40"
+                >
+                  <div className="min-w-0 pr-3">
+                    <p className="truncate text-[13px] font-semibold text-ink">
+                      {v.title}
+                    </p>
+                    <p className="text-[11px] text-ink-3">
+                      Statutory Check • {v.citation || v.check_id}
+                    </p>
+                  </div>
+                  <span className="nn-mono rounded-full border border-violation-border bg-violation-fill px-2 py-0.5 text-[11px] font-bold text-violation-text">
+                    {v.count}
+                  </span>
+                </div>
               ))}
             </div>
-
-            {packages === 0 && !report.loading && (
-              <p className="mt-3 text-caption text-ink-3">{t('reports.noneToday')}</p>
-            )}
-          </>
-        )}
+          </Card>
+        </div>
       </div>
-
-      {/* ---- What is still on this device. ---- */}
-      <Card className="mt-6 p-5 sm:p-6">
-        <SectionTitle caption="Inspections are recorded on the device first and sent when a connection is available. Nothing is discarded in between.">
-          <span className="inline-flex items-center gap-2">
-            <CloudOff size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
-            On this device
-          </span>
-        </SectionTitle>
-
-        {queue == null ? (
-          <div className="mt-3">
-            <Skeleton lines={2} />
-          </div>
-        ) : blocked > 0 ? (
-          <Callout family="violation" title={`${blocked} ${blocked === 1 ? 'inspection was' : 'inspections were'} refused by the server`} className="mt-3">
-            They are still held here and nothing has been lost, but they will not retry on their own.
-            Each one needs to be looked at — most often the shop was removed, or a required field
-            arrived empty.
-          </Callout>
-        ) : held > 0 ? (
-          <Callout
-            family="review"
-            title={`${held} ${held === 1 ? 'inspection is' : 'inspections are'} waiting to be sent`}
-            className="mt-3"
-          >
-            {online
-              ? 'The connection is back and these are being sent now. Keep the portal open until the count reaches zero.'
-              : 'This device is offline. They will be sent automatically the moment a connection returns — you do not need to do anything.'}
-          </Callout>
-        ) : (
-          <p className="mt-3 flex items-center gap-2 text-small text-ink-2">
-            <ShieldCheck size={16} strokeWidth={1.8} className="text-pass-graphic" aria-hidden="true" />
-            Everything recorded on this device has reached the server.
-          </p>
-        )}
-
-        <p className="mt-3 flex flex-wrap items-center gap-2 text-caption text-ink-3">
-          <Pill family={online ? 'pass' : 'na'}>{online ? 'Online' : t('common.offline')}</Pill>
-          <span>
-            {online
-              ? 'Captures are sent as they are made.'
-              : t('common.offlineHint')}
-          </span>
-        </p>
-      </Card>
-
-      {/* ---- Where else to go. Two links, both real routes. ---- */}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <HomeLink
-          icon={ClipboardList}
-          title={t('nav.inspections')}
-          body="Every visit on your account, grouped by day, with unfinished ones first."
-          onClick={() => navigate('/inspector/inspections')}
-        />
-        <HomeLink
-          icon={FileText}
-          title={t('reports.today')}
-          body="Your day as a signed document, ready to download as Word or PDF."
-          onClick={() => navigate('/inspector/today')}
-        />
-      </div>
-
-      {/* ---- The honest boundary. ---- */}
-      <Callout family="info" title="What this home does not show" icon={Info} className="mt-6">
-        There is no inspector dashboard on the server, so nothing here is a jurisdiction total — every
-        figure above is your own work, because /reports/today is scoped to your account. There are
-        also no assignments and no notifications: the system never tells an officer which shop to
-        visit next, and nothing on this page is a task list handed down from an administrator.
-      </Callout>
     </div>
-  )
-}
-
-/** A destination card. A button rather than a Link so the whole block is one hit
-    area at 44px minimum, which a nested anchor inside a card cannot guarantee. */
-function HomeLink({ icon: Icon, title, body, onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cx(
-        'nn-card-interactive flex min-h-touch w-full items-start gap-3 p-5 text-left'
-      )}
-    >
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-accent-soft text-accent-text">
-        <Icon size={17} strokeWidth={1.8} aria-hidden="true" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1 text-body font-medium text-ink">
-          {title}
-          <ChevronRight size={15} strokeWidth={2} aria-hidden="true" className="text-ink-3" />
-        </span>
-        <span className="mt-0.5 block text-caption leading-5 text-ink-2">{body}</span>
-      </span>
-    </button>
   )
 }

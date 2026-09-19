@@ -16,7 +16,7 @@
  *   Inspection → Rule Checks / Findings → Evidence → OCR Data → Rule Version → Audit Integrity
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import {
@@ -43,6 +43,7 @@ import {
   Maximize2,
   MinusCircle,
   Package,
+  PenLine,
   QrCode,
   Search,
   Shield,
@@ -55,6 +56,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { endpoints, saveBlob } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
 import { useDocumentTitle, useResource } from '../lib/hooks'
 import { storesById, usersById } from '../mock/fixtures'
@@ -375,22 +377,153 @@ function SimpleBadge({ label, variant = 'neutral' }) {
 export default function InspectionDetail() {
   const { id } = useParams()
   const { t } = useI18n()
+  const { isAdmin } = useAuth()
   const navigate = useNavigate()
   const toast = useToast()
 
+  const homePath = isAdmin ? '/admin' : '/inspector'
+  const inspectionsPath = isAdmin ? '/admin/inspections' : '/inspector/inspections'
+
   const inspectionRefId = id ? (id.startsWith('INS-') ? id : `INS-${id}`) : 'INS-10230'
+  const numericId = id ? String(id).replace(/^INS-/, '') : null
   useDocumentTitle(`Inspection Details · ${inspectionRefId}`)
 
   // Retrieve matching mock data record (or fallback to Sri Stores INS-10230)
   const mockRecord = useMemo(() => getInspectionDetail(id ? String(id).replace('INS-', '') : 10230), [id])
 
+  // Live inspection record fetched from database API
+  const [inspection, setInspection] = useState(null)
+  const [loadingInspection, setLoadingInspection] = useState(true)
+  const [selectedScanId, setSelectedScanId] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    if (!numericId) return undefined
+    setLoadingInspection(true)
+    endpoints.inspections
+      .get(numericId)
+      .then((data) => {
+        if (alive) {
+          setInspection(data)
+          setLoadingInspection(false)
+        }
+      })
+      .catch((err) => {
+        console.warn('Live inspection load error, using fixture fallback:', err)
+        if (alive) setLoadingInspection(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [numericId])
+
+  // Complete list of scanned products under this inspection
+  const scansList = useMemo(() => {
+    if (Array.isArray(inspection?.scans) && inspection.scans.length > 0) {
+      return inspection.scans
+    }
+    // Fallback if no scans loaded
+    return [
+      {
+        id: 7,
+        product_name: 'CrunchTime Tastemaker Salt Chips',
+        brand_name: 'CrunchTime',
+        commodity_generic: 'Tastemaker Salt Chips',
+        commodity_category: 'packaged_food',
+        batch_number: 'B-2026-X8',
+        barcode: '8901030895123',
+        net_quantity: '50 g',
+        net_quantity_value: 50.0,
+        net_quantity_unit: 'g',
+        mrp: '₹20.00',
+        violations_count: 3,
+        overall_result: 'violation',
+        result: 'Violation',
+        engine_version: '2.0.0',
+        images: [{ id: 1, panel: 'front' }],
+        findings: RULE_CHECKS_19.map((c, i) => ({
+          id: i + 1,
+          check_id: c.id,
+          title: c.name,
+          citation: c.rule,
+          observed: c.observed,
+          required: c.expected,
+          reason: c.reason,
+          result: c.status,
+          severity: c.status === 'Violation' ? 'critical' : 'advisory',
+        })),
+      },
+    ]
+  }, [inspection])
+
+  // Select first product by default when scansList loads
+  useEffect(() => {
+    if (scansList.length > 0 && (!selectedScanId || !scansList.some((s) => s.id === selectedScanId))) {
+      setSelectedScanId(scansList[0].id)
+    }
+  }, [scansList, selectedScanId])
+
+  // Currently selected product
+  const selectedProduct = useMemo(() => {
+    return scansList.find((s) => s.id === selectedScanId) || scansList[0]
+  }, [scansList, selectedScanId])
+
+  // Map findings corresponding to selected product
+  const liveChecks = useMemo(() => {
+    if (!selectedProduct) return RULE_CHECKS_19
+    const rawFindings = selectedProduct.findings
+    if (!Array.isArray(rawFindings) || rawFindings.length === 0) {
+      return RULE_CHECKS_19
+    }
+    return rawFindings.map((f) => {
+      let status = 'Compliant'
+      const rawRes = f.result || f.effective_verdict || f.engine_verdict
+      if (rawRes === 'fail' || rawRes === 'Violation' || rawRes === 'non_compliant') status = 'Violation'
+      else if (rawRes === 'not_assessed' || rawRes === 'Not Assessed') status = 'Not Assessed'
+      else if (rawRes === 'out_of_scope' || rawRes === 'Out of Scope') status = 'Out of Scope'
+      else status = 'Compliant'
+
+      return {
+        id: f.check_id,
+        findingId: f.id,
+        name: f.title,
+        rule: f.citation || 'Legal Metrology (Packaged Commodities) Rules, 2011',
+        status,
+        observed: f.observed || 'Statutory declaration observed on packaging',
+        expected: f.required || 'Statutory requirement under Legal Metrology Rules',
+        reason: f.override_reason || f.reason || 'Conforms to statutory guidelines.',
+        evidenceId: selectedProduct.images?.[0] ? `IMG-${selectedProduct.images[0].id}` : 'IMG-001',
+        ruleVersion: selectedProduct.engine_version || '2.0.0',
+        severity: f.severity,
+      }
+    })
+  }, [selectedProduct])
+
+  // Total and violation product counters
+  const totalProductsCount = inspection?.total_products ?? scansList.length
+  const violationProductsCount = inspection?.violation_products ?? scansList.filter((s) => {
+    const vCount = s.violations_count ?? s.findings?.filter((f) => (f.result === 'Violation' || f.engine_verdict === 'fail')).length ?? 0
+    return vCount > 0 || s.overall_result === 'violation' || s.result === 'Violation'
+  }).length
+  const compliantProductsCount = Math.max(0, totalProductsCount - violationProductsCount)
+
   // UI state for expandable findings & collapsible sections
-  const [expandedChecks, setExpandedChecks] = useState(() => new Set(['CHK03', 'CHK05', 'CHK06']))
+  const [expandedChecks, setExpandedChecks] = useState(() => new Set(['CHK01', 'CHK03', 'CHK05', 'CHK11']))
   const [findingFilter, setFindingFilter] = useState('all') // all | violations | compliant | other
   const [searchQuery, setSearchQuery] = useState('')
   const [extractedOpen, setExtractedOpen] = useState(true)
   const [showEvidenceModal, setShowEvidenceModal] = useState(false)
   const [downloadingReport, setDownloadingReport] = useState(false)
+
+  // Remark modal state for Not Assessed findings
+  const [remarkModalFinding, setRemarkModalFinding] = useState(null)
+  const [remarkText, setRemarkText] = useState('')
+  const [savingRemark, setSavingRemark] = useState(false)
+
+  // Submission modal state
+  const [showSubmitModal, setShowSubmitModal] = useState(false)
+  const [submitNotes, setSubmitNotes] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   // Toggle single check expansion
   function toggleCheck(checkId) {
@@ -404,16 +537,16 @@ export default function InspectionDetail() {
 
   // Toggle all checks
   function toggleAllChecks() {
-    if (expandedChecks.size === RULE_CHECKS_19.length) {
+    if (expandedChecks.size === liveChecks.length) {
       setExpandedChecks(new Set())
     } else {
-      setExpandedChecks(new Set(RULE_CHECKS_19.map((c) => c.id)))
+      setExpandedChecks(new Set(liveChecks.map((c) => c.id)))
     }
   }
 
   // Filtered checks list
   const filteredChecks = useMemo(() => {
-    return RULE_CHECKS_19.filter((check) => {
+    return liveChecks.filter((check) => {
       if (findingFilter === 'violations' && check.status !== 'Violation') return false
       if (findingFilter === 'compliant' && check.status !== 'Compliant') return false
       if (findingFilter === 'other' && check.status !== 'Not Assessed' && check.status !== 'Out of Scope') return false
@@ -429,17 +562,112 @@ export default function InspectionDetail() {
       }
       return true
     })
-  }, [findingFilter, searchQuery])
+  }, [liveChecks, findingFilter, searchQuery])
 
-  // Summary counts
+  // Summary counts for selected product
   const summaryCounts = useMemo(() => {
-    const total = RULE_CHECKS_19.length
-    const violations = RULE_CHECKS_19.filter((c) => c.status === 'Violation').length
-    const compliant = RULE_CHECKS_19.filter((c) => c.status === 'Compliant').length
-    const notAssessed = RULE_CHECKS_19.filter((c) => c.status === 'Not Assessed').length
-    const outOfScope = RULE_CHECKS_19.filter((c) => c.status === 'Out of Scope').length
+    const total = liveChecks.length
+    const violations = liveChecks.filter((c) => c.status === 'Violation').length
+    const compliant = liveChecks.filter((c) => c.status === 'Compliant').length
+    const notAssessed = liveChecks.filter((c) => c.status === 'Not Assessed').length
+    const outOfScope = liveChecks.filter((c) => c.status === 'Out of Scope').length
     return { total, violations, compliant, notAssessed, outOfScope }
-  }, [])
+  }, [liveChecks])
+
+  const productResultLabel = useMemo(() => {
+    if (summaryCounts.violations > 0) return 'Violation'
+    if (summaryCounts.notAssessed > 0) return 'Not Assessed'
+    if (summaryCounts.outOfScope > 0 && summaryCounts.compliant === 0) return 'Out of Scope'
+    return 'Compliant'
+  }, [summaryCounts])
+
+  // Save statutory remark to backend database
+  async function handleSaveRemark() {
+    if (!remarkModalFinding || !remarkText.trim() || !numericId) return
+    setSavingRemark(true)
+    try {
+      await endpoints.inspections.addRemark(numericId, remarkModalFinding.findingId, remarkText.trim())
+      setInspection((prev) => {
+        if (!prev) return prev
+        const next = JSON.parse(JSON.stringify(prev))
+        for (const s of next.scans || []) {
+          for (const f of s.findings || []) {
+            if (f.id === remarkModalFinding.findingId || f.check_id === remarkModalFinding.id) {
+              f.reason = remarkText.trim()
+              f.override_reason = remarkText.trim()
+              f.overridden_at = new Date().toISOString()
+            }
+          }
+        }
+        return next
+      })
+      toast.push({
+        family: 'pass',
+        title: 'Remark Saved to Statutory Record',
+        body: `Remark for ${remarkModalFinding.id} committed to database evidence audit.`,
+      })
+      setRemarkModalFinding(null)
+      setRemarkText('')
+    } catch (err) {
+      toast.push({
+        family: 'violation',
+        title: 'Failed to Save Remark',
+        body: err?.message || 'Could not save remark to the database.',
+      })
+    } finally {
+      setSavingRemark(false)
+    }
+  }
+
+  // Submit inspection to backend database
+  async function handleSubmitInspection() {
+    if (!numericId) return
+    setSubmitting(true)
+    try {
+      await endpoints.inspections.submit(numericId, {
+        signature_status: 'signed',
+        notes: submitNotes.trim() || undefined,
+      })
+      setInspection((prev) => ({
+        ...prev,
+        status: 'submitted',
+        submitted_at: new Date().toISOString(),
+        notes: submitNotes.trim() || prev?.notes,
+      }))
+
+      // Dispatch notification event for Admin Portal
+      const notifDetail = {
+        id: `notif-${Date.now()}`,
+        title: 'New Inspection Submitted',
+        message: `${inspection?.inspector_name || 'Inspector One'} submitted inspection ${inspectionRefId} for ${inspection?.store_name || 'Anand General Store'}`,
+        time: 'Just now',
+        inspectionId: inspectionRefId,
+        read: false,
+      }
+      try {
+        const stored = JSON.parse(localStorage.getItem('niyamnetra_admin_notifications') || '[]')
+        localStorage.setItem('niyamnetra_admin_notifications', JSON.stringify([notifDetail, ...stored]))
+      } catch (err) {
+        console.warn('Could not store notification in localStorage', err)
+      }
+      window.dispatchEvent(new CustomEvent('niyamnetra:inspection-submitted', { detail: notifDetail }))
+
+      toast.push({
+        family: 'pass',
+        title: 'Inspection Submitted',
+        body: `Inspection ${inspectionRefId} submitted and notified to Admin Portal.`,
+      })
+      setShowSubmitModal(false)
+    } catch (err) {
+      toast.push({
+        family: 'violation',
+        title: 'Submission Failed',
+        body: err?.message || 'Could not submit inspection. Please try again.',
+      })
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   // Action handlers
   function handleDownloadReport() {
@@ -469,17 +697,17 @@ export default function InspectionDetail() {
       {/* HEADER & BREADCRUMB                                                   */}
       {/* -------------------------------------------------------------------- */}
       <div className="flex flex-col gap-3">
-        {/* Breadcrumb: Home → Inspections → INS-10230 */}
+        {/* Breadcrumb: Home → Inspections → INS-XXXX */}
         <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[12px] text-ink-3">
           <Link
-            to="/admin"
+            to={homePath}
             className="font-medium text-ink-2 transition-colors duration-fast hover:text-ink"
           >
             Home
           </Link>
           <ChevronRight size={12} strokeWidth={2} aria-hidden="true" className="text-ink-3" />
           <Link
-            to="/admin/inspections"
+            to={inspectionsPath}
             className="font-medium text-ink-2 transition-colors duration-fast hover:text-ink"
           >
             Inspections
@@ -500,8 +728,24 @@ export default function InspectionDetail() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Result badge: Violation */}
-            <StatusBadge status="Violation" className="px-2.5 py-1 text-[12px]" />
+            {/* Inspection status badge */}
+            <InspectionStatusBadge status={inspection?.status || 'submitted'} />
+
+            {/* Result badge */}
+            <StatusBadge status={overallResultLabel} className="px-2.5 py-1 text-[12px]" />
+
+            {/* Submit button for inspector when in progress */}
+            {!isAdmin && (inspection?.status === 'draft' || inspection?.status === 'in_progress') && (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={CheckCircle2}
+                onClick={() => setShowSubmitModal(true)}
+                className="bg-navy hover:bg-[#1a3d61] text-white font-semibold"
+              >
+                Submit Inspection
+              </Button>
+            )}
 
             <Button
               variant="secondary"
@@ -554,7 +798,14 @@ export default function InspectionDetail() {
                 Inspection Overview
               </h2>
             </div>
-            <StatusBadge status="Violation" />
+            <span className={cx(
+              "inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 text-[11px] font-semibold",
+              violationProductsCount > 0
+                ? "bg-violation-fill border-violation-border text-violation-text"
+                : "bg-pass-fill border-pass-border text-pass-text"
+            )}>
+              {violationProductsCount > 0 ? `${violationProductsCount} Violation Products` : 'All Products Compliant'}
+            </span>
           </div>
 
           <dl className="mt-4 grid grid-cols-1 gap-y-3.5 gap-x-6 sm:grid-cols-2 text-[13px]">
@@ -565,54 +816,62 @@ export default function InspectionDetail() {
 
             <div>
               <dt className="nn-eyebrow">Store</dt>
-              <dd className="mt-0.5 font-medium text-ink">Sri Stores</dd>
+              <dd className="mt-0.5 font-medium text-ink">{inspection?.store_name || mockRecord?.storeName || 'Anand General Store'}</dd>
             </div>
 
             <div>
               <dt className="nn-eyebrow">Inspector</dt>
-              <dd className="mt-0.5 font-medium text-ink">S. Kumar (LM-TG-1042)</dd>
+              <dd className="mt-0.5 font-medium text-ink">
+                {inspection?.inspector_name
+                  ? `${inspection.inspector_name} (${inspection.inspector_employee_id || ''})`
+                  : (inspection?.user_id === 2 ? 'Inspector One (LM-TG-1042)' : (mockRecord?.inspectorName || 'Inspector One (LM-TG-1042)'))}
+              </dd>
             </div>
 
             <div>
               <dt className="nn-eyebrow">Area</dt>
-              <dd className="mt-0.5 font-medium text-ink">Rajahmundry</dd>
+              <dd className="mt-0.5 font-medium text-ink">
+                {inspection?.store_city || inspection?.store_district || mockRecord?.area || 'Hyderabad, Telangana'}
+              </dd>
             </div>
 
             <div>
               <dt className="nn-eyebrow">Date &amp; Time</dt>
-              <dd className="mt-0.5 font-medium text-ink">02 Sep 2026, 10:20 AM</dd>
+              <dd className="mt-0.5 font-medium text-ink">
+                {inspection?.inspection_date
+                  ? format(parseISO(inspection.inspection_date), 'dd MMM yyyy')
+                  : (mockRecord?.inspection_date || '02 Sep 2026')}
+              </dd>
             </div>
 
             <div>
               <dt className="nn-eyebrow">Inspection Status</dt>
               <dd className="mt-0.5">
-                <InspectionStatusBadge status="submitted" />
+                <InspectionStatusBadge status={inspection?.status || 'submitted'} />
               </dd>
             </div>
 
             <div>
-              <dt className="nn-eyebrow">Rule Result</dt>
-              <dd className="mt-0.5">
-                <StatusBadge status="Violation" />
+              <dt className="nn-eyebrow">Total Products Scanned</dt>
+              <dd className="nn-mono mt-0.5 font-bold text-ink text-[16px]">
+                {totalProductsCount}
               </dd>
             </div>
 
             <div>
-              <dt className="nn-eyebrow">Sync Status</dt>
-              <dd className="mt-0.5">
-                <SyncBadge state="synced" />
+              <dt className="nn-eyebrow">Violation Products</dt>
+              <dd className={cx(
+                "nn-mono mt-0.5 font-bold text-[16px]",
+                violationProductsCount > 0 ? "text-violation-graphic" : "text-pass-graphic"
+              )}>
+                {violationProductsCount}
               </dd>
-            </div>
-
-            <div>
-              <dt className="nn-eyebrow">Products Scanned</dt>
-              <dd className="nn-mono mt-0.5 font-semibold text-ink">1</dd>
             </div>
 
             <div className="sm:col-span-2">
               <dt className="nn-eyebrow">Sync Status</dt>
               <dd className="mt-0.5">
-                <SimpleBadge label="Synced" variant="synced" />
+                <SyncBadge state={inspection?.edited_offline ? 'not_synced' : 'synced'} />
               </dd>
             </div>
           </dl>
@@ -633,95 +892,221 @@ export default function InspectionDetail() {
           <dl className="mt-4 grid grid-cols-1 gap-y-3.5 gap-x-6 sm:grid-cols-2 text-[13px]">
             <div className="sm:col-span-2">
               <dt className="nn-eyebrow">Store Name</dt>
-              <dd className="mt-0.5 text-[15px] font-bold text-ink">Sri Stores</dd>
+              <dd className="mt-0.5 text-[15px] font-bold text-ink">
+                {inspection?.store_name || mockRecord?.storeName || 'Anand General Store'}
+              </dd>
             </div>
 
             <div>
               <dt className="nn-eyebrow">Location</dt>
-              <dd className="mt-0.5 font-medium text-ink">Rajahmundry</dd>
+              <dd className="mt-0.5 font-medium text-ink">
+                {inspection?.store_city || mockRecord?.area || 'Hyderabad, Telangana'}
+              </dd>
             </div>
 
             <div>
               <dt className="nn-eyebrow">Store ID</dt>
-              <dd className="nn-mono mt-0.5 font-semibold text-ink">ST-001</dd>
+              <dd className="nn-mono mt-0.5 font-semibold text-ink">
+                {inspection?.store_id ? `ST-${inspection.store_id}` : 'ST-001'}
+              </dd>
             </div>
 
             <div>
               <dt className="nn-eyebrow">Inspection Date</dt>
-              <dd className="mt-0.5 font-medium text-ink">02 Sep 2026</dd>
+              <dd className="mt-0.5 font-medium text-ink">
+                {inspection?.inspection_date
+                  ? format(parseISO(inspection.inspection_date), 'dd MMM yyyy')
+                  : (mockRecord?.inspection_date || '02 Sep 2026')}
+              </dd>
             </div>
 
             <div>
               <dt className="nn-eyebrow">Inspector</dt>
-              <dd className="mt-0.5 font-medium text-ink">S. Kumar</dd>
+              <dd className="mt-0.5 font-medium text-ink">
+                {inspection?.inspector_name || (inspection?.user_id === 2 ? 'Inspector One' : (mockRecord?.inspectorName || 'Inspector One'))}
+              </dd>
             </div>
 
             <div className="sm:col-span-2 pt-2 border-t border-divider text-xs text-ink-3">
-              <p>Registered Address: Shop 4, Main Bazaar, Rajahmundry, Andhra Pradesh · 533101</p>
+              <p>Registered Address: {inspection?.store_address || mockRecord?.storeAddress || 'Main Road, Hyderabad, Telangana · 500001'}</p>
             </div>
           </dl>
         </Card>
       </section>
 
       {/* -------------------------------------------------------------------- */}
-      {/* SECTION 3 — INSPECTION RESULT                                        */}
+      {/* SECTION 3 — SCANNED PRODUCTS (Store → Inspection → Products)         */}
       {/* -------------------------------------------------------------------- */}
-      <section>
-        <Card className="border-violation-border bg-violation-fill/30 p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            {/* Left: Prominent Verdict */}
-            <div className="flex items-start gap-3">
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-sm bg-violation text-white shadow-xs">
-                <XCircle size={24} strokeWidth={2.4} aria-hidden="true" />
-              </div>
-              <div>
-                <span className="nn-eyebrow text-violation-text font-bold">Inspection Result</span>
-                <p className="text-[22px] font-black tracking-tight text-violation-text leading-tight">
-                  NON-COMPLIANT
-                </p>
-                <p className="text-[12px] font-medium text-violation-text/90 mt-0.5">
-                  Package contravenes statutory rules under the Legal Metrology (Packaged Commodities) Rules, 2011.
-                </p>
-              </div>
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Package size={18} className="text-[#0f2a44]" />
+              <h2 className="text-[16px] font-bold text-ink">
+                Scanned Products ({scansList.length})
+              </h2>
             </div>
+            <p className="text-[12px] text-ink-3 mt-0.5">
+              Select a product below to inspect its individual packaging declarations, OCR evidence, and statutory checks.
+            </p>
+          </div>
 
-            {/* Right: Supporting summary counters */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 shrink-0">
-              <div className="rounded-sm border border-divider bg-surface px-3.5 py-2">
-                <span className="text-[10px] font-mono font-semibold uppercase text-ink-3">Products Inspected</span>
-                <p className="nn-mono text-[18px] font-bold text-ink">1</p>
-              </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-sm border border-violation-border bg-violation-fill px-2.5 py-1 text-[11px] font-semibold text-violation-text">
+              {violationProductsCount} {violationProductsCount === 1 ? 'Violation Product' : 'Violation Products'}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-sm border border-pass-border bg-pass-fill px-2.5 py-1 text-[11px] font-semibold text-pass-text">
+              {compliantProductsCount} {compliantProductsCount === 1 ? 'Compliant Product' : 'Compliant Products'}
+            </span>
+          </div>
+        </div>
 
-              <div className="rounded-sm border border-divider bg-surface px-3.5 py-2">
-                <span className="text-[10px] font-mono font-semibold uppercase text-ink-3">Checks Performed</span>
-                <p className="nn-mono text-[18px] font-bold text-ink">19</p>
-              </div>
-
-              <div className="rounded-sm border border-violation-border bg-violation-fill px-3.5 py-2">
-                <span className="text-[10px] font-mono font-bold uppercase text-violation-text">Violations</span>
-                <p className="nn-mono text-[18px] font-black text-violation-text">3</p>
-              </div>
-
-              <div className="rounded-sm border border-divider bg-surface px-3.5 py-2">
-                <span className="text-[10px] font-mono font-semibold uppercase text-ink-3">Not Assessed</span>
-                <p className="nn-mono text-[18px] font-bold text-ink">0</p>
-              </div>
-            </div>
+        <Card className="overflow-hidden p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-[12px]">
+              <thead>
+                <tr className="border-b border-divider bg-surface-2 text-ink-3 font-semibold">
+                  <th scope="col" className="px-4 py-2.5 uppercase font-sans">Product Name</th>
+                  <th scope="col" className="px-4 py-2.5 uppercase font-sans">Brand / Category</th>
+                  <th scope="col" className="px-4 py-2.5 text-right uppercase font-sans">Net Quantity</th>
+                  <th scope="col" className="px-4 py-2.5 text-right uppercase font-sans">MRP</th>
+                  <th scope="col" className="px-4 py-2.5 text-right uppercase font-sans">Violations</th>
+                  <th scope="col" className="px-4 py-2.5 text-center uppercase font-sans">Product Result</th>
+                  <th scope="col" className="px-4 py-2.5 text-right uppercase font-sans">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-divider">
+                {scansList.map((product, idx) => {
+                  const isSelected = product.id === selectedProduct?.id
+                  const prodViolations = product.violations_count ?? (product.findings?.filter((f) => (f.result === 'Violation' || f.engine_verdict === 'fail')).length) ?? 0
+                  const prodResult = prodViolations > 0 || product.overall_result === 'violation' ? 'Violation' : (product.overall_result === 'not_assessed' ? 'Not Assessed' : 'Compliant')
+                  return (
+                    <tr
+                      key={product.id}
+                      onClick={() => setSelectedScanId(product.id)}
+                      className={cx(
+                        'cursor-pointer transition-colors duration-fast',
+                        isSelected ? 'bg-navy/5 font-medium' : 'hover:bg-surface-2'
+                      )}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <span className={cx(
+                            "grid h-6 w-6 shrink-0 place-items-center rounded text-[11px] font-mono font-bold",
+                            isSelected ? "bg-navy text-white" : "bg-surface-2 text-ink-2"
+                          )}>
+                            {idx + 1}
+                          </span>
+                          <div>
+                            <span className={cx("font-semibold text-[13px]", isSelected ? "text-navy font-bold" : "text-ink")}>
+                              {product.product_name || product.commodity_generic || `Product #${product.id}`}
+                            </span>
+                            {product.batch_number && (
+                              <span className="block text-[10px] font-mono text-ink-3">Batch: {product.batch_number}</span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-ink-2">
+                        <span className="font-medium text-ink">{product.brand_name || '—'}</span>
+                        {product.commodity_category && (
+                          <span className="block text-[11px] text-ink-3 capitalize">{product.commodity_category.replace('_', ' ')}</span>
+                        )}
+                      </td>
+                      <td className="nn-mono px-4 py-3 text-right text-ink">
+                        {product.net_quantity || (product.net_quantity_value ? `${product.net_quantity_value} ${product.net_quantity_unit || ''}` : '—')}
+                      </td>
+                      <td className="nn-mono px-4 py-3 text-right text-ink font-semibold">
+                        {product.mrp || '—'}
+                      </td>
+                      <td className="nn-mono px-4 py-3 text-right">
+                        <span className={cx(
+                          "font-semibold",
+                          prodViolations > 0 ? "text-violation-graphic font-bold" : "text-pass-graphic"
+                        )}>
+                          {prodViolations}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <StatusBadge status={prodResult} />
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectedScanId(product.id)
+                          }}
+                          className={cx(
+                            "rounded px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                            isSelected ? "bg-navy text-white shadow-xs" : "border border-divider text-accent-text hover:bg-surface-2"
+                          )}
+                        >
+                          {isSelected ? 'Selected' : 'View Checks'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         </Card>
       </section>
 
       {/* -------------------------------------------------------------------- */}
-      {/* SECTION 4 — FINDINGS / RULE CHECKS (PRIMARY SECTION)                 */}
+      {/* SECTION 4 — FINDINGS / RULE CHECKS FOR SELECTED PRODUCT              */}
       {/* -------------------------------------------------------------------- */}
       <section className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Selected Product Summary Card */}
+        <Card className="border-divider bg-surface-2/40 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded bg-navy text-white">
+                <Package size={20} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-ink-3">Selected Product</span>
+                  <span className="text-ink-3">·</span>
+                  <span className="font-mono text-[11px] font-semibold text-ink-2">
+                    Item {scansList.findIndex((s) => s.id === selectedProduct?.id) + 1} of {scansList.length}
+                  </span>
+                </div>
+                <h3 className="text-[16px] font-bold text-ink">
+                  {selectedProduct?.product_name || selectedProduct?.commodity_generic || 'Selected Product'}
+                </h3>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 text-[12px]">
+              <div className="rounded border border-divider bg-surface px-3 py-1.5">
+                <span className="text-[10px] font-mono text-ink-3 uppercase block">Net Quantity</span>
+                <span className="font-mono font-bold text-ink">
+                  {selectedProduct?.net_quantity || (selectedProduct?.net_quantity_value ? `${selectedProduct.net_quantity_value} ${selectedProduct.net_quantity_unit || ''}` : '—')}
+                </span>
+              </div>
+              <div className="rounded border border-divider bg-surface px-3 py-1.5">
+                <span className="text-[10px] font-mono text-ink-3 uppercase block">Declared MRP</span>
+                <span className="font-mono font-bold text-ink">
+                  {selectedProduct?.mrp || '—'}
+                </span>
+              </div>
+              <div className="rounded border border-divider bg-surface px-3 py-1.5">
+                <span className="text-[10px] font-mono text-ink-3 uppercase block">Product Result</span>
+                <StatusBadge status={productResultLabel} />
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 mt-1">
           <div>
-            <h2 className="text-[16px] font-bold text-ink">
-              Findings / Rule Checks
-            </h2>
+            <h3 className="text-[15px] font-bold text-ink">
+              Rule Checks for {selectedProduct?.brand_name || 'Selected Item'} ({liveChecks.length})
+            </h3>
             <p className="text-[12px] text-ink-3">
-              Complete catalog of 19 statutory Legal Metrology compliance checks evaluated for this inspection.
+              18 statutory Legal Metrology compliance checks evaluated on this packaging.
             </p>
           </div>
 
@@ -785,7 +1170,7 @@ export default function InspectionDetail() {
               onClick={toggleAllChecks}
               className="text-[11px]"
             >
-              {expandedChecks.size === RULE_CHECKS_19.length ? 'Collapse All' : 'Expand All'}
+              {expandedChecks.size === liveChecks.length ? 'Collapse All' : 'Expand All'}
             </Button>
           </div>
         </div>
@@ -856,7 +1241,28 @@ export default function InspectionDetail() {
                             </div>
                           </div>
 
-                          <div className="shrink-0 pl-3">
+                          <div className="shrink-0 pl-3 flex items-center gap-2">
+                            {check.status === 'Not Assessed' && (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                icon={PenLine}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setRemarkModalFinding(check)
+                                  setRemarkText(
+                                    check.reason && !check.reason.startsWith('no scale reference') && !check.reason.includes('could not be verified')
+                                      ? check.reason
+                                      : ''
+                                  )
+                                }}
+                                className="h-7 px-2 text-[11px]"
+                              >
+                                {check.reason && !check.reason.startsWith('no scale reference') && !check.reason.startsWith('Country of origin')
+                                  ? 'Edit Remark'
+                                  : 'Add Remark'}
+                              </Button>
+                            )}
                             <StatusBadge status={check.status} />
                           </div>
                         </div>
@@ -904,6 +1310,38 @@ export default function InspectionDetail() {
                                 )}>
                                   {check.reason}
                                 </p>
+
+                                {check.status === 'Not Assessed' && (
+                                  <div className="mt-2 rounded border border-warning-border/50 bg-warning-fill/20 p-3">
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                      <div>
+                                        <span className="nn-eyebrow font-bold text-warning-text">Statutory Remark for Not Assessed</span>
+                                        <p className="mt-0.5 font-medium text-ink text-[12px]">
+                                          {check.reason || 'No remark added yet.'}
+                                        </p>
+                                      </div>
+                                      <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        icon={PenLine}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setRemarkModalFinding(check)
+                                          setRemarkText(
+                                            check.reason && !check.reason.startsWith('no scale reference') && !check.reason.includes('could not be verified')
+                                              ? check.reason
+                                              : ''
+                                          )
+                                        }}
+                                        className="shrink-0 text-[11px]"
+                                      >
+                                        {check.reason && !check.reason.startsWith('no scale reference') && !check.reason.startsWith('Country of origin')
+                                          ? 'Edit Remark'
+                                          : 'Add Remark'}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
 
                               <div>
@@ -955,7 +1393,9 @@ export default function InspectionDetail() {
                 Evidence
               </h2>
             </div>
-            <span className="nn-mono text-[11px] font-semibold text-ink-3">IMG-001</span>
+            <span className="nn-mono text-[11px] font-semibold text-ink-3">
+              EV-{selectedProduct?.id || '001'}
+            </span>
           </div>
 
           <div className="mt-4 flex flex-col sm:flex-row gap-4">
@@ -963,8 +1403,12 @@ export default function InspectionDetail() {
             <div className="relative w-full sm:w-44 h-44 shrink-0 overflow-hidden rounded-sm border border-divider bg-surface-2 flex flex-col items-center justify-center p-3 text-center">
               <div className="relative z-10 flex flex-col items-center">
                 <Package size={36} strokeWidth={1.5} className="text-ink-3" />
-                <span className="nn-mono mt-2 text-[11px] font-bold text-ink">IMG-001.JPG</span>
-                <span className="text-[10px] text-ink-3">Front &amp; Rear PDP</span>
+                <span className="nn-mono mt-2 text-[11px] font-bold text-ink">
+                  {selectedProduct?.image_url
+                    ? selectedProduct.image_url.split(/[\\/]/).pop()
+                    : `IMG-00${selectedProduct?.id || 1}.JPG`}
+                </span>
+                <span className="text-[10px] text-ink-3">Principal Display Panel</span>
                 <span className="mt-1 rounded bg-pass-fill px-1.5 py-0.5 text-[9px] font-bold text-pass-text">
                   3024 × 4032 px
                 </span>
@@ -980,12 +1424,14 @@ export default function InspectionDetail() {
               <dl className="grid grid-cols-1 gap-2.5">
                 <div>
                   <dt className="nn-eyebrow">Evidence ID</dt>
-                  <dd className="nn-mono font-bold text-ink">IMG-001</dd>
+                  <dd className="nn-mono font-bold text-ink">EV-{selectedProduct?.id || '001'}</dd>
                 </div>
 
                 <div>
                   <dt className="nn-eyebrow">Capture Timestamp</dt>
-                  <dd className="font-medium text-ink">02 Sep 2026, 10:21 AM</dd>
+                  <dd className="font-medium text-ink">
+                    {inspection?.scheduled_date ? formatGovDate(inspection.scheduled_date) : '02 Sep 2026, 10:21 AM'}
+                  </dd>
                 </div>
 
                 <div>
@@ -1003,12 +1449,24 @@ export default function InspectionDetail() {
                 </div>
 
                 <div>
-                  <dt className="nn-eyebrow">Linked Finding IDs</dt>
+                  <dt className="nn-eyebrow">Linked Finding Violations</dt>
                   <dd className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
-                    <span className="rounded bg-violation-fill border border-violation-border px-1.5 py-0.5 font-bold text-violation-text">CHK03</span>
-                    <span className="rounded bg-violation-fill border border-violation-border px-1.5 py-0.5 font-bold text-violation-text">CHK05</span>
-                    <span className="rounded bg-violation-fill border border-violation-border px-1.5 py-0.5 font-bold text-violation-text">CHK06</span>
-                    <span className="rounded bg-violation-fill border border-violation-border px-1.5 py-0.5 font-bold text-violation-text">CHK11</span>
+                    {liveChecks.filter((c) => c.status === 'Violation').length > 0 ? (
+                      liveChecks
+                        .filter((c) => c.status === 'Violation')
+                        .map((c) => (
+                          <span
+                            key={c.id}
+                            className="rounded bg-violation-fill border border-violation-border px-1.5 py-0.5 font-bold text-violation-text"
+                          >
+                            {c.id}
+                          </span>
+                        ))
+                    ) : (
+                      <span className="text-[11px] font-semibold text-pass-text">
+                        No Violations (All Compliant)
+                      </span>
+                    )}
                   </dd>
                 </div>
               </dl>
@@ -1043,7 +1501,7 @@ export default function InspectionDetail() {
                 <h2 className="text-[14px] font-bold text-ink uppercase tracking-wider">
                   Extracted Information
                 </h2>
-                <span className="text-[11px] text-ink-3">OCR &amp; Observed Data (Secondary)</span>
+                <span className="text-[11px] text-ink-3">OCR &amp; Observed Data (Selected Item)</span>
               </div>
             </div>
             <button type="button" className="text-ink-3 hover:text-ink">
@@ -1055,35 +1513,48 @@ export default function InspectionDetail() {
             <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-[12px]">
               <div>
                 <dt className="nn-eyebrow">Product Name</dt>
-                <dd className="mt-0.5 font-semibold text-ink">XYZ Product (Tastemaker Salt Chips)</dd>
+                <dd className="mt-0.5 font-semibold text-ink">
+                  {selectedProduct?.product_name || selectedProduct?.commodity_generic || '—'}
+                </dd>
               </div>
 
               <div>
-                <dt className="nn-eyebrow">MRP</dt>
-                <dd className="nn-mono mt-0.5 font-semibold text-violation-text">
-                  ₹120 (Observed ₹20.00 sticker)
+                <dt className="nn-eyebrow">Declared MRP</dt>
+                <dd className={cx(
+                  "nn-mono mt-0.5 font-semibold",
+                  liveChecks.some((c) => c.id === 'CHK03' && c.status === 'Violation')
+                    ? "text-violation-text"
+                    : "text-ink"
+                )}>
+                  {selectedProduct?.mrp || '—'}
                 </dd>
               </div>
 
               <div>
                 <dt className="nn-eyebrow">Net Quantity</dt>
-                <dd className="nn-mono mt-0.5 font-semibold text-ink">500 g (Pack: 50 g)</dd>
+                <dd className="nn-mono mt-0.5 font-semibold text-ink">
+                  {selectedProduct?.net_quantity || (selectedProduct?.net_quantity_value ? `${selectedProduct.net_quantity_value} ${selectedProduct.net_quantity_unit || ''}` : '—')}
+                </dd>
               </div>
 
               <div>
-                <dt className="nn-eyebrow">Manufacturer</dt>
-                <dd className="mt-0.5 font-medium text-ink">ABC Foods (XYZ Foods Pvt Ltd)</dd>
+                <dt className="nn-eyebrow">Manufacturer / Brand</dt>
+                <dd className="mt-0.5 font-medium text-ink">
+                  {selectedProduct?.manufacturer_name || selectedProduct?.brand_name || '—'}
+                </dd>
               </div>
 
               <div>
-                <dt className="nn-eyebrow">Packed Date</dt>
-                <dd className="nn-mono mt-0.5 font-medium text-ink">08/2026</dd>
+                <dt className="nn-eyebrow">Packed / Mfg Date</dt>
+                <dd className="nn-mono mt-0.5 font-medium text-ink">
+                  {selectedProduct?.date_of_manufacture || '08/2026'}
+                </dd>
               </div>
 
               <div>
                 <dt className="nn-eyebrow">Customer Care</dt>
                 <dd className="mt-0.5 font-medium text-ink">
-                  Available <span className="text-ink-3">(1800-103-2255)</span>
+                  {selectedProduct?.customer_care_phone || selectedProduct?.customer_care_email || 'Available (1800-103-2255)'}
                 </dd>
               </div>
 
@@ -1232,8 +1703,8 @@ export default function InspectionDetail() {
         <Modal
           open={showEvidenceModal}
           onClose={() => setShowEvidenceModal(false)}
-          title="Evidence Package Details — IMG-001"
-          description="Photographic and telemetry evidentiary record for statutory inspection INS-10230."
+          title={`Evidence Package Details — EV-${selectedProduct?.id || '001'}`}
+          description={`Photographic and telemetry evidentiary record for ${selectedProduct?.product_name || 'selected item'} in inspection ${inspection?.id ? ('INS-' + inspection.id) : (id || 'INS-1023')}.`}
           size="lg"
           footer={
             <div className="flex items-center justify-between w-full">
@@ -1252,13 +1723,15 @@ export default function InspectionDetail() {
           <div className="flex flex-col gap-4 text-[13px]">
             {/* Simulated photographic preview */}
             <div className="relative aspect-video w-full rounded-sm border border-divider bg-slate-900 flex items-center justify-center text-white overflow-hidden">
-              <div className="flex flex-col items-center gap-2">
+              <div className="flex flex-col items-center gap-2 text-center px-4">
                 <Package size={48} strokeWidth={1.5} className="text-slate-400" />
                 <span className="font-mono text-xs font-semibold text-slate-300">
-                  Tastemaker Salt Chips · Principal Display Panel (PDP)
+                  {selectedProduct?.product_name || selectedProduct?.commodity_generic || 'Product'} · Principal Display Panel (PDP)
                 </span>
                 <span className="rounded bg-black/60 px-2 py-0.5 text-[11px] font-mono text-amber-400">
-                  Detected Bounding Box: [x: 142, y: 310, w: 220, h: 84] (MRP Sticker)
+                  {liveChecks.some((c) => c.status === 'Violation')
+                    ? `Detected Statutory Violations: ${liveChecks.filter((c) => c.status === 'Violation').length} finding(s)`
+                    : 'All Statutory Label Declarations Compliant'}
                 </span>
               </div>
             </div>
@@ -1270,26 +1743,160 @@ export default function InspectionDetail() {
               </div>
               <div className="p-2.5 rounded border border-divider bg-surface-2">
                 <span className="nn-eyebrow">GPS Geolocation</span>
-                <p className="nn-mono font-semibold text-ink mt-0.5">16.9891° N, 81.7840° E (±2.4m)</p>
+                <p className="nn-mono font-semibold text-ink mt-0.5">
+                  {inspection?.latitude && inspection?.longitude
+                    ? `${inspection.latitude}° N, ${inspection.longitude}° E (±2.4m)`
+                    : '16.9891° N, 81.7840° E (±2.4m)'}
+                </p>
               </div>
             </div>
 
             <div>
               <span className="nn-eyebrow">Associated Statutory Findings</span>
-              <ul className="mt-1 space-y-1 text-xs text-ink-2">
-                <li className="flex items-center gap-1.5">
-                  <XCircle size={14} className="text-violation" />
-                  <span className="font-semibold text-ink">CHK03</span> — Retail sale price sticker affixed over original printed MRP
-                </li>
-                <li className="flex items-center gap-1.5">
-                  <XCircle size={14} className="text-violation" />
-                  <span className="font-semibold text-ink">CHK05</span> — Missing grievance redressal postal address
-                </li>
-                <li className="flex items-center gap-1.5">
-                  <XCircle size={14} className="text-violation" />
-                  <span className="font-semibold text-ink">CHK06</span> — Numeral height 1.12 mm fails 1.50 mm statutory minimum
-                </li>
-              </ul>
+              {liveChecks.filter((c) => c.status === 'Violation').length > 0 ? (
+                <ul className="mt-1 space-y-1 text-xs text-ink-2">
+                  {liveChecks
+                    .filter((c) => c.status === 'Violation')
+                    .map((v) => (
+                      <li key={v.id} className="flex items-center gap-1.5">
+                        <XCircle size={14} className="text-violation shrink-0" />
+                        <span className="font-semibold text-ink">{v.id}</span> — {v.name || v.reason || v.observed}
+                      </li>
+                    ))}
+                </ul>
+              ) : (
+                <p className="mt-1 text-xs text-pass-text font-medium">
+                  All statutory checks evaluated are Compliant for this product.
+                </p>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* -------------------------------------------------------------------- */}
+      {/* STATUTORY REMARK MODAL FOR NOT ASSESSED FINDINGS                     */}
+      {/* -------------------------------------------------------------------- */}
+      {remarkModalFinding && (
+        <Modal
+          open={Boolean(remarkModalFinding)}
+          onClose={() => setRemarkModalFinding(null)}
+          title={`Add Inspector Remark — ${remarkModalFinding.id}`}
+          description={`Provide an auditable statutory explanation for why ${remarkModalFinding.name} was Not Assessed.`}
+          size="md"
+          footer={
+            <div className="flex items-center justify-end gap-2 w-full">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setRemarkModalFinding(null)}
+                disabled={savingRemark}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={savingRemark}
+                onClick={handleSaveRemark}
+                disabled={!remarkText.trim()}
+              >
+                Save Remark
+              </Button>
+            </div>
+          }
+        >
+          <div className="flex flex-col gap-3.5 text-[13px]">
+            <div>
+              <span className="text-caption font-semibold text-ink-3">Quick Explanations</span>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {[
+                  'Label was unclear',
+                  'Evidence image was insufficient',
+                  'Product information was not visible',
+                  'Required declaration could not be verified',
+                  'Product was unavailable during inspection',
+                ].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setRemarkText(preset)}
+                    className="rounded border border-divider bg-surface-2 px-2 py-1 text-[11px] font-medium text-ink-2 hover:bg-surface-3 hover:text-ink transition-colors"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="remark-textarea" className="nn-eyebrow block">
+                Remark / Explanation (Required)
+              </label>
+              <textarea
+                id="remark-textarea"
+                rows={3}
+                value={remarkText}
+                onChange={(e) => setRemarkText(e.target.value)}
+                placeholder="Enter detailed reason why this statutory rule check could not be assessed..."
+                className="mt-1 w-full rounded border border-divider bg-surface px-3 py-2 text-small text-ink focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy"
+              />
+              <p className="mt-1 text-[11px] text-ink-3">
+                This remark is committed to the statutory audit trail with your inspector identity and timestamp.
+              </p>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* -------------------------------------------------------------------- */}
+      {/* SUBMISSION CONFIRMATION MODAL                                        */}
+      {/* -------------------------------------------------------------------- */}
+      {showSubmitModal && (
+        <Modal
+          open={showSubmitModal}
+          onClose={() => setShowSubmitModal(false)}
+          title="Submit Statutory Inspection"
+          description={`Submit ${inspectionRefId} for official statutory recording and administrative review.`}
+          size="md"
+          footer={
+            <div className="flex items-center justify-end gap-2 w-full">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowSubmitModal(false)}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={submitting}
+                onClick={handleSubmitInspection}
+              >
+                Confirm &amp; Submit
+              </Button>
+            </div>
+          }
+        >
+          <div className="flex flex-col gap-3 text-[13px]">
+            <p className="text-ink-2">
+              Submitting this inspection will lock the findings and make the complete statutory report
+              available immediately to the Administrative Portal.
+            </p>
+            <div>
+              <label htmlFor="submit-notes" className="nn-eyebrow block">
+                Inspection Summary Notes (Optional)
+              </label>
+              <textarea
+                id="submit-notes"
+                rows={2}
+                value={submitNotes}
+                onChange={(e) => setSubmitNotes(e.target.value)}
+                placeholder="e.g. Verification completed on premise. Notice issued for MRP sticker alteration."
+                className="mt-1 w-full rounded border border-divider bg-surface px-3 py-2 text-small text-ink focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy"
+              />
             </div>
           </div>
         </Modal>

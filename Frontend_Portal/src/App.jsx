@@ -36,13 +36,18 @@ import Inspectors from './screens/Inspectors'
 import InspectorHome from './screens/InspectorHome'
 import InspectorInspections from './screens/InspectorInspections'
 import InspectorPerformance from './screens/InspectorPerformance'
+import InspectorReports from './screens/InspectorReports'
+import InspectorViolations from './screens/InspectorViolations'
+import InspectorProfile from './screens/InspectorProfile'
 import NewInspection from './screens/NewInspection'
 import NotFound from './screens/NotFound'
 import ReviewQueue from './screens/ReviewQueue'
 import Rules from './screens/Rules'
 import RuleVersions from './screens/RuleVersions'
+import ScanDetail from './screens/ScanDetail'
 import ScanFindings from './screens/ScanFindings'
 import Settings from './screens/Settings'
+import StoreDetail from './screens/StoreDetail'
 import TodaysReport from './screens/TodaysReport'
 
 /** Send an authenticated officer to their own section; anyone else to login. */
@@ -90,8 +95,10 @@ export default function App() {
         <Route path="/admin/inspections" element={<AdminRoute><AdminInspections /></AdminRoute>} />
         <Route path="/admin/inspections/:id" element={<AdminRoute><InspectionDetail /></AdminRoute>} />
         <Route path="/admin/stores" element={<AdminRoute><AdminStores /></AdminRoute>} />
+        <Route path="/admin/stores/:id" element={<AdminRoute><StoreDetail /></AdminRoute>} />
         <Route path="/admin/scans" element={<AdminRoute><AdminScans /></AdminRoute>} />
         <Route path="/admin/products-scans" element={<AdminRoute><AdminScans /></AdminRoute>} />
+        <Route path="/admin/products-scans/:id" element={<AdminRoute><ScanDetail /></AdminRoute>} />
         <Route path="/admin/violations" element={<AdminRoute><AdminViolations /></AdminRoute>} />
         <Route path="/admin/repeat-offenders" element={<AdminRoute><RepeatOffenders /></AdminRoute>} />
         <Route path="/admin/scans/:id" element={<AdminRoute><ScanFindings /></AdminRoute>} />
@@ -109,8 +116,12 @@ export default function App() {
         <Route path="/inspector/inspections/:id" element={<InspectionDetail />} />
         <Route path="/inspector/inspections/:id/capture" element={<Capture />} />
         <Route path="/inspector/scans/:id" element={<ScanFindings />} />
-        <Route path="/inspector/today" element={<TodaysReport />} />
+        <Route path="/inspector/reports" element={<InspectorReports />} />
+        <Route path="/inspector/violations" element={<InspectorViolations />} />
         <Route path="/inspector/performance" element={<InspectorPerformance />} />
+        <Route path="/inspector/profile" element={<InspectorProfile />} />
+        <Route path="/inspector/settings" element={<InspectorProfile />} />
+        <Route path="/inspector/today" element={<TodaysReport />} />
 
         {/* ------------------------------------------------------ shared ---- */}
         <Route path="/settings" element={<Settings />} />

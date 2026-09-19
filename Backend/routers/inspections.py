@@ -83,8 +83,18 @@ def _inspection_dict(insp: Inspection) -> dict:
         rollup = "not_assessed"
     try:
         store_name = insp.store.name if getattr(insp, "store", None) else None
+        store_city = insp.store.city if getattr(insp, "store", None) else None
+        store_address = insp.store.address if getattr(insp, "store", None) else None
+        store_district = insp.store.district if getattr(insp, "store", None) else None
+        store_state = insp.store.state if getattr(insp, "store", None) else None
+        store_pincode = insp.store.pincode if getattr(insp, "store", None) else None
     except Exception:
-        store_name = None
+        store_name, store_city, store_address, store_district, store_state, store_pincode = None, None, None, None, None, None
+    try:
+        inspector_name = insp.inspector.full_name if getattr(insp, "inspector", None) else None
+        inspector_employee_id = insp.inspector.employee_id if getattr(insp, "inspector", None) else None
+    except Exception:
+        inspector_name, inspector_employee_id = None, None
     # Check aggregates across live scans (App reads passed/pass_count,
     # checks/checks_total; Portal reads counts). Evidence thumbs: first image
     # per live scan so carousels render without extra round-trips.
@@ -105,6 +115,13 @@ def _inspection_dict(insp: Inspection) -> dict:
     return {
         "id": insp.id, "store_id": insp.store_id, "user_id": insp.user_id,
         "store_name": store_name,
+        "store_city": store_city,
+        "store_address": store_address,
+        "store_district": store_district,
+        "store_state": store_state,
+        "store_pincode": store_pincode,
+        "inspector_name": inspector_name,
+        "inspector_employee_id": inspector_employee_id,
         "inspection_date": insp.inspection_date.isoformat(),
         "status": insp.status, "transaction_type": insp.transaction_type,
         "in_scope": insp.in_scope, "out_of_scope_reason": insp.out_of_scope_reason,
@@ -123,6 +140,9 @@ def _inspection_dict(insp: Inspection) -> dict:
         "submitted_at": insp.submitted_at.isoformat() if insp.submitted_at else None,
         "scan_count": len(insp.scans),
         "scanned_count": len(live),
+        "total_products": len(live),
+        "violation_products": sum(1 for r in results if r == "violation"),
+        "compliant_products": sum(1 for r in results if r == "compliant"),
         "scanned_at": (
             max((s.created_at for s in live if getattr(s, "created_at", None)), default=None).isoformat()
             if any(getattr(s, "created_at", None) for s in live)
@@ -333,9 +353,10 @@ def list_inspections(
     date_to: date | None = None,
     q: str | None = None,
     category: str | None = Query(default=None, max_length=60),
+    area: str | None = Query(default=None),
 ):
     """Filters per 04_PRD §5.9 — store, status, date range, free-text q,
-    category.
+    category, area.
 
     q matches shop name AND commodity/brand/batch (was shop-only → Portal
     showed "Shop name only"). category filters scans by commodity_category
@@ -363,13 +384,20 @@ def list_inspections(
         query = query.filter(Inspection.inspection_date >= date_from)
     if date_to is not None:
         query = query.filter(Inspection.inspection_date <= date_to)
+    if area and area.strip().lower() != "all":
+        _area_esc = area.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.join(Store, Store.id == Inspection.store_id).filter(or_(
+            Store.city.ilike(f"%{_area_esc}%", escape="\\"),
+            Store.district.ilike(f"%{_area_esc}%", escape="\\"),
+        ))
     if q:
         # Escape LIKE wildcards so %/_ in user input match literally; cap 100.
         _qq = (q or "")[:100]
         _esc = _qq.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         # Shop name + commodity/brand/batch via LEFT OUTER join to scans.
-        query = (query.outerjoin(Store, Store.id == Inspection.store_id)
-                 .outerjoin(Scan, Scan.inspection_id == Inspection.id)
+        if not (area and area.strip().lower() != "all"):
+            query = query.outerjoin(Store, Store.id == Inspection.store_id)
+        query = (query.outerjoin(Scan, Scan.inspection_id == Inspection.id)
                  .filter(or_(
                      Store.name.ilike(f"%{_esc}%", escape="\\"),
                      Scan.commodity_generic.ilike(f"%{_esc}%", escape="\\"),
@@ -394,24 +422,145 @@ def list_inspections(
     return [_inspection_dict(i) for i in _uniq]
 
 
+class AddRemarkRequest(BaseModel):
+    remark: str = Field(..., min_length=2, max_length=1000)
+
+
 @router.get("/inspections/{inspection_id}")
 def get_inspection(insp: Inspection = Depends(owned_inspection),
                    db: Session = Depends(get_db)):
+    from models import Finding
+    from rules_engine import ALL_CHECK_IDS
     d = _inspection_dict(insp)
     d["scans"] = []
-    for s in insp.scans:
+    order = {cid: i for i, cid in enumerate(ALL_CHECK_IDS)}
+    for s in (insp.scans or []):
         _imgs = sorted(getattr(s, "images", []) or [], key=lambda i: getattr(i, "id", 0))
+        findings_rows = db.query(Finding).filter(Finding.scan_id == s.id).all()
+        findings_rows.sort(key=lambda r: order.get(r.check_id, 99))
+
+        # Extract MRP and check violations
+        mrp_str = None
+        for f in findings_rows:
+            if f.check_id in ("CHK03", "CHK11") and f.observed:
+                mrp_str = f.observed
+                break
+            if f.observed and ("₹" in f.observed or "Rs" in f.observed or "MRP" in f.observed.upper()):
+                mrp_str = f.observed
+
+        # Net quantity string
+        nq_str = None
+        if getattr(s, "net_quantity_value", None) is not None and getattr(s, "net_quantity_unit", None):
+            val = s.net_quantity_value
+            val_fmt = f"{int(val)}" if val == int(val) else f"{val}"
+            nq_str = f"{val_fmt} {s.net_quantity_unit}"
+
+        v_count = sum(1 for f in findings_rows if (f.effective_verdict or f.engine_verdict) == "fail")
+
         d["scans"].append({
-            "id": s.id, "commodity_generic": s.commodity_generic,
-            "brand_name": s.brand_name, "overall_result": s.overall_result,
-            "result": s.overall_result, "verdict": s.overall_result,
-            "checks_assessed": s.checks_assessed, "checks_total": s.checks_total,
-            "checks": s.checks_total, "duplicate_of": s.duplicate_of,
+            "id": s.id,
+            "commodity_generic": s.commodity_generic,
+            "product_name": f"{s.brand_name or ''} {s.commodity_generic or 'Commodity Item'}".strip(),
+            "brand_name": s.brand_name,
+            "commodity_category": s.commodity_category,
+            "batch_number": s.batch_number,
+            "barcode": s.barcode,
+            "net_quantity_value": s.net_quantity_value,
+            "net_quantity_unit": s.net_quantity_unit,
+            "net_quantity": nq_str,
+            "mrp": mrp_str,
+            "violations_count": v_count,
+            "overall_result": s.overall_result,
+            "result": s.overall_result,
+            "verdict": s.overall_result,
+            "checks_assessed": s.checks_assessed,
+            "checks_total": s.checks_total,
+            "checks": s.checks_total,
+            "duplicate_of": s.duplicate_of,
+            "engine_version": s.engine_version,
+            "rules_as_at": s.rules_as_at.isoformat() if getattr(s, "rules_as_at", None) else None,
             "thumbnail_url": (
                 f"/scans/{s.id}/images/{_imgs[0].id}/thumbnail"
                 if _imgs else None),
+            "images": [
+                {"id": img.id, "panel": img.panel, "sha256": img.sha256}
+                for img in _imgs
+            ],
+            "findings": [
+                {
+                    "id": f.id,
+                    "check_id": f.check_id,
+                    "title": f.title,
+                    "engine_verdict": f.engine_verdict,
+                    "human_verdict": f.human_verdict,
+                    "effective_verdict": f.effective_verdict,
+                    "result": (
+                        "Violation" if (f.effective_verdict or f.engine_verdict) == "fail"
+                        else "Not Assessed" if (f.effective_verdict or f.engine_verdict) == "not_assessed"
+                        else "Out of Scope" if (f.effective_verdict or f.engine_verdict) == "out_of_scope"
+                        else "Compliant"
+                    ),
+                    "severity": f.severity,
+                    "reason": f.reason,
+                    "override_reason": f.override_reason,
+                    "observed": f.observed,
+                    "required": f.required,
+                    "citation": f.citation,
+                    "ledger_ref": f.ledger_ref,
+                    "confidence": f.confidence,
+                    "overridden_at": f.overridden_at.isoformat() if f.overridden_at else None,
+                    "overridden_by": f.overridden_by,
+                }
+                for f in findings_rows
+            ],
         })
     return d
+
+
+@router.post("/inspections/{inspection_id}/findings/{finding_id}/remark")
+def add_finding_remark(
+    finding_id: int,
+    body: AddRemarkRequest,
+    insp: Inspection = Depends(owned_inspection),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from models import Finding
+    finding = db.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Finding not found")
+
+    scan = db.get(Scan, finding.scan_id)
+    if scan is None or scan.inspection_id != insp.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Finding does not belong to this inspection")
+
+    old_reason = finding.reason
+    finding.reason = body.remark.strip()
+    finding.override_reason = body.remark.strip()
+    finding.overridden_by = user.id
+    finding.overridden_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(finding)
+
+    append_audit(
+        db,
+        inspection_id=insp.id,
+        scan_id=scan.id,
+        user_id=user.id,
+        action="inspector_remark",
+        old_value=old_reason,
+        new_value=finding.reason,
+        reason=f"Remark recorded for {finding.check_id}",
+    )
+
+    return {
+        "success": True,
+        "finding_id": finding.id,
+        "check_id": finding.check_id,
+        "remark": finding.reason,
+        "updated_at": finding.overridden_at.isoformat() if finding.overridden_at else None,
+    }
 
 
 @router.post("/inspections/{inspection_id}/submit")

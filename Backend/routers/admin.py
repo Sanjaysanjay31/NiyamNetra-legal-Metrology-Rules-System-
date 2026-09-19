@@ -16,7 +16,7 @@ from models import AuditLog, Finding, Scan, User
 from password_handler import hash_password
 from queries import (
     admin_stats, admin_violations_list, inspection_trend, proximity_flags, repeat_violators, review_queue_size,
-    violations_by_check,
+    violations_by_area_query, violations_by_category_query, violations_by_check,
 )
 from rbac import require_admin
 from schemas import (
@@ -39,19 +39,22 @@ def _counts(d: dict) -> ResultCounts:
 @router.get("/dashboard", response_model=AdminDashboardResponse)
 def dashboard(start: date | None = Query(default=None),
               end: date | None = Query(default=None),
+              area: str | None = Query(default=None),
               user: User = Depends(require_admin),
               db: Session = Depends(get_db)):
     end = end or date.today()
     start = start or (end - timedelta(days=29))
-    stats = admin_stats(db, start, end)
+    stats = admin_stats(db, start, end, area=area)
     top = [
         CheckTally(check_id=r["check_id"], title=r["title"], count=r["count"])
-        for r in violations_by_check(db, start, end)
+        for r in violations_by_check(db, start, end, area=area)
     ]
     trend = [
         TrendPoint(day=r["inspection_date"], counts=_counts(r))
-        for r in inspection_trend(db, start, end)
+        for r in inspection_trend(db, start, end, area=area)
     ]
+    cats = violations_by_category_query(db, start, end, area=area)
+    areas_breakdown = violations_by_area_query(db, start, end, area=area)
     return AdminDashboardResponse(
         period_start=start, period_end=end,
         inspections=stats.get("inspections") or 0,
@@ -60,6 +63,8 @@ def dashboard(start: date | None = Query(default=None),
         counts=_counts(stats),
         review_queue=stats.get("review_queue") or 0,
         top_failed_checks=top, trend=trend,
+        violations_by_category=cats,
+        violations_by_area=areas_breakdown,
     )
 
 

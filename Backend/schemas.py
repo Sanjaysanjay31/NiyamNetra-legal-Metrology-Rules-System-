@@ -293,6 +293,8 @@ class AdminDashboardResponse(BaseModel):
     review_queue: int
     top_failed_checks: list[CheckTally]
     trend: list[TrendPoint]
+    violations_by_category: list[dict] | None = None
+    violations_by_area: list[dict] | None = None
 
 
 class AdminViolationItem(BaseModel):

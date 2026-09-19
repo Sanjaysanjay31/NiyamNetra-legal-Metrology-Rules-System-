@@ -169,10 +169,11 @@ function navFor(role, t) {
       heading: null,
       items: [
         { to: '/inspector', label: t('nav.home'), icon: Home, end: true },
-        { to: '/inspector/inspections/new', label: t('nav.newInspection'), icon: PlusCircle },
         { to: '/inspector/inspections', label: t('nav.inspections'), icon: ClipboardList },
-        { to: '/inspector/today', label: t('nav.today'), icon: FileText },
-        { to: '/inspector/performance', label: t('nav.performance'), icon: Activity },
+        { to: '/inspector/reports', label: t('nav.reports'), icon: FileText },
+        { to: '/inspector/violations', label: t('nav.violations'), icon: AlertTriangle },
+        { to: '/inspector/performance', label: t('nav.performance') || 'My Performance', icon: TrendingUp },
+        { to: '/inspector/settings', label: t('nav.settings') || 'Settings', icon: SettingsIcon },
       ],
     },
   ]
@@ -478,7 +479,7 @@ function UserMenu() {
         {user?.jurisdiction && <p className="mt-1 text-caption text-ink-2">{user.jurisdiction}</p>}
         <div className="nn-rule-line my-3" />
         <Link
-          to="/settings"
+          to={user?.role === 'inspector' ? '/inspector/settings' : '/settings'}
           onClick={() => setOpen(false)}
           className="flex min-h-touch items-center gap-2.5 rounded-sm px-2 text-small font-medium text-ink-2 hover:bg-surface-2 hover:text-ink"
         >
@@ -578,22 +579,60 @@ const INITIAL_NOTIFICATIONS = [
 
 function NotificationsMenu() {
   const [open, setOpen] = useState(false)
-  const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS)
+  const { role } = useAuth()
+  const [notifications, setNotifications] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('niyamnetra_admin_notifications') || '[]')
+      return Array.isArray(stored) && stored.length > 0 ? [...stored, ...INITIAL_NOTIFICATIONS] : INITIAL_NOTIFICATIONS
+    } catch {
+      return INITIAL_NOTIFICATIONS
+    }
+  })
   const navigate = useNavigate()
+
+  useEffect(() => {
+    function onInspectionSubmitted(e) {
+      if (e.detail) {
+        setNotifications((prev) => [e.detail, ...prev])
+      }
+    }
+    window.addEventListener('niyamnetra:inspection-submitted', onInspectionSubmitted)
+    return () => window.removeEventListener('niyamnetra:inspection-submitted', onInspectionSubmitted)
+  }, [])
 
   const unreadCount = notifications.filter((n) => !n.read).length
 
   const handleNotificationClick = (item) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === item.id ? { ...n, read: true } : n))
-    )
+    setNotifications((prev) => {
+      const updated = prev.map((n) => (n.id === item.id ? { ...n, read: true } : n))
+      try {
+        localStorage.setItem(
+          'niyamnetra_admin_notifications',
+          JSON.stringify(updated.filter((x) => !INITIAL_NOTIFICATIONS.some((init) => init.id === x.id)))
+        )
+      } catch (err) {}
+      return updated
+    })
     setOpen(false)
-    navigate(`/admin/inspections/${item.inspectionId}`)
+    const rawId = String(item.inspectionId).replace('INS-', '')
+    const targetPath = role === 'inspector'
+      ? `/inspector/inspections/${rawId}`
+      : `/admin/inspections/${rawId}`
+    navigate(targetPath)
   }
 
   const markAllAsRead = (e) => {
     e.stopPropagation()
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+    setNotifications((prev) => {
+      const updated = prev.map((n) => ({ ...n, read: true }))
+      try {
+        localStorage.setItem(
+          'niyamnetra_admin_notifications',
+          JSON.stringify(updated.filter((x) => !INITIAL_NOTIFICATIONS.some((init) => init.id === x.id)))
+        )
+      } catch (err) {}
+      return updated
+    })
   }
 
   return (

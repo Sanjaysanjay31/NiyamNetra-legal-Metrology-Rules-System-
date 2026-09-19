@@ -364,7 +364,7 @@ export default function AdminReports() {
   const productsScanned = c0.total ?? 0
   const compliant = c0.compliant ?? 0
   const violations = c0.violation ?? 0
-  const needsReview = c0.not_assessed ?? 0
+  const notAssessed = c0.not_assessed ?? 0
 
   /* Top violations — prefer the dashboard's per-period rollup (which the
      reference uses) and fall back to the today endpoint if needed. */
@@ -437,9 +437,9 @@ export default function AdminReports() {
     () => [
       { name: 'Compliant', value: compliant, color: RESULT_PALETTE.pass },
       { name: 'Violations', value: violations, color: RESULT_PALETTE.violation },
-      { name: 'Needs Review', value: needsReview, color: RESULT_PALETTE.review },
+      { name: 'Not Assessed', value: notAssessed, color: RESULT_PALETTE.review },
     ],
-    [compliant, violations, needsReview]
+    [compliant, violations, notAssessed]
   )
 
   const [productSearch, setProductSearch] = useState('')
@@ -529,7 +529,7 @@ export default function AdminReports() {
               <Row><Cell><Data ss:Type="String">Products Scanned</Data></Cell><Cell><Data ss:Type="Number">${productsScanned}</Data></Cell></Row>
               <Row><Cell><Data ss:Type="String">Compliant Products</Data></Cell><Cell><Data ss:Type="Number">${compliant}</Data></Cell></Row>
               <Row><Cell><Data ss:Type="String">Violations</Data></Cell><Cell><Data ss:Type="Number">${violations}</Data></Cell></Row>
-              <Row><Cell><Data ss:Type="String">Needs Review</Data></Cell><Cell><Data ss:Type="Number">${needsReview}</Data></Cell></Row>
+              <Row><Cell><Data ss:Type="String">Not Assessed</Data></Cell><Cell><Data ss:Type="Number">${notAssessed}</Data></Cell></Row>
               <Row />
               <Row><Cell><Data ss:Type="String">AREA-WISE SUMMARY</Data></Cell></Row>
               <Row>
@@ -604,7 +604,7 @@ export default function AdminReports() {
                   <th>Products Scanned</th>
                   <th>Compliant</th>
                   <th>Violations</th>
-                  <th>Needs Review</th>
+                  <th>Not Assessed</th>
                 </tr>
               </thead>
               <tbody>
@@ -614,7 +614,7 @@ export default function AdminReports() {
                   <td><strong>${productsScanned}</strong></td>
                   <td style="color: #166534;"><strong>${compliant}</strong></td>
                   <td style="color: #991b1b;"><strong>${violations}</strong></td>
-                  <td style="color: #92400e;"><strong>${needsReview}</strong></td>
+                  <td style="color: #92400e;"><strong>${notAssessed}</strong></td>
                 </tr>
               </tbody>
             </table>
@@ -711,7 +711,7 @@ export default function AdminReports() {
               <div class="kpi-card"><div class="kpi-label">Products Scanned</div><div class="kpi-val">${productsScanned}</div></div>
               <div class="kpi-card"><div class="kpi-label">Compliant</div><div class="kpi-val" style="color: #166534;">${compliant}</div></div>
               <div class="kpi-card"><div class="kpi-label">Violations</div><div class="kpi-val" style="color: #991b1b;">${violations}</div></div>
-              <div class="kpi-card"><div class="kpi-label">Needs Review</div><div class="kpi-val" style="color: #92400e;">${needsReview}</div></div>
+              <div class="kpi-card"><div class="kpi-label">Not Assessed</div><div class="kpi-val" style="color: #92400e;">${notAssessed}</div></div>
             </div>
 
             <h2>Area-Wise Inspection Summary</h2>
@@ -873,8 +873,8 @@ export default function AdminReports() {
           accent="violation"
         />
         <KpiCard
-          label="Needs Review"
-          value={needsReview}
+          label="Not Assessed"
+          value={notAssessed}
           icon={AlertTriangle}
           accent="review"
         />

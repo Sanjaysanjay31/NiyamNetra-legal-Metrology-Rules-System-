@@ -30,9 +30,9 @@ import {
   Search,
   XCircle,
 } from 'lucide-react'
-import { useDocumentTitle } from '../lib/hooks'
+import { useDocumentTitle, useResource } from '../lib/hooks'
 import { STORE_KPIS, STORE_RECORDS } from '../mock/storesData'
-import { saveBlob } from '../api/client'
+import { endpoints, saveBlob } from '../api/client'
 import {
   Button,
   Card,
@@ -376,8 +376,50 @@ function TdC({ children, align = 'left', className }) {
 export default function AdminStores() {
   useDocumentTitle('Stores')
 
-  // Loading state (clean skeleton simulation for smooth transition)
-  const [loading] = useState(false)
+  const storesResource = useResource(() => endpoints.inspections.stores(), {
+    fallback: null,
+    label: 'admin-stores',
+  })
+
+  // Loading state
+  const loading = storesResource.loading
+
+  // Unified store records from backend or fallback fixture
+  const allRecords = useMemo(() => {
+    if (Array.isArray(storesResource.data) && storesResource.data.length > 0) {
+      return storesResource.data.map((s) => {
+        const matchingMock = STORE_RECORDS.find(
+          (m) => m.id === `ST-${String(s.id).padStart(3, '0')}` || m.name === s.name
+        )
+        return {
+          id: `ST-${String(s.id).padStart(3, '0')}`,
+          rawId: s.id,
+          name: s.name,
+          type: s.store_type || matchingMock?.type || 'Retail Kirana',
+          address: s.address || matchingMock?.address || 'Main Road',
+          area: s.city || s.district || matchingMock?.area || 'Hyderabad',
+          inspections: matchingMock?.inspections || 1,
+          result: matchingMock?.result || 'Compliant',
+          violations: matchingMock?.violations || 0,
+          lastInspection: matchingMock?.lastInspection || 'Recent',
+          rawDate: matchingMock?.rawDate || '2026-09-02',
+        }
+      })
+    }
+    return STORE_RECORDS
+  }, [storesResource.data])
+
+  const kpis = useMemo(() => {
+    if (Array.isArray(storesResource.data) && storesResource.data.length > 0) {
+      return {
+        total: allRecords.length,
+        inspectedThisMonth: allRecords.filter((s) => s.inspections > 0).length,
+        compliant: allRecords.filter((s) => String(s.result).toLowerCase() === 'compliant').length,
+        violations: allRecords.filter((s) => s.violations > 0).length,
+      }
+    }
+    return STORE_KPIS
+  }, [storesResource.data, allRecords])
 
   // Draft filter inputs
   const [qInput, setQInput] = useState('')
@@ -399,17 +441,17 @@ export default function AdminStores() {
   // Extract unique areas from records
   const areaOptions = useMemo(() => {
     const set = new Set()
-    STORE_RECORDS.forEach((s) => {
+    allRecords.forEach((s) => {
       if (s.area) set.add(s.area)
     })
     return Array.from(set).sort()
-  }, [])
+  }, [allRecords])
 
   // Filtered store records
   const filteredStores = useMemo(() => {
     const needle = filters.q.trim().toLowerCase()
 
-    return STORE_RECORDS.filter((s) => {
+    return allRecords.filter((s) => {
       // Area filter
       if (filters.area !== 'all' && s.area !== filters.area) {
         return false
@@ -531,25 +573,25 @@ export default function AdminStores() {
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <SummaryCard
           label="Total Stores"
-          value={STORE_KPIS.total}
+          value={kpis.total}
           accent="navy"
           loading={loading}
         />
         <SummaryCard
           label="Inspected This Month"
-          value={STORE_KPIS.inspectedThisMonth}
+          value={kpis.inspectedThisMonth}
           accent="navy"
           loading={loading}
         />
         <SummaryCard
           label="Compliant Stores"
-          value={STORE_KPIS.compliant}
+          value={kpis.compliant}
           accent="pass"
           loading={loading}
         />
         <SummaryCard
           label="Stores With Violations"
-          value={STORE_KPIS.violations}
+          value={kpis.violations}
           accent="violation"
           loading={loading}
         />
