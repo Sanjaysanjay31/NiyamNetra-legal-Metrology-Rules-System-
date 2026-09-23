@@ -2,7 +2,7 @@
 // NIYAMNETRA BACKEND CONFIGURATION (EDIT HERE BEFORE RUNNING)
 // ============================================================================
 // 1. Target mode: 'lan' for local laptop on Wi-Fi, or 'render' for cloud backend
-export const ACTIVE_BACKEND = 'render'; // 'lan' | 'render'
+export const ACTIVE_BACKEND = 'lan'; // 'lan' | 'render'
 
 // 2. Your Laptop Wi-Fi IPv4 Address (find by running `ipconfig` in terminal)
 // NOTE: this laptop has VMware adapters too (192.168.32.1 / 192.168.52.1) — the
