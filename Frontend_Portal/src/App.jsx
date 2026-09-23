@@ -122,6 +122,7 @@ export default function App() {
         <Route path="/inspector/profile" element={<InspectorProfile />} />
         <Route path="/inspector/settings" element={<InspectorProfile />} />
         <Route path="/inspector/today" element={<TodaysReport />} />
+        <Route path="/inspector/stores/:id" element={<StoreDetail />} />
 
         {/* ------------------------------------------------------ shared ---- */}
         <Route path="/settings" element={<Settings />} />

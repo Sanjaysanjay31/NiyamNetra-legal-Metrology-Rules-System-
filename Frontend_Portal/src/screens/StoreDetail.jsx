@@ -41,9 +41,9 @@ import {
   ShieldCheck,
   XCircle,
 } from 'lucide-react'
-import { useDocumentTitle } from '../lib/hooks'
+import { useDocumentTitle, useResource } from '../lib/hooks'
 import { STORE_RECORDS } from '../mock/storesData'
-import { saveBlob } from '../api/client'
+import { endpoints, saveBlob } from '../api/client'
 import {
   Button,
   Card,
@@ -138,210 +138,131 @@ function StatusBadge({ result, size = 'md' }) {
 /* ---------------------------------------------------------- Main Component -- */
 
 export default function StoreDetail() {
-  const { storeId } = useParams()
+  const params = useParams()
+  const rawStoreParam = params.id || params.storeId || '1'
+  const storeNumericId = parseInt(String(rawStoreParam).replace(/\D/g, ''), 10) || 1
   const navigate = useNavigate()
   const { push: toast } = useToast()
   const [downloading, setDownloading] = useState(false)
 
-  // Primary store record matching ST-001 by default, or looking up route parameter
+  // Fetch real stores
+  const storesResource = useResource(() => endpoints.inspections.stores(), {
+    fallback: [],
+    label: 'store-detail-stores',
+  })
+
+  // Fetch real inspections for this specific store
+  const storeInspectionsResource = useResource(
+    () => endpoints.inspections.list({ store_id: storeNumericId }),
+    {
+      deps: [storeNumericId],
+      fallback: [],
+      label: `store-inspections-${storeNumericId}`,
+    }
+  )
+
+  // Primary store record matching backend store or looking up fallback
   const store = useMemo(() => {
-    const rawId = storeId || 'ST-001'
-    const found = STORE_RECORDS.find(
-      (s) => s.id === rawId || String(s.id).toLowerCase() === String(rawId).toLowerCase()
+    const backendStore = Array.isArray(storesResource.data)
+      ? storesResource.data.find((s) => s.id === storeNumericId)
+      : null
+
+    const foundMock = STORE_RECORDS.find(
+      (s) =>
+        s.id === rawStoreParam ||
+        s.id === `ST-${String(storeNumericId).padStart(3, '0')}` ||
+        String(s.id).toLowerCase() === String(rawStoreParam).toLowerCase()
     )
 
-    if (found && found.id === 'ST-001') {
-      return {
-        id: 'ST-001',
-        name: 'Sri Stores',
-        area: 'Rajahmundry',
-        address: 'Rajahmundry',
-        currentStatus: 'Violation',
-        totalInspections: 4,
-        lastInspection: '02 Sep 2026',
-        totalViolations: 3,
-        passedCount: 2,
-        violationsCount: 2,
-        needsReviewCount: 0,
-        latestViolationsNote: 'Latest inspection identified 3 violations.',
-        latestInspectionId: '10230',
-        latestInspectionCode: 'INS-10230',
-        inspections: [
-          {
-            id: 'INS-10230',
-            rawId: '10230',
-            date: '02 Sep 2026',
-            inspector: 'S. Kumar',
-            products: 1,
-            result: 'Violation',
-            violations: 3,
-          },
-          {
-            id: 'INS-10215',
-            rawId: '10215',
-            date: '18 Aug 2026',
-            inspector: 'R. Kumar',
-            products: 2,
-            result: 'Pass',
-            violations: 0,
-          },
-          {
-            id: 'INS-10190',
-            rawId: '10190',
-            date: '04 Aug 2026',
-            inspector: 'A. Sharma',
-            products: 1,
-            result: 'Pass',
-            violations: 0,
-          },
-        ],
-        productScanned: {
-          name: 'Sample Product A',
-          lastScanned: '02 Sep 2026',
-          result: 'Violation',
-          findings: 3,
-        },
-        recentViolations: [
-          { id: 'CHK03', name: 'MRP Declaration', status: 'Violation' },
-          { id: 'CHK05', name: 'Consumer Care Details', status: 'Violation' },
-          { id: 'CHK08', name: 'Net Quantity Declaration', status: 'Violation' },
-        ],
-        recordIntegrity: {
-          latestInspection: 'INS-10230',
-          evidence: 'Verified',
-          ruleVersion: '2.0.0',
-          syncStatus: 'Synced',
-          auditTrail: 'Valid',
-        },
-      }
-    }
+    const rawId = backendStore
+      ? `ST-${String(backendStore.id).padStart(3, '0')}`
+      : (foundMock?.id || `ST-${String(storeNumericId).padStart(3, '0')}`)
 
-    if (found) {
-      const isViolation = found.result === 'Violation' || found.violations > 0
-      return {
-        id: found.id,
-        name: found.name,
-        area: found.area,
-        address: found.area,
-        currentStatus: found.result,
-        totalInspections: found.inspections || 3,
-        lastInspection: found.lastInspection || '02 Sep 2026',
-        totalViolations: found.violations,
-        passedCount: isViolation ? found.inspections - 1 : found.inspections,
-        violationsCount: isViolation ? 1 : 0,
-        needsReviewCount: 0,
-        latestViolationsNote: isViolation
-          ? `Latest inspection identified ${found.violations} violation${found.violations === 1 ? '' : 's'}.`
-          : 'Latest inspection confirmed full compliance with no violations.',
-        latestInspectionId: String(found.recentInspectionId || 10230),
-        latestInspectionCode: `INS-${found.recentInspectionId || 10230}`,
-        inspections: [
-          {
-            id: `INS-${found.recentInspectionId || 10230}`,
-            rawId: String(found.recentInspectionId || 10230),
-            date: found.lastInspection || '02 Sep 2026',
-            inspector: 'S. Kumar',
-            products: 1,
-            result: found.result,
-            violations: found.violations,
-          },
-          {
-            id: 'INS-10215',
-            rawId: '10215',
-            date: '18 Aug 2026',
-            inspector: 'R. Kumar',
-            products: 2,
-            result: 'Pass',
-            violations: 0,
-          },
-        ],
-        productScanned: {
-          name: 'Sample Product A',
-          lastScanned: found.lastInspection || '02 Sep 2026',
-          result: found.result,
-          findings: found.violations,
-        },
-        recentViolations: isViolation
-          ? [
-              { id: 'CHK03', name: 'MRP Declaration', status: 'Violation' },
-              { id: 'CHK05', name: 'Consumer Care Details', status: 'Violation' },
-            ]
-          : [],
-        recordIntegrity: {
-          latestInspection: `INS-${found.recentInspectionId || 10230}`,
-          evidence: 'Verified',
-          ruleVersion: '2.0.0',
-          syncStatus: 'Synced',
-          auditTrail: 'Valid',
-        },
-      }
-    }
+    const storeName = backendStore?.name || foundMock?.name || 'Sri Stores'
+    const storeArea = backendStore?.city || backendStore?.district || foundMock?.area || 'Hyderabad'
+    const storeAddress = backendStore?.address || foundMock?.address || `${storeArea}, Andhra Pradesh`
 
-    // Default fallback to ST-001 (Sri Stores)
-    return {
-      id: rawId,
-      name: 'Sri Stores',
-      area: 'Rajahmundry',
-      address: 'Rajahmundry',
-      currentStatus: 'Violation',
-      totalInspections: 4,
-      lastInspection: '02 Sep 2026',
-      totalViolations: 3,
-      passedCount: 2,
-      violationsCount: 2,
-      needsReviewCount: 0,
-      latestViolationsNote: 'Latest inspection identified 3 violations.',
-      latestInspectionId: '10230',
-      latestInspectionCode: 'INS-10230',
-      inspections: [
+    // Map backend inspections if available
+    let inspList = []
+    if (Array.isArray(storeInspectionsResource.data) && storeInspectionsResource.data.length > 0) {
+      inspList = storeInspectionsResource.data.map((insp) => ({
+        id: `INS-${insp.id}`,
+        rawId: String(insp.id),
+        date: insp.scheduled_date || insp.created_at || 'Recent',
+        inspector: insp.inspector_name || 'S. Kumar',
+        status: insp.status === 'in_progress' ? 'In Progress' : 'Submitted',
+        totalProducts: insp.total_products ?? 1,
+        violationProducts: insp.violation_products ?? 0,
+      }))
+    } else if (foundMock?.inspections) {
+      inspList = [
         {
-          id: 'INS-10230',
-          rawId: '10230',
+          id: `INS-${foundMock.recentInspectionId || 1023}`,
+          rawId: String(foundMock.recentInspectionId || 1023),
+          date: foundMock.lastInspection || '02 Sep 2026',
+          inspector: 'S. Kumar',
+          status: 'Submitted',
+          totalProducts: 5,
+          violationProducts: 2,
+        },
+      ]
+    } else {
+      inspList = [
+        {
+          id: 'INS-1023',
+          rawId: '1023',
           date: '02 Sep 2026',
           inspector: 'S. Kumar',
-          products: 1,
-          result: 'Violation',
-          violations: 3,
+          status: 'Submitted',
+          totalProducts: 5,
+          violationProducts: 2,
         },
-        {
-          id: 'INS-10215',
-          rawId: '10215',
-          date: '18 Aug 2026',
-          inspector: 'R. Kumar',
-          products: 2,
-          result: 'Pass',
-          violations: 0,
-        },
-        {
-          id: 'INS-10190',
-          rawId: '10190',
-          date: '04 Aug 2026',
-          inspector: 'A. Sharma',
-          products: 1,
-          result: 'Pass',
-          violations: 0,
-        },
-      ],
+      ]
+    }
+
+    const totalViolations = inspList.reduce((acc, i) => acc + (i.violationProducts || 0), 0)
+    const passedCount = inspList.filter((i) => (i.violationProducts || 0) === 0).length
+    const violationsCount = inspList.filter((i) => (i.violationProducts || 0) > 0).length
+
+    return {
+      id: rawId,
+      name: storeName,
+      area: storeArea,
+      address: storeAddress,
+      currentStatus: totalViolations > 0 ? 'Violation' : 'Compliant',
+      totalInspections: inspList.length,
+      lastInspection: inspList[0]?.date || 'Recent',
+      totalViolations: totalViolations,
+      passedCount: passedCount,
+      violationsCount: violationsCount,
+      needsReviewCount: 0,
+      latestViolationsNote: totalViolations > 0
+        ? `Latest inspection identified ${totalViolations} violation product(s).`
+        : 'Latest inspection confirmed full compliance with no violations.',
+      latestInspectionId: inspList[0]?.rawId || '1023',
+      latestInspectionCode: inspList[0]?.id || 'INS-1023',
+      inspections: inspList,
       productScanned: {
-        name: 'Sample Product A',
-        lastScanned: '02 Sep 2026',
+        name: 'Tastemaker Salt Chips (CrunchTime)',
+        lastScanned: inspList[0]?.date || '02 Sep 2026',
         result: 'Violation',
-        findings: 3,
+        findings: 4,
       },
-      recentViolations: [
-        { id: 'CHK03', name: 'MRP Declaration', status: 'Violation' },
-        { id: 'CHK05', name: 'Consumer Care Details', status: 'Violation' },
-        { id: 'CHK08', name: 'Net Quantity Declaration', status: 'Violation' },
-      ],
+      recentViolations: totalViolations > 0
+        ? [
+            { id: 'CHK03', name: 'MRP Declaration', status: 'Violation' },
+            { id: 'CHK05', name: 'Consumer Care Contact', status: 'Violation' },
+          ]
+        : [],
       recordIntegrity: {
-        latestInspection: 'INS-10230',
+        latestInspection: inspList[0]?.id || 'INS-1023',
         evidence: 'Verified',
         ruleVersion: '2.0.0',
         syncStatus: 'Synced',
         auditTrail: 'Valid',
       },
     }
-  }, [storeId])
+  }, [rawStoreParam, storeNumericId, storesResource.data, storeInspectionsResource.data])
 
   useDocumentTitle(`${store.name} (${store.id}) · Store Details`)
 
@@ -374,7 +295,7 @@ INSPECTION HISTORY:
 ${store.inspections
   .map(
     (i) =>
-      `[${i.id}] Date: ${i.date} | Inspector: ${i.inspector} | Products: ${i.products} | Result: ${i.result} | Violations: ${i.violations}`
+      `[${i.id}] Date: ${i.date} | Inspector: ${i.inspector} | Status: ${i.status} | Total Products: ${i.totalProducts} | Violation Products: ${i.violationProducts}`
   )
   .join('\n')}
 
@@ -640,19 +561,19 @@ Official Record · NiyamNetra Enforcement Portal
                     Inspection ID
                   </th>
                   <th className="border-b border-divider bg-surface-2 px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-3">
+                    Inspector
+                  </th>
+                  <th className="border-b border-divider bg-surface-2 px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-3">
                     Date
                   </th>
                   <th className="border-b border-divider bg-surface-2 px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-3">
-                    Inspector
+                    Inspection Status
                   </th>
                   <th className="border-b border-divider bg-surface-2 px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-3">
-                    Products
-                  </th>
-                  <th className="border-b border-divider bg-surface-2 px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-3">
-                    Result
+                    Total Products
                   </th>
                   <th className="border-b border-divider bg-surface-2 px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-3">
-                    Violations
+                    Violation Products
                   </th>
                   <th className="border-b border-divider bg-surface-2 px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-3">
                     Action
@@ -668,22 +589,31 @@ Official Record · NiyamNetra Enforcement Portal
                     <td className="px-4 py-3 text-[12px]">
                       <span className="nn-mono font-semibold text-ink">{r.id}</span>
                     </td>
-                    <td className="px-4 py-3 text-[12px] text-ink-2">{r.date}</td>
                     <td className="px-4 py-3 text-[12px] text-ink">{r.inspector}</td>
-                    <td className="px-4 py-3 text-right text-[12px]">
-                      <span className="nn-mono font-semibold text-ink">{r.products}</span>
-                    </td>
+                    <td className="px-4 py-3 text-[12px] text-ink-2">{r.date}</td>
                     <td className="px-4 py-3 text-[12px]">
-                      <StatusBadge result={r.result} />
+                      <span
+                        className={cx(
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+                          r.status === 'Submitted'
+                            ? 'border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                            : 'border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                        )}
+                      >
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right text-[12px]">
+                      <span className="nn-mono font-semibold text-ink">{r.totalProducts}</span>
                     </td>
                     <td className="px-4 py-3 text-right text-[12px]">
                       <span
                         className={cx(
                           'nn-mono font-semibold',
-                          r.violations > 0 ? 'font-bold text-violation-text' : 'text-ink-3'
+                          r.violationProducts > 0 ? 'font-bold text-violation-text' : 'text-ink-3'
                         )}
                       >
-                        {r.violations}
+                        {r.violationProducts}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right text-[12px]">

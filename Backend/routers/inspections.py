@@ -483,7 +483,13 @@ def get_inspection(insp: Inspection = Depends(owned_inspection),
                 f"/scans/{s.id}/images/{_imgs[0].id}/thumbnail"
                 if _imgs else None),
             "images": [
-                {"id": img.id, "panel": img.panel, "sha256": img.sha256}
+                {
+                    "id": img.id,
+                    "panel": img.panel,
+                    "sha256": img.sha256,
+                    "url": f"/scans/{s.id}/images/{img.id}/thumbnail",
+                    "thumbnail_url": f"/scans/{s.id}/images/{img.id}/thumbnail",
+                }
                 for img in _imgs
             ],
             "findings": [

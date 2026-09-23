@@ -292,10 +292,9 @@ export const endpoints = {
       unwrap(api.patch(`/admin/findings/${findingId}`, body)),
     audit: (params) => unwrap(api.get('/admin/audit', { params })),
     rules: () => unwrap(api.get('/admin/rules')),
-    /* GET /admin/rule-versions — every gazette version the engine knows, with
-       its effective window. The current version (the one rules_meta.rules_as_at
-       points at) has effective_to: null. */
     ruleVersions: () => unwrap(api.get('/admin/rule-versions')),
+    toggleRuleVersion: (version_id, is_active) =>
+      unwrap(api.patch(`/admin/rule-versions/${version_id}`, { is_active })),
     /* /admin/violations takes the same date / store / inspector / rule-version
        parameters the inspections list does, and returns a Top-Violations
        rollup alongside the per-record list. The list is unpaged on the

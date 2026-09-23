@@ -369,6 +369,10 @@ class RuleVersionOut(BaseModel):
     rules: list[dict] = []
 
 
+class ToggleRuleVersionRequest(BaseModel):
+    is_active: bool
+
+
 # ------------------------------------------------------------------ admin
 class CreateUserRequest(BaseModel):
     employee_id: str = Field(min_length=3, max_length=32)

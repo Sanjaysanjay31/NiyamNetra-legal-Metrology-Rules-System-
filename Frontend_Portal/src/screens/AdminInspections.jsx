@@ -674,13 +674,12 @@ export default function AdminInspections() {
                 <ThC>Inspection Status</ThC>
                 <ThC align="right">Total Products</ThC>
                 <ThC align="right">Violation Products</ThC>
-                <ThC align="right">Action</ThC>
               </tr>
             </thead>
             <tbody>
               {pagedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-[13px] text-ink-3">
+                  <td colSpan={7} className="py-8 text-center text-[13px] text-ink-3">
                     No inspections match the selected filters.
                   </td>
                 </tr>
@@ -691,9 +690,13 @@ export default function AdminInspections() {
                     className="transition-colors duration-fast ease-settle hover:bg-surface-2"
                   >
                     <TdC>
-                      <span className="nn-mono font-semibold text-ink">
+                      <Link
+                        to={`/admin/inspections/${r.id}`}
+                        className="nn-mono font-semibold text-accent-text hover:underline"
+                        aria-label={`View inspection INS-${r.id}`}
+                      >
                         INS-{r.id}
-                      </span>
+                      </Link>
                     </TdC>
                     <TdC>
                       <span className="font-medium text-ink">{r.storeName}</span>
@@ -717,15 +720,6 @@ export default function AdminInspections() {
                       )}>
                         {r.violationProducts}
                       </span>
-                    </TdC>
-                    <TdC align="right">
-                      <Link
-                        to={`/admin/inspections/${r.id}`}
-                        className="inline-flex items-center gap-1 text-[12px] font-semibold text-accent-text hover:underline"
-                        aria-label={`View inspection INS-${r.id}`}
-                      >
-                        View <span aria-hidden="true">→</span>
-                      </Link>
                     </TdC>
                   </tr>
                 ))

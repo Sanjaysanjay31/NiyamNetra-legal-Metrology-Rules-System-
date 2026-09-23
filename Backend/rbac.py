@@ -22,10 +22,11 @@ def get_current_user(
     cred: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> User:
-    if cred is None:
+    token_str = cred.credentials if cred else request.query_params.get("token")
+    if not token_str:
         raise UNAUTHORIZED
     try:
-        claims = decode_token(cred.credentials, expect=ACCESS)
+        claims = decode_token(token_str, expect=ACCESS)
     except TokenError:
         raise UNAUTHORIZED
 

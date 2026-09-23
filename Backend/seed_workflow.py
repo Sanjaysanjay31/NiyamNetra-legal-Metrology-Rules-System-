@@ -2,8 +2,28 @@
 Ensures INS-1023 has exactly 5 products: 2 violations and 3 compliant.
 """
 from datetime import date, datetime, timezone
+from pathlib import Path
 from database import SessionLocal
 from models import Finding, Inspection, Scan, ScanImage, Store, User, utcnow
+
+
+def ensure_demo_image(path_str: str, label: str):
+    p = Path(path_str)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if not p.exists():
+        try:
+            from PIL import Image, ImageDraw
+            img = Image.new("RGB", (640, 640), color=(15, 42, 68))
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([10, 10, 630, 630], outline=(180, 200, 220), width=3)
+            draw.text((40, 50), "NIYAMNETRA COMPLIANCE EVIDENCE", fill=(255, 255, 255))
+            draw.text((40, 90), f"PANEL: {label.upper()}", fill=(245, 158, 11))
+            draw.text((40, 130), f"TIMESTAMP: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}", fill=(200, 210, 220))
+            draw.text((40, 170), "GRID: CALIBRATED 1.0mm/px", fill=(160, 180, 200))
+            img.save(p, format="JPEG", quality=80)
+        except Exception as e:
+            print(f"Could not generate demo image {p}: {e}")
+
 
 
 def main():
@@ -67,6 +87,7 @@ def main():
                 "panel_width_mm": 100.0,
                 "pdp_area_cm2": 160.0,
                 "total_surface_area_cm2": 450.0,
+                "panels": ["front", "back", "mrp", "barcode"],
                 "checks": [
                     ("CHK01", "Net Quantity Declaration", "pass", "advisory", "50 g declared on Principal Display Panel", "Rule 6(1)(c), Legal Metrology Rules, 2011", None, None),
                     ("CHK02", "Unit of Measurement", "pass", "advisory", "'g' (grams) - Standard SI symbol", "Rules 12-13 read with First Schedule", None, None),
@@ -316,27 +337,33 @@ def main():
                 db.add(scan)
                 db.flush()
 
-            # Ensure image exists
-            img = db.query(ScanImage).filter_by(scan_id=scan.id, panel="front").first()
-            if not img:
-                img = ScanImage(
-                    scan_id=scan.id,
-                    panel="front",
-                    sequence=0,
-                    file_path=f"evidence/demo_{scan.id}_front.jpg",
-                    byte_size=102400,
-                    mime_type="image/jpeg",
-                    sha256="3f9a72e8a1d2c4b5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9",
-                    width_px=3024,
-                    height_px=4032,
-                    rectified=True,
-                    residual_tilt_deg=0.8,
-                    blur_variance=412.5,
-                    glare_ratio=0.015,
-                    captured_at=utcnow(),
-                )
-                db.add(img)
-                db.flush()
+            # Ensure images exist for all configured panels
+            panels_to_seed = p.get("panels", ["front"])
+            for seq_idx, panel_name in enumerate(panels_to_seed):
+                img_path = f"evidence/demo_{scan.id}_{panel_name}.jpg"
+                ensure_demo_image(img_path, f"{p['brand_name']} {panel_name}")
+                img = db.query(ScanImage).filter_by(scan_id=scan.id, panel=panel_name).first()
+                if not img:
+                    img = ScanImage(
+                        scan_id=scan.id,
+                        panel=panel_name,
+                        sequence=seq_idx,
+                        file_path=img_path,
+                        byte_size=102400,
+                        mime_type="image/jpeg",
+                        sha256="3f9a72e8a1d2c4b5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9",
+                        width_px=3024,
+                        height_px=4032,
+                        rectified=True,
+                        residual_tilt_deg=0.8,
+                        blur_variance=412.5,
+                        glare_ratio=0.015,
+                        captured_at=utcnow(),
+                    )
+                    db.add(img)
+                    db.flush()
+                else:
+                    img.file_path = img_path
 
             # Upsert findings
             existing_findings = {f.check_id: f for f in db.query(Finding).filter(Finding.scan_id == scan.id).all()}
