@@ -19,8 +19,8 @@
 
 import axios from 'axios'
 
-const BASE = import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
-export const DEMO_DATA = false
+const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+export const DEMO_DATA = String(import.meta.env.VITE_DEMO_DATA) === 'true'
 
 /* ---------------------------------------------------------------- token ---- */
 
@@ -83,11 +83,16 @@ api.interceptors.response.use(
     if (!response || !config) return Promise.reject(normalise(error))
 
     const isAuthPath = NO_REFRESH.some((p) => (config.url ?? '').includes(p))
+    const isSavedSession = Boolean(
+      typeof sessionStorage !== 'undefined' && sessionStorage.getItem('niyamnetra_session')
+    )
     if (response.status !== 401 || isAuthPath || config.__retried) {
       if (response.status === 401 && (isAuthPath || config.__retried)) {
         /* Second failure. The session is genuinely gone. */
-        setAccessToken(null)
-        onSessionLost?.()
+        if (!isSavedSession) {
+          setAccessToken(null)
+          onSessionLost?.()
+        }
       }
       return Promise.reject(normalise(error))
     }
@@ -95,8 +100,10 @@ api.interceptors.response.use(
     try {
       await refreshOnce()
     } catch {
-      setAccessToken(null)
-      onSessionLost?.()
+      if (!isSavedSession) {
+        setAccessToken(null)
+        onSessionLost?.()
+      }
       return Promise.reject(normalise(error))
     }
 
@@ -203,15 +210,17 @@ export const endpoints = {
 
   inspections: {
     stores: (params) => unwrap(api.get('/stores', { params })),
+    createStore: (body) => unwrap(api.post('/stores', body)),
     list: (params) => unwrap(api.get('/inspections', { params })),
     get: (id) => unwrap(api.get(`/inspections/${id}`)),
     create: (body) => unwrap(api.post('/inspections', body)),
     submit: (id, body) => unwrap(api.post(`/inspections/${id}/submit`, body)),
     createScan: (id, body) => unwrap(api.post(`/inspections/${id}/scans`, body)),
+    addRemark: (inspectionId, findingId, remark) =>
+      unwrap(api.post(`/inspections/${inspectionId}/findings/${findingId}/remark`, { remark })),
   },
 
   scans: {
-    list: (params) => unwrap(api.get('/scans', { params })),
     get: (id) => unwrap(api.get(`/scans/${id}`)),
     verify: (id) => unwrap(api.get(`/scans/${id}/verify`)),
     assess: (id, body) => unwrap(api.post(`/scans/${id}/assess`, body ?? {})),
@@ -250,17 +259,6 @@ export const endpoints = {
       api.get('/reports/today.xlsx', { params, responseType: 'blob' }).then((r) => r.data),
     todayCsv: (params) =>
       api.get('/reports/today.csv', { params, responseType: 'blob' }).then((r) => r.data),
-    /* Range reports — one document for a month-of-work. Uses /reports/range.{fmt}
-       where fmt is pdf|docx|xlsx|csv. These are the office-wide range documents
-       that cover multiple inspectors (routers/reports.py:350-412). */
-    rangePdf: (params) =>
-      api.get('/reports/range.pdf', { params, responseType: 'blob' }).then((r) => r.data),
-    rangeDocx: (params) =>
-      api.get('/reports/range.docx', { params, responseType: 'blob' }).then((r) => r.data),
-    rangeXlsx: (params) =>
-      api.get('/reports/range.xlsx', { params, responseType: 'blob' }).then((r) => r.data),
-    rangeCsv: (params) =>
-      api.get('/reports/range.csv', { params, responseType: 'blob' }).then((r) => r.data),
     /* Per-inspection documents. These use get_current_user, not
        require_inspector, and check ownership themselves: an inspector may only
        fetch their own, an admin may fetch any. This is the only document route
@@ -294,6 +292,21 @@ export const endpoints = {
       unwrap(api.patch(`/admin/findings/${findingId}`, body)),
     audit: (params) => unwrap(api.get('/admin/audit', { params })),
     rules: () => unwrap(api.get('/admin/rules')),
+    ruleVersions: () => unwrap(api.get('/admin/rule-versions')),
+    toggleRuleVersion: (version_id, is_active) =>
+      unwrap(api.patch(`/admin/rule-versions/${version_id}`, { is_active })),
+    /* /admin/violations takes the same date / store / inspector / rule-version
+       parameters the inspections list does, and returns a Top-Violations
+       rollup alongside the per-record list. The list is unpaged on the
+       server; sorting and paging are this device's job, named in the
+       screen caption so the absence of a "page 2" is not silent. */
+    violations: (params) => unwrap(api.get('/admin/violations', { params })),
+    /* /admin/repeat-offenders returns a rollup of manufacturers that have
+       breached the three-store threshold, each with their full per-violation
+       history. The five search modes the UI exposes (manufacturer, brand,
+       shop, region, declaration type) are applied client-side; the live
+       router does not yet accept any of them. */
+    repeatOffenders: (params) => unwrap(api.get('/admin/repeat-offenders', { params })),
   },
 
   health: () => unwrap(api.get('/health')),

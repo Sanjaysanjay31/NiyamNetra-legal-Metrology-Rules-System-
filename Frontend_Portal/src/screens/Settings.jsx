@@ -100,7 +100,14 @@ export default function Settings() {
       >
         {user ? (
           <div className="grid grid-cols-2 gap-4 py-4 sm:grid-cols-4">
-            <MetaStat label="Full name" value={user.full_name} />
+            <MetaStat
+              label="Full name"
+              value={
+                !user.full_name || user.full_name === 'Seed Administrator'
+                  ? 'Administrator'
+                  : user.full_name
+              }
+            />
             <MetaStat
               label={t('auth.employeeId')}
               value={<span className="nn-mono">{user.employee_id}</span>}
@@ -194,6 +201,9 @@ export default function Settings() {
             ]}
             defaultValue="comfortable"
           />
+        </PrefRow>
+        <PrefRow label="Demo data" hint="Show a small chip on screens that are reading from the fixture set.">
+          <Switch storageKey="settings.demo" defaultChecked={true} label="Show demo chip" />
         </PrefRow>
       </SectionCard>
 

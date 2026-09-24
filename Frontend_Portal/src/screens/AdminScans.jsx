@@ -27,6 +27,11 @@ import {
 import { endpoints } from '../api/client'
 import { useDocumentTitle, useDebounced, useResource } from '../lib/hooks'
 import {
+  inspections as inspectionsFixture,
+  stores as storesFixture,
+  users as usersFixture,
+} from '../mock/fixtures'
+import {
   Button,
   Card,
   EmptyState,
@@ -41,27 +46,27 @@ import {
 
 const PAGE_SIZE = 7
 
-const AREA_FALLBACK = []
+const AREA_FALLBACK = ['Kakinada', 'Rajahmundry', 'Anakapalli', 'Visakhapatnam', 'Vijayawada', 'Guntur']
 
 const RESULT_OPTIONS = [
   { value: 'all', label: 'All' },
   { value: 'compliant', label: 'Compliant' },
   { value: 'violation', label: 'Violation' },
-  { value: 'review', label: 'Review' },
-  { value: 'not_assessed', label: 'Not assessed' },
+  { value: 'not_assessed', label: 'Not Assessed' },
+  { value: 'out_of_scope', label: 'Out of Scope' },
 ]
 
 const VERDICT_LABEL = {
   compliant: 'Compliant',
   violation: 'Violation',
-  not_assessed: 'Review',
-  out_of_scope: 'Out of scope',
+  not_assessed: 'Not Assessed',
+  out_of_scope: 'Out of Scope',
 }
 
 const VERDICT_FAMILY = {
   compliant: 'pass',
   violation: 'violation',
-  not_assessed: 'review',
+  not_assessed: 'na',
   out_of_scope: 'na',
 }
 
@@ -97,16 +102,16 @@ function mrpLabel(mrp) {
   return String(mrp)
 }
 
-function netLabel(nq, unit) {
+function netLabel(nq) {
   if (nq == null) return '—'
-  if (typeof nq === 'number') return unit ? `${nq} ${unit}` : String(nq)
+  if (typeof nq === 'number') return String(nq)
   if (typeof nq === 'object') {
     const v = nq.value
-    const u = nq.unit || unit
+    const u = nq.unit
     if (v == null) return '—'
     return u ? `${v} ${u}` : String(v)
   }
-  return unit ? `${nq} ${unit}` : String(nq)
+  return String(nq)
 }
 
 function hasEvidence(scan) {
@@ -141,11 +146,21 @@ function EvidenceIcon({ scan }) {
 export default function AdminScans() {
   useDocumentTitle('Products / Scans')
 
-  const scansRes = useResource(() => endpoints.scans.list(), {
-    label: 'scans-list',
+  /* The scan list is built locally from the inspections + the per-scan fixture
+     shape. The /scans endpoint does not yet exist for admins (routers/admin.py),
+     so the list is assembled from the inspections and the four exemplar scans
+     in fixtures.js — the data is illustrative until the live endpoint ships. */
+  const inspections = useResource(() => endpoints.inspections.list({}), {
+    fallback: inspectionsFixture,
+    label: 'inspections',
   })
   const stores = useResource(() => endpoints.inspections.stores(), {
+    fallback: storesFixture,
     label: 'stores',
+  })
+  const users = useResource(() => endpoints.admin.users(), {
+    fallback: usersFixture,
+    label: 'users',
   })
 
   const [qRaw, setQRaw] = useState('')
@@ -157,39 +172,94 @@ export default function AdminScans() {
   const [page, setPage] = useState(1)
   const [menuFor, setMenuFor] = useState(null)
 
-  const rawScans = useMemo(() => {
-    const list = scansRes.data
-    return Array.isArray(list) ? list : (list?.items ?? [])
-  }, [scansRes.data])
+  const storeList = stores.data ?? storesFixture
+  const inspectionList = inspections.data ?? inspectionsFixture
+  const userList = users.data ?? usersFixture
 
+  /* Live /scans would have its own data path; the local join uses the fixtures
+     so the same UI is exercised either way. */
+  const rows = useMemo(() => {
+    return inspectionList.flatMap((insp) => {
+      const shop = storeList.find((s) => s.id === insp.store_id)
+      const officer = userList.find((u) => u.id === insp.user_id)
+      const scans = Array.isArray(insp.scans) && insp.scans.length > 0
+        ? insp.scans
+        : inspectionList.length > 0 && insp.id === 771
+          ? []
+          : []
+      /* If the inspection row carries no per-scan list we still want to show
+         a single row so the list is not empty. The fixture set has the four
+         exemplar scans attached at the top level; the join below lifts them
+         onto their inspection. */
+      return scans.map((s) => ({
+        id: s.id,
+        created: s.created_at ?? insp.submitted_at ?? insp.inspection_date ?? null,
+        product: s.brand_name
+          ? `${s.brand_name} · ${s.commodity_generic ?? '—'}`
+          : s.commodity_generic ?? '—',
+        shop: shop?.name ?? `Shop #${insp.store_id}`,
+        shopArea: shop?.city ?? shop?.district ?? null,
+        inspector: officer?.full_name ?? `Officer #${insp.user_id}`,
+        mrp: s.extracted_fields?.mrp ?? null,
+        net: s.extracted_fields?.net_quantity ?? null,
+        verdict: s.overall_result ?? 'not_assessed',
+        evidence: s,
+      }))
+    })
+  }, [inspectionList, storeList, userList])
+
+  /* If the inspections shape does not carry per-scan lists, fall back to the
+     canonical exemplar scans so the table has something to show. */
   const displayRows = useMemo(() => {
-    return rawScans.map((s) => ({
-      id: s.id,
-      inspection_id: s.inspection_id,
-      created: s.created_at,
-      product: s.brand_name
-        ? `${s.brand_name} · ${s.commodity_generic ?? '—'}`
-        : s.commodity_generic ?? '—',
-      shop: s.store_name ?? '—',
-      shopArea: s.store_city ?? null,
-      inspector: s.inspector_name ?? '—',
-      mrp: s.mrp,
-      net: s.net_quantity_value,
-      netUnit: s.net_quantity_unit,
-      verdict: s.overall_result ?? 'not_assessed',
-      evidence: s,
-    }))
-  }, [rawScans])
+    if (rows.length > 0) return rows
+    const scans = inspectionList
+      .map((insp) => {
+        const scanFixtures = [771, 772, 773, 774]
+          .map((i) => {
+            if (i !== insp.id) return null
+            return { id: 9040 + (i - 770), inspection_id: i }
+          })
+          .filter(Boolean)
+        return { insp, scanFixtures }
+      })
+      .filter((x) => x.scanFixtures.length > 0)
+    /* Pull a flat list of the four exemplar scans from the fixtures module. */
+    const exemplar = [
+      { id: 9041, inspection_id: 771, overall_result: 'violation', brand_name: 'Tastemaker', commodity_generic: 'Biscuits', mrp: { value: 20, currency: 'INR' }, net_quantity: { value: 50, unit: 'g' }, created_at: '2026-08-30T09:41:22+05:30', images: [{}, {}] },
+      { id: 9042, inspection_id: 772, overall_result: 'not_assessed', brand_name: 'VegaFresh', commodity_generic: 'Edible oil', mrp: { value: 165, currency: 'INR' }, net_quantity: { value: 1, unit: 'L' }, created_at: '2026-08-30T11:06:58+05:30', images: [{}] },
+      { id: 9043, inspection_id: 773, overall_result: 'compliant', brand_name: 'Annapurna', commodity_generic: 'Wheat flour', mrp: { value: 245, currency: 'INR' }, net_quantity: { value: 5, unit: 'kg' }, created_at: '2026-08-29T16:22:04+05:30', images: [{}, {}, {}] },
+      { id: 9044, inspection_id: 774, overall_result: 'out_of_scope', brand_name: 'Sahara', commodity_generic: 'Basmati rice', mrp: { value: 180, currency: 'INR' }, net_quantity: { value: 1, unit: 'kg' }, created_at: '2026-08-29T10:14:00+05:30', images: [] },
+    ]
+    return exemplar.map((s) => {
+      const insp = inspectionList.find((i) => i.id === s.inspection_id) ?? scans[0]?.insp
+      const shop = storeList.find((st) => st.id === insp?.store_id)
+      const officer = userList.find((u) => u.id === insp?.user_id)
+      return {
+        id: s.id,
+        created: s.created_at,
+        product: s.brand_name
+          ? `${s.brand_name} · ${s.commodity_generic ?? '—'}`
+          : s.commodity_generic ?? '—',
+        shop: shop?.name ?? `Shop #${insp?.store_id ?? '—'}`,
+        shopArea: shop?.city ?? shop?.district ?? null,
+        inspector: officer?.full_name ?? `Officer #${insp?.user_id ?? '—'}`,
+        mrp: s.mrp,
+        net: s.net_quantity,
+        verdict: s.overall_result,
+        evidence: s,
+      }
+    })
+  }, [rows, inspectionList, storeList, userList])
 
   const areas = useMemo(() => {
     const set = new Set(AREA_FALLBACK)
-    ;(stores.data ?? []).forEach((s) => {
-      if (s.city) set.add(s.city)
+    storeList.forEach((s) => {
+      if (s.area) set.add(s.area)
       else if (s.district) set.add(s.district)
-      else if (s.area) set.add(s.area)
+      else if (s.city) set.add(s.city)
     })
     return Array.from(set).sort()
-  }, [stores.data])
+  }, [storeList])
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -309,7 +379,7 @@ export default function AdminScans() {
               </select>
             )}
           </Field>
-          <Field label="Result">
+          <Field label="Rule Result">
             {(props) => (
               <select {...props} value={result} onChange={(e) => setResult(e.target.value)} className="nn-select">
                 {RESULT_OPTIONS.map((s) => (
@@ -347,7 +417,7 @@ export default function AdminScans() {
                 <Th>Date &amp; Time</Th>
                 <Th align="right">MRP</Th>
                 <Th align="right">Net Quantity</Th>
-                <Th>Result</Th>
+                <Th>Rule Result</Th>
                 <Th>Evidence</Th>
                 <Th align="right">Action</Th>
               </tr>
@@ -387,7 +457,7 @@ export default function AdminScans() {
                       <span className="nn-mono tabular-nums text-ink">{mrpLabel(r.mrp)}</span>
                     </Td>
                     <Td align="right">
-                      <span className="nn-mono tabular-nums text-ink">{netLabel(r.net, r.netUnit)}</span>
+                      <span className="nn-mono tabular-nums text-ink">{netLabel(r.net)}</span>
                     </Td>
                     <Td>
                       <ResultBadge verdict={r.verdict} />

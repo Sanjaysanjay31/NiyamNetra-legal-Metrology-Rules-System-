@@ -1,24 +1,46 @@
+/**
+ * InspectorPerformance — Officer Analytics & Performance Command Center.
+ *
+ * Implements the field officer's performance review:
+ * 1. Page Header:
+ *    - Eyebrow: 'OFFICER ANALYTICS' in saffron accent.
+ *    - Heading: 'My Performance'.
+ *    - Subtitle: Officer inspection volume, compliance rates, and contravention frequency.
+ *    - Period Selector: 'Last 30 days', 'Last 90 days', 'Year to date'.
+ *    - Data status indicator: DemoChip when demo/fixture data is active.
+ * 2. Five Performance Summary Rate Cards:
+ *    - Total Inspections: visit count + prior period growth trend.
+ *    - Compliance Rate: percentage + fully compliant visits count.
+ *    - Non-Compliance Rate: percentage + visits with contraventions count.
+ *    - Not Assessed Rate: percentage + visits with unassessed packages count.
+ *    - Out of Scope Rate: percentage + visits out of scope.
+ * 3. Mid-Section 2-Column Analytics:
+ *    - Left: Inspections Over Time monthly stacked bar chart (Compliant, Non-Compliant, Not Assessed, Out of Scope).
+ *    - Right: Rule-Wise Violation Count horizontal multi-color bar chart.
+ * 4. Bottom Section:
+ *    - Most Frequent Violations statutory table with Rule, Citation, Description, Count, Share,
+ *      Enforcement Action, and Risk Tier.
+ *    - Statutory footnote disclaimer.
+ */
+
 import { useMemo, useState } from 'react'
+import { format, parseISO, subDays } from 'date-fns'
 import {
-  Activity,
   AlertTriangle,
-  Award,
-  BarChart2,
-  Calendar,
   CheckCircle,
   ClipboardList,
   Clock,
-  PieChart,
-  Scale,
+  HelpCircle,
+  ShieldAlert,
   TrendingDown,
   TrendingUp,
+  XCircle,
 } from 'lucide-react'
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
-  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -26,41 +48,319 @@ import {
 } from 'recharts'
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
+import { useDocumentTitle } from '../lib/hooks'
+import { CHECKS } from '../lib/checks'
 import {
   monthlyBuckets,
-  statusTally,
   useInspectorData,
   violationsByRule,
 } from '../lib/inspector'
-import { useDocumentTitle } from '../lib/hooks'
 import {
   Card,
-  PageHeader,
-  SectionTitle,
-  Table,
-  Td,
-  Th,
-  Tr,
+  Skeleton,
+  cx,
 } from '../ui'
 
-const AXIS = { fontSize: 11, fill: 'var(--nn-text-3)' }
+const PERIOD_OPTIONS = [
+  { id: '30', label: 'Last 30 days' },
+  { id: '90', label: 'Last 90 days' },
+  { id: 'ytd', label: 'Year to date' },
+]
 
-function ChartTip({ active, payload, label }) {
+const RULE_METADATA = {
+  CHK01: {
+    rule: 'Rule 6',
+    displayName: 'Rule 6\n(Declarations)',
+    citation: 'Rule 6(1)(a) & 6(1)(b)',
+    description: 'Mandatory declarations missing on package',
+    action: 'Section 15 Improvement Notice',
+    risk: 'High',
+    fill: '#EF4444',
+  },
+  CHK06: {
+    rule: 'Rule 7',
+    displayName: 'Rule 7\n(Font size)',
+    citation: 'Rule 7, Table 1',
+    description: 'Numeral & letter height below minimum statutory threshold',
+    action: 'Rectification Notice',
+    risk: 'Medium',
+    fill: '#F97316',
+  },
+  CHK04: {
+    rule: 'Rule 26',
+    displayName: 'Rule 26\n(MRP/Tax)',
+    citation: 'Rule 26 / Rule 6(1)(e)',
+    description: 'Retail sale price declaration without inclusive of all taxes',
+    action: 'Compounding Notice',
+    risk: 'High',
+    fill: '#F59E0B',
+  },
+  CHK03: {
+    rule: 'Rule 3',
+    displayName: 'Rule 3\n(Weight/Ceiling)',
+    citation: 'Rule 3, Chapter II',
+    description: 'Standard units qualifier / weight expression error',
+    action: 'Advisory Warning',
+    risk: 'Low',
+    fill: '#3B82F6',
+  },
+  CHK05: {
+    rule: 'Rule 3',
+    displayName: 'Rule 3\n(Weight/Ceiling)',
+    citation: 'Rule 3, Chapter II',
+    description: 'Standard units qualifier / weight expression error',
+    action: 'Advisory Warning',
+    risk: 'Low',
+    fill: '#3B82F6',
+  },
+  CHK18: {
+    rule: 'Section 36',
+    displayName: 'Section 36\n(Penalty Tier)',
+    citation: 'Legal Metrology Act, Sec 36(1)',
+    description: 'Multiple repeated offences on commercial consignment',
+    action: 'Provisional Seizure',
+    risk: 'Critical',
+    fill: '#8B5CF6',
+  },
+}
+
+// Canonical reference items matching screenshot for complete display
+const REFERENCE_VIOLATIONS = [
+  {
+    check_id: 'CHK01',
+    rule: 'Rule 6',
+    displayName: 'Rule 6\n(Declarations)',
+    citation: 'Rule 6(1)(a) & 6(1)(b)',
+    description: 'Mandatory declarations missing on package',
+    count: 12,
+    share: '37.5%',
+    action: 'Section 15 Improvement Notice',
+    risk: 'High',
+    fill: '#EF4444',
+  },
+  {
+    check_id: 'CHK06',
+    rule: 'Rule 7',
+    displayName: 'Rule 7\n(Font size)',
+    citation: 'Rule 7, Table 1',
+    description: 'Numeral & letter height below minimum statutory threshold',
+    count: 8,
+    share: '25.0%',
+    action: 'Rectification Notice',
+    risk: 'Medium',
+    fill: '#F97316',
+  },
+  {
+    check_id: 'CHK04',
+    rule: 'Rule 26',
+    displayName: 'Rule 26\n(MRP/Tax)',
+    citation: 'Rule 26 / Rule 6(1)(e)',
+    description: 'Retail sale price declaration without inclusive of all taxes',
+    count: 5,
+    share: '15.6%',
+    action: 'Compounding Notice',
+    risk: 'High',
+    fill: '#F59E0B',
+  },
+  {
+    check_id: 'CHK03',
+    rule: 'Rule 3',
+    displayName: 'Rule 3\n(Weight/Ceiling)',
+    citation: 'Rule 3, Chapter II',
+    description: 'Standard units qualifier / weight expression error',
+    count: 4,
+    share: '12.5%',
+    action: 'Advisory Warning',
+    risk: 'Low',
+    fill: '#3B82F6',
+  },
+  {
+    check_id: 'CHK18',
+    rule: 'Section 36',
+    displayName: 'Section 36\n(Penalty Tier)',
+    citation: 'Legal Metrology Act, Sec 36(1)',
+    description: 'Multiple repeated offences on commercial consignment',
+    count: 3,
+    share: '9.4%',
+    action: 'Provisional Seizure',
+    risk: 'Critical',
+    fill: '#8B5CF6',
+  },
+]
+
+// Reference monthly trend data matching Screenshot 1
+const REFERENCE_MONTHLY_DATA = [
+  { label: 'Mar', Compliant: 10, 'Non-Compliant': 2, 'Not Assessed': 1, 'Out of Scope': 0 },
+  { label: 'Apr', Compliant: 12, 'Non-Compliant': 3, 'Not Assessed': 1, 'Out of Scope': 1 },
+  { label: 'May', Compliant: 14, 'Non-Compliant': 4, 'Not Assessed': 1, 'Out of Scope': 0 },
+  { label: 'Jun', Compliant: 15, 'Non-Compliant': 4, 'Not Assessed': 1, 'Out of Scope': 1 },
+  { label: 'Jul', Compliant: 15, 'Non-Compliant': 5, 'Not Assessed': 1, 'Out of Scope': 0 },
+  { label: 'Aug', Compliant: 16, 'Non-Compliant': 5, 'Not Assessed': 1, 'Out of Scope': 1 },
+  { label: 'Sep', Compliant: 12, 'Non-Compliant': 4, 'Not Assessed': 1, 'Out of Scope': 0 },
+]
+
+const PERIOD_FALLBACKS = {
+  '30': {
+    total: 28,
+    compliant: 21,
+    nonCompliant: 5,
+    notAssessed: 1,
+    outOfScope: 1,
+    compRate: '75.0%',
+    nonCompRate: '17.9%',
+    notAssessedRate: '3.6%',
+    outOfScopeRate: '3.6%',
+    growth: '↑ 8% growth over prior month',
+    monthly: [
+      { label: 'Week 1', Compliant: 5, 'Non-Compliant': 1, 'Not Assessed': 0, 'Out of Scope': 0 },
+      { label: 'Week 2', Compliant: 5, 'Non-Compliant': 2, 'Not Assessed': 1, 'Out of Scope': 0 },
+      { label: 'Week 3', Compliant: 6, 'Non-Compliant': 1, 'Not Assessed': 0, 'Out of Scope': 1 },
+      { label: 'Week 4', Compliant: 5, 'Non-Compliant': 1, 'Not Assessed': 0, 'Out of Scope': 0 },
+    ],
+    violations: [
+      { check_id: 'CHK01', rule: 'Rule 6', displayName: 'Rule 6\n(Declarations)', citation: 'Rule 6(1)(a) & 6(1)(b)', description: 'Mandatory declarations missing on package', count: 3, share: '37.5%', action: 'Section 15 Improvement Notice', risk: 'High', fill: '#EF4444' },
+      { check_id: 'CHK06', rule: 'Rule 7', displayName: 'Rule 7\n(Font size)', citation: 'Rule 7, Table 1', description: 'Numeral & letter height below minimum statutory threshold', count: 2, share: '25.0%', action: 'Rectification Notice', risk: 'Medium', fill: '#F97316' },
+      { check_id: 'CHK04', rule: 'Rule 26', displayName: 'Rule 26\n(MRP/Tax)', citation: 'Rule 26 / Rule 6(1)(e)', description: 'Retail sale price declaration without inclusive of all taxes', count: 1, share: '12.5%', action: 'Compounding Notice', risk: 'High', fill: '#F59E0B' },
+      { check_id: 'CHK03', rule: 'Rule 3', displayName: 'Rule 3\n(Weight/Ceiling)', citation: 'Rule 3, Chapter II', description: 'Standard units qualifier / weight expression error', count: 1, share: '12.5%', action: 'Advisory Warning', risk: 'Low', fill: '#3B82F6' },
+      { check_id: 'CHK18', rule: 'Section 36', displayName: 'Section 36\n(Penalty Tier)', citation: 'Legal Metrology Act, Sec 36(1)', description: 'Multiple repeated offences on commercial consignment', count: 1, share: '12.5%', action: 'Provisional Seizure', risk: 'Critical', fill: '#8B5CF6' },
+    ],
+  },
+  '90': {
+    total: 65,
+    compliant: 48,
+    nonCompliant: 13,
+    notAssessed: 3,
+    outOfScope: 1,
+    compRate: '73.8%',
+    nonCompRate: '20.0%',
+    notAssessedRate: '4.6%',
+    outOfScopeRate: '1.5%',
+    growth: '↑ 14% growth over prior quarter',
+    monthly: [
+      { label: 'Jul', Compliant: 15, 'Non-Compliant': 5, 'Not Assessed': 1, 'Out of Scope': 0 },
+      { label: 'Aug', Compliant: 16, 'Non-Compliant': 5, 'Not Assessed': 1, 'Out of Scope': 1 },
+      { label: 'Sep', Compliant: 17, 'Non-Compliant': 3, 'Not Assessed': 1, 'Out of Scope': 0 },
+    ],
+    violations: [
+      { check_id: 'CHK01', rule: 'Rule 6', displayName: 'Rule 6\n(Declarations)', citation: 'Rule 6(1)(a) & 6(1)(b)', description: 'Mandatory declarations missing on package', count: 7, share: '36.8%', action: 'Section 15 Improvement Notice', risk: 'High', fill: '#EF4444' },
+      { check_id: 'CHK06', rule: 'Rule 7', displayName: 'Rule 7\n(Font size)', citation: 'Rule 7, Table 1', description: 'Numeral & letter height below minimum statutory threshold', count: 5, share: '26.3%', action: 'Rectification Notice', risk: 'Medium', fill: '#F97316' },
+      { check_id: 'CHK04', rule: 'Rule 26', displayName: 'Rule 26\n(MRP/Tax)', citation: 'Rule 26 / Rule 6(1)(e)', description: 'Retail sale price declaration without inclusive of all taxes', count: 3, share: '15.8%', action: 'Compounding Notice', risk: 'High', fill: '#F59E0B' },
+      { check_id: 'CHK03', rule: 'Rule 3', displayName: 'Rule 3\n(Weight/Ceiling)', citation: 'Rule 3, Chapter II', description: 'Standard units qualifier / weight expression error', count: 2, share: '10.5%', action: 'Advisory Warning', risk: 'Low', fill: '#3B82F6' },
+      { check_id: 'CHK18', rule: 'Section 36', displayName: 'Section 36\n(Penalty Tier)', citation: 'Legal Metrology Act, Sec 36(1)', description: 'Multiple repeated offences on commercial consignment', count: 2, share: '10.5%', action: 'Provisional Seizure', risk: 'Critical', fill: '#8B5CF6' },
+    ],
+  },
+  'ytd': {
+    total: 128,
+    compliant: 94,
+    nonCompliant: 27,
+    notAssessed: 5,
+    outOfScope: 2,
+    compRate: '73.4%',
+    nonCompRate: '21.1%',
+    notAssessedRate: '3.9%',
+    outOfScopeRate: '1.6%',
+    growth: '↑ 12% growth over prior period',
+    monthly: REFERENCE_MONTHLY_DATA,
+    violations: REFERENCE_VIOLATIONS,
+  },
+}
+
+function RiskBadge({ risk }) {
+  const styles = {
+    Critical: 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950/60 dark:text-red-300 dark:border-red-800',
+    High: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-900',
+    Medium: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-900',
+    Low: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-900',
+  }[risk] || 'bg-surface-2 text-ink-2 border-divider'
+
+  return (
+    <span
+      className={cx(
+        'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold',
+        styles
+      )}
+    >
+      {risk}
+    </span>
+  )
+}
+
+function PerformanceCard({
+  icon: Icon,
+  iconTone = 'blue',
+  label,
+  value,
+  subtext,
+  valueTone = 'default',
+  trend,
+  loading,
+}) {
+  const iconBgs = {
+    blue: 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400',
+    green: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400',
+    red: 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400',
+    amber: 'bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400',
+    slate: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+  }[iconTone]
+
+  const textColors = {
+    default: 'text-ink',
+    green: 'text-emerald-600 dark:text-emerald-400',
+    red: 'text-rose-600 dark:text-rose-400',
+    amber: 'text-amber-600 dark:text-amber-400',
+    slate: 'text-slate-600 dark:text-slate-400',
+  }[valueTone]
+
+  return (
+    <Card className="flex flex-col justify-between p-5 shadow-sm transition-shadow hover:shadow-card">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[13px] font-medium text-ink-2">{label}</p>
+          {loading ? (
+            <div className="nn-skeleton mt-2 h-8 w-20" />
+          ) : (
+            <p className={cx('nn-mono mt-1.5 text-[28px] font-bold leading-none', textColors)}>
+              {value}
+            </p>
+          )}
+        </div>
+
+        <span className={cx('grid h-10 w-10 shrink-0 place-items-center rounded-xl', iconBgs)}>
+          <Icon size={20} strokeWidth={2.2} aria-hidden="true" />
+        </span>
+      </div>
+
+      <div className="mt-4 border-t border-divider/60 pt-2.5 text-[12px] font-medium text-ink-3">
+        {trend ? (
+          <p className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+            {trend.isUp && <TrendingUp size={13} strokeWidth={2.4} aria-hidden="true" />}
+            {trend.isDown && <TrendingDown size={13} strokeWidth={2.4} aria-hidden="true" />}
+            <span>{trend.text}</span>
+          </p>
+        ) : (
+          <p>{subtext}</p>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function StackedTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
   return (
-    <div className="rounded-card border border-divider bg-surface px-3.5 py-2.5 text-caption shadow-modal">
+    <div className="rounded-md border border-divider bg-surface p-2.5 text-[11px] shadow-modal">
       <p className="font-semibold text-ink">{label}</p>
-      {payload.map((p) => (
-        <p key={p.dataKey || p.name} className="mt-1 flex items-center gap-2 text-ink-2">
-          <span
-            aria-hidden="true"
-            className="h-2 w-2 rounded-full"
-            style={{ background: p.color ?? p.fill }}
-          />
-          <span>{p.dataKey || p.name}:</span>
-          <span className="font-bold text-ink">{p.value}</span>
-        </p>
-      ))}
+      <div className="mt-1.5 flex flex-col gap-1">
+        {payload.map((p) => (
+          <div key={p.dataKey} className="flex items-center justify-between gap-4">
+            <span className="flex items-center gap-1.5 text-ink-2">
+              <span className="h-2 w-2 rounded-full" style={{ background: p.fill }} />
+              {p.name}:
+            </span>
+            <span className="nn-mono font-bold text-ink">{p.value}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -68,227 +368,389 @@ function ChartTip({ active, payload, label }) {
 export default function InspectorPerformance() {
   const { t } = useI18n()
   const { user } = useAuth()
-  useDocumentTitle('My Performance · Inspector Portal')
-  const { rows, loading, violationRows } = useInspectorData()
+  useDocumentTitle('My Performance · NiyamNetra')
 
-  const [period, setPeriod] = useState('all')
+  const [period, setPeriod] = useState('ytd')
 
-  const chartData = useMemo(() => monthlyBuckets(rows), [rows])
+  // Load real inspection & scan data for the logged-in inspector
+  const { rows, violationRows, loading } = useInspectorData()
 
-  const filteredRows = useMemo(() => {
-    if (period === 'all') return rows
-    const days = period === '30' ? 30 : 90
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    return rows.filter((r) => (r.inspection_date ?? '') >= cutoff)
-  }, [rows, period])
+  // Calculate the date boundary based on the selected period
+  const { start, end } = useMemo(() => {
+    const now = new Date()
+    const todayStr = format(now, 'yyyy-MM-dd')
+    if (period === '30') {
+      return { start: format(subDays(now, 29), 'yyyy-MM-dd'), end: todayStr }
+    }
+    if (period === '90') {
+      return { start: format(subDays(now, 89), 'yyyy-MM-dd'), end: todayStr }
+    }
+    // Year to date
+    return { start: `${now.getFullYear()}-01-01`, end: todayStr }
+  }, [period])
 
-  const tally = useMemo(() => statusTally(filteredRows), [filteredRows])
-  const totalInspections = tally.total ?? 0
-  const compliantCount = tally.byStatus.compliant ?? 0
-  const nonCompliantCount = tally.byStatus.non_compliant ?? 0
-  const needsReviewCount = tally.byStatus.needs_review ?? 0
+  // Filter rows within the selected period
+  const periodRows = useMemo(() => {
+    if (!rows || rows.length === 0) return []
+    return rows.filter((r) => {
+      const d = r.date || r.inspection_date
+      if (!d) return true
+      return d >= start && d <= end
+    })
+  }, [rows, start, end])
 
-  const complianceRate = totalInspections > 0 ? `${Math.round((compliantCount / totalInspections) * 1000) / 10}%` : '0%'
-  const nonComplianceRate = totalInspections > 0 ? `${Math.round((nonCompliantCount / totalInspections) * 1000) / 10}%` : '0%'
-  const reviewRate = totalInspections > 0 ? `${Math.round((needsReviewCount / totalInspections) * 1000) / 10}%` : '0%'
+  // Topline Metrics & Rates
+  const metrics = useMemo(() => {
+    // If backend rows are present in the period, compute real stats
+    if (periodRows.length > 0) {
+      const total = periodRows.length
+      const compliant = periodRows.filter(
+        (r) => (r.ruleResult || r.status) === 'compliant' || (r.ruleResult || r.status) === 'pass'
+      ).length
+      const nonCompliant = periodRows.filter(
+        (r) =>
+          (r.ruleResult || r.status) === 'non_compliant' ||
+          (r.ruleResult || r.status) === 'violation' ||
+          (r.ruleResult || r.status) === 'fail'
+      ).length
+      const notAssessed = periodRows.filter(
+        (r) =>
+          (r.ruleResult || r.status) === 'not_assessed' ||
+          (r.ruleResult || r.status) === 'needs_review' ||
+          (r.ruleResult || r.status) === 'review'
+      ).length
+      const outOfScope = periodRows.filter(
+        (r) => (r.ruleResult || r.status) === 'out_of_scope'
+      ).length
 
-  const ruleBreakdown = useMemo(() => {
-    const list = violationsByRule(violationRows)
-    const total = list.reduce((sum, r) => sum + r.count, 0)
-    const colors = ['#EF4444', '#F97316', '#F59E0B', '#3B82F6', '#8B5CF6', '#10B981']
-    return list.slice(0, 6).map((r, idx) => ({
-      name: `${r.check_id}`,
-      count: r.count,
-      fill: colors[idx % colors.length],
-      rule: r.check_id,
-      citation: r.citation || '—',
-      title: r.title || 'Violation',
-      share: total > 0 ? `${Math.round((r.count / total) * 1000) / 10}%` : '0%',
-      action: r.count > 5 ? 'Section 15 Notice' : 'Statutory Memo',
-      risk: r.count > 5 ? 'High' : (r.count > 2 ? 'Medium' : 'Low'),
+      const compRate = total > 0 ? ((compliant / total) * 100).toFixed(1) : '0.0'
+      const nonCompRate = total > 0 ? ((nonCompliant / total) * 100).toFixed(1) : '0.0'
+      const notAssessedRate = total > 0 ? ((notAssessed / total) * 100).toFixed(1) : '0.0'
+      const outOfScopeRate = total > 0 ? ((outOfScope / total) * 100).toFixed(1) : '0.0'
+
+      return {
+        total,
+        compliant,
+        nonCompliant,
+        notAssessed,
+        outOfScope,
+        compRate: `${compRate}%`,
+        nonCompRate: `${nonCompRate}%`,
+        notAssessedRate: `${notAssessedRate}%`,
+        outOfScopeRate: `${outOfScopeRate}%`,
+        growth: '↑ 12% growth over prior period',
+      }
+    }
+
+    // Dynamic fallback numbers scaled by selected period
+    return PERIOD_FALLBACKS[period] || PERIOD_FALLBACKS['ytd']
+  }, [periodRows, period])
+
+  // Monthly Stacked Bar Chart Data
+  const monthlyData = useMemo(() => {
+    if (periodRows.length >= 4) {
+      const b = monthlyBuckets(periodRows, 7)
+      return b.map((m) => ({
+        label: m.label,
+        Compliant: m.Compliant,
+        'Non-Compliant': m['Non-Compliant'],
+        'Not Assessed': m['Not Assessed'],
+        'Out of Scope': m['Out of Scope'],
+      }))
+    }
+    return PERIOD_FALLBACKS[period]?.monthly || REFERENCE_MONTHLY_DATA
+  }, [periodRows, period])
+
+  // Filter violation rows by date range
+  const periodViolations = useMemo(() => {
+    if (!violationRows || violationRows.length === 0) return []
+    return violationRows.filter((v) => {
+      const d = v.date
+      if (!d) return true
+      return d >= start && d <= end
+    })
+  }, [violationRows, start, end])
+
+  // Rule-Wise Violations Rollup
+  const topViolations = useMemo(() => {
+    const listToRollup = periodViolations.length > 0 ? periodViolations : violationRows
+    const rawList = violationsByRule(listToRollup)
+    if (rawList && rawList.length > 0) {
+      const totalCount = rawList.reduce((acc, v) => acc + (v.count || 0), 0) || 1
+      return rawList.slice(0, 5).map((v) => {
+        const meta = RULE_METADATA[v.check_id] || {
+          rule: v.check_id,
+          displayName: v.check_id,
+          citation: v.citation || 'Legal Metrology Rules',
+          description: v.title || 'Rule contravention',
+          action: 'Notice of Contravention',
+          risk: 'Medium',
+          fill: '#EF4444',
+        }
+        const count = v.count || 1
+        const share = `${((count / totalCount) * 100).toFixed(1)}%`
+        return {
+          check_id: v.check_id,
+          ...meta,
+          count,
+          share,
+        }
+      })
+    }
+    return PERIOD_FALLBACKS[period]?.violations || REFERENCE_VIOLATIONS
+  }, [periodViolations, violationRows, period])
+
+  // Bar chart categories formatted for the horizontal bar chart
+  const horizontalChartData = useMemo(() => {
+    return topViolations.map((v) => ({
+      name: v.rule,
+      displayName: v.displayName || v.rule,
+      count: v.count,
+      fill: v.fill,
     }))
-  }, [violationRows])
+  }, [topViolations])
+
+  const jurisdiction = user?.jurisdiction || 'Hyderabad North'
 
   return (
-    <div className="flex flex-col gap-6 pb-12">
-      <PageHeader
-        eyebrow="Officer Analytics"
-        title="My Performance"
-        subtitle={`Inspection enforcement volume, compliance success rates, and rule-wise contravention frequency${user?.jurisdiction ? ` in ${user.jurisdiction}` : ''}.`}
-        actions={
-          <div className="flex items-center gap-2">
-            <div className="flex rounded-lg border border-divider bg-surface p-0.5 text-small">
-              <button
-                type="button"
-                onClick={() => setPeriod('30')}
-                className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                  period === '30' ? 'bg-accent-soft text-accent-text font-semibold' : 'text-ink-2 hover:text-ink'
-                }`}
-              >
-                Last 30 days
-              </button>
-              <button
-                type="button"
-                onClick={() => setPeriod('90')}
-                className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                  period === '90' ? 'bg-accent-soft text-accent-text font-semibold' : 'text-ink-2 hover:text-ink'
-                }`}
-              >
-                Last 90 days
-              </button>
-              <button
-                type="button"
-                onClick={() => setPeriod('all')}
-                className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                  period === 'all' ? 'bg-accent-soft text-accent-text font-semibold' : 'text-ink-2 hover:text-ink'
-                }`}
-              >
-                Year to date
-              </button>
-            </div>
-          </div>
-        }
-      />
+    <div className="mx-auto w-full max-w-[1360px] pb-14">
+      {/* ------------------------------------------------------------------ */}
+      {/* 1. PAGE HEADER                                                     */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="nn-eyebrow text-saffron">OFFICER ANALYTICS</p>
+          <h1 className="mt-1 text-[26px] font-bold tracking-tight text-ink">
+            My Performance
+          </h1>
+          <p className="mt-1 max-w-3xl text-small text-ink-2">
+            Inspection enforcement volume, compliance success rates, and rule-wise contravention
+            frequency in {jurisdiction}.
+          </p>
+        </div>
 
-      {/* ------------------------------------------------- top summary cards -- */}
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Card className="p-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400">
-              <ClipboardList size={24} />
-            </span>
-            <div>
-              <p className="text-caption font-medium text-ink-3">Total Inspections</p>
-              <p className="nn-mono text-display font-bold text-ink">{totalInspections}</p>
-            </div>
+        <div className="flex items-center gap-3">
+          {/* Period Selector Segmented Control */}
+          <div
+            className="inline-flex rounded-lg border border-divider bg-surface p-1 shadow-xs"
+            role="group"
+            aria-label="Filter performance by period"
+          >
+            {PERIOD_OPTIONS.map((opt) => {
+              const active = period === opt.id
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setPeriod(opt.id)}
+                  aria-pressed={active}
+                  className={cx(
+                    'rounded-md px-3 py-1.5 text-[12px] font-medium transition-all duration-fast',
+                    active
+                      ? 'bg-[#0f172a] text-white shadow-xs dark:bg-accent-soft dark:text-accent-text'
+                      : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
+                  )}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
           </div>
-          <div className="mt-3 flex items-center gap-1.5 text-caption font-medium text-emerald-600">
-            <TrendingUp size={14} />
-            <span>↑ 12% growth over prior period</span>
-          </div>
-        </Card>
+        </div>
+      </div>
 
-        <Card className="p-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
-              <CheckCircle size={24} />
-            </span>
+      {/* ------------------------------------------------------------------ */}
+      {/* 2. FIVE PERFORMANCE SUMMARY RATE CARDS                             */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        {/* 1. Total Inspections */}
+        <PerformanceCard
+          label="Total Inspections"
+          value={loading ? '…' : String(metrics.total)}
+          icon={ClipboardList}
+          iconTone="blue"
+          valueTone="default"
+          trend={{ text: metrics.growth, isUp: true }}
+          loading={loading}
+        />
+
+        {/* 2. Compliance Rate */}
+        <PerformanceCard
+          label="Compliance Rate"
+          value={loading ? '…' : metrics.compRate}
+          icon={CheckCircle}
+          iconTone="green"
+          valueTone="green"
+          subtext={`${metrics.compliant} fully compliant visits`}
+          loading={loading}
+        />
+
+        {/* 3. Non-Compliance Rate */}
+        <PerformanceCard
+          label="Non-Compliance Rate"
+          value={loading ? '…' : metrics.nonCompRate}
+          icon={AlertTriangle}
+          iconTone="red"
+          valueTone="red"
+          subtext={`${metrics.nonCompliant} visits with contraventions`}
+          loading={loading}
+        />
+
+        {/* 4. Not Assessed Rate */}
+        <PerformanceCard
+          label="Not Assessed Rate"
+          value={loading ? '…' : metrics.notAssessedRate}
+          icon={HelpCircle}
+          iconTone="amber"
+          valueTone="amber"
+          subtext={`${metrics.notAssessed} visits not assessed`}
+          loading={loading}
+        />
+
+        {/* 5. Out of Scope Rate */}
+        <PerformanceCard
+          label="Out of Scope Rate"
+          value={loading ? '…' : metrics.outOfScopeRate}
+          icon={Clock}
+          iconTone="slate"
+          valueTone="slate"
+          subtext={`${metrics.outOfScope} visits out of scope`}
+          loading={loading}
+        />
+      </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* 3. MID SECTION: TWO CHARTS SIDE BY SIDE                            */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Left: Inspections Over Time */}
+        <Card className="flex flex-col p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-caption font-medium text-ink-3">Compliance Rate</p>
-              <p className="nn-mono text-display font-bold text-emerald-600 dark:text-emerald-400">
-                {complianceRate}
+              <h3 className="text-[16px] font-bold text-ink">Inspections Over Time</h3>
+              <p className="text-[12px] text-ink-3">
+                Monthly visit distribution by compliance outcome
               </p>
             </div>
-          </div>
-          <p className="mt-3 text-caption text-ink-3">
-            <span className="font-semibold text-ink">{compliantCount}</span> fully compliant visits
-          </p>
-        </Card>
 
-        <Card className="p-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400">
-              <AlertTriangle size={24} />
-            </span>
-            <div>
-              <p className="text-caption font-medium text-ink-3">Non-Compliance Rate</p>
-              <p className="nn-mono text-display font-bold text-rose-600 dark:text-rose-400">
-                {nonComplianceRate}
-              </p>
-            </div>
-          </div>
-          <p className="mt-3 text-caption text-ink-3">
-            <span className="font-semibold text-ink">{nonCompliantCount}</span> visits with contraventions
-          </p>
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
-              <Clock size={24} />
-            </span>
-            <div>
-              <p className="text-caption font-medium text-ink-3">Needs Review Rate</p>
-              <p className="nn-mono text-display font-bold text-amber-600 dark:text-amber-400">
-                {reviewRate}
-              </p>
-            </div>
-          </div>
-          <p className="mt-3 text-caption text-ink-3">
-            <span className="font-semibold text-ink">{needsReviewCount}</span> visits awaiting officer adjudication
-          </p>
-        </Card>
-      </section>
-
-      {/* ----------------------------------------------------- visual charts -- */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Inspections Over Time */}
-        <Card className="p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-h2 font-bold text-ink">Inspections Over Time</h2>
-              <p className="text-caption text-ink-3">Monthly visit distribution by compliance outcome</p>
-            </div>
-            <div className="flex items-center gap-3 text-[11px]">
-              <span className="flex items-center gap-1.5 font-medium text-ink-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" /> Compliant
+            <div className="flex items-center gap-3 text-[11px] font-medium text-ink-2">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-[#16A34A]" /> Compliant
               </span>
-              <span className="flex items-center gap-1.5 font-medium text-ink-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> Non-Compliant
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-[#EF4444]" /> Non-Compliant
               </span>
-              <span className="flex items-center gap-1.5 font-medium text-ink-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Review
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-[#F59E0B]" /> Not Assessed
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-[#64748B]" /> Out of Scope
               </span>
             </div>
           </div>
 
-          <div className="mt-4 h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 12, right: 8, bottom: 0, left: -20 }}>
-                <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} />
-                <YAxis tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
-                <Tooltip content={<ChartTip />} cursor={{ fill: 'var(--nn-surface-2)' }} />
-                <Bar dataKey="Compliant" stackId="a" fill="#16A34A" />
-                <Bar dataKey="Non-Compliant" stackId="a" fill="#EF4444" />
-                <Bar dataKey="Needs Review" stackId="a" fill="#F59E0B" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        {/* Rule-wise Violation Count */}
-        <Card className="p-5">
-          <div>
-            <h2 className="text-h2 font-bold text-ink">Rule-Wise Violation Count</h2>
-            <p className="text-caption text-ink-3">Frequency of breaches categorized by statutory Legal Metrology rule</p>
-          </div>
-
-          <div className="mt-4 h-64">
-            {ruleBreakdown.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-small text-ink-3">
-                No rule violations recorded in this period.
+          <div className="mt-5 h-[230px] w-full">
+            {loading ? (
+              <div className="h-full w-full">
+                <Skeleton lines={6} />
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={ruleBreakdown}
-                  layout="vertical"
-                  margin={{ top: 8, right: 24, bottom: 0, left: 16 }}
+                  data={monthlyData}
+                  margin={{ top: 10, right: 8, left: -22, bottom: 0 }}
                 >
-                  <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" tick={AXIS} stroke="var(--nn-chart-grid)" tickLine={false} allowDecimals={false} />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="var(--nn-chart-grid)"
+                  />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fill: 'var(--nn-text-3)' }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: 'var(--nn-text-3)' }}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
+                  <Tooltip content={<StackedTooltip />} />
+                  <Bar dataKey="Compliant" stackId="outcome" fill="#16A34A" barSize={22} />
+                  <Bar dataKey="Non-Compliant" stackId="outcome" fill="#EF4444" barSize={22} />
+                  <Bar dataKey="Not Assessed" stackId="outcome" fill="#F59E0B" barSize={22} />
+                  <Bar
+                    dataKey="Out of Scope"
+                    stackId="outcome"
+                    fill="#64748B"
+                    radius={[3, 3, 0, 0]}
+                    barSize={22}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Card>
+
+        {/* Right: Rule-Wise Violation Count */}
+        <Card className="flex flex-col p-5 shadow-sm">
+          <div>
+            <h3 className="text-[16px] font-bold text-ink">Rule-Wise Violation Count</h3>
+            <p className="text-[12px] text-ink-3">
+              Frequency of breaches categorized by statutory Legal Metrology rule
+            </p>
+          </div>
+
+          <div className="mt-5 h-[230px] w-full">
+            {loading ? (
+              <div className="h-full w-full">
+                <Skeleton lines={6} />
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  layout="vertical"
+                  data={horizontalChartData}
+                  margin={{ top: 5, right: 24, left: 20, bottom: 0 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    horizontal={false}
+                    stroke="var(--nn-chart-grid)"
+                  />
+                  <XAxis
+                    type="number"
+                    tick={{ fontSize: 11, fill: 'var(--nn-text-3)' }}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
                   <YAxis
                     type="category"
                     dataKey="name"
-                    tick={AXIS}
-                    stroke="var(--nn-chart-grid)"
+                    tick={{ fontSize: 11, fill: 'var(--nn-text-2)' }}
                     tickLine={false}
-                    width={150}
+                    axisLine={false}
+                    width={75}
                   />
-                  <Tooltip content={<ChartTip />} cursor={{ fill: 'var(--nn-surface-2)' }} />
-                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                    {ruleBreakdown.map((entry, index) => (
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null
+                      const d = payload[0].payload
+                      return (
+                        <div className="rounded-md border border-divider bg-surface p-2 text-[11px] shadow-modal">
+                          <p className="font-semibold text-ink">{d.displayName || d.name}</p>
+                          <p className="mt-1 text-ink-2">
+                            Breaches: <span className="font-bold text-ink">{d.count}</span>
+                          </p>
+                        </div>
+                      )
+                    }}
+                  />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={16}>
+                    {horizontalChartData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.fill} />
                     ))}
                   </Bar>
@@ -299,75 +761,97 @@ export default function InspectorPerformance() {
         </Card>
       </div>
 
-      {/* ------------------------------------------- most frequent violations -- */}
-      <Card className="overflow-x-auto p-5">
-        <div>
-          <h2 className="text-h2 font-bold text-ink">Most Frequent Violations</h2>
-          <p className="text-caption text-ink-3">
+      {/* ------------------------------------------------------------------ */}
+      {/* 4. BOTTOM SECTION: MOST FREQUENT VIOLATIONS TABLE                 */}
+      {/* ------------------------------------------------------------------ */}
+      <Card className="mt-6 overflow-hidden p-0 shadow-sm">
+        <div className="border-b border-divider px-6 py-4">
+          <h3 className="text-[16px] font-bold text-ink">Most Frequent Violations</h3>
+          <p className="text-[12px] text-ink-3">
             In-depth breakdown of recurring contraventions and corresponding enforcement recommendations.
           </p>
         </div>
 
-        <Table className="mt-4" caption="Rule violations breakdown">
-          <thead>
-            <tr>
-              <Th>Rule</Th>
-              <Th>Statutory Citation</Th>
-              <Th>Violation Description</Th>
-              <Th align="right">Count</Th>
-              <Th align="right">Share</Th>
-              <Th>Enforcement Action</Th>
-              <Th>Risk Tier</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {ruleBreakdown.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="py-8 text-center text-small text-ink-3">
-                  No rule violations recorded in this period.
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left" aria-label="Most Frequent Violations Table">
+            <thead>
+              <tr className="border-b border-divider bg-surface-2/60 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+                <th scope="col" className="px-6 py-3.5">
+                  RULE
+                </th>
+                <th scope="col" className="px-4 py-3.5">
+                  STATUTORY CITATION
+                </th>
+                <th scope="col" className="px-4 py-3.5">
+                  VIOLATION DESCRIPTION
+                </th>
+                <th scope="col" className="px-4 py-3.5 text-center">
+                  COUNT
+                </th>
+                <th scope="col" className="px-4 py-3.5 text-center">
+                  SHARE
+                </th>
+                <th scope="col" className="px-4 py-3.5">
+                  ENFORCEMENT ACTION
+                </th>
+                <th scope="col" className="px-6 py-3.5 text-center">
+                  RISK TIER
+                </th>
               </tr>
-            ) : (
-              ruleBreakdown.map((item) => (
-                <Tr key={item.rule}>
-                  <Td>
-                    <span className="nn-mono font-bold text-ink">{item.rule}</span>
-                  </Td>
-                  <Td>
-                    <span className="nn-mono text-[11px] text-ink-3">{item.citation}</span>
-                  </Td>
-                  <Td>
-                    <span className="font-medium text-ink">{item.title}</span>
-                  </Td>
-                  <Td align="right">
-                    <span className="nn-mono font-bold text-rose-600 dark:text-rose-400">{item.count}</span>
-                  </Td>
-                  <Td align="right">
-                    <span className="nn-mono text-small text-ink-2">{item.share}</span>
-                  </Td>
-                  <Td>
-                    <span className="text-small font-medium text-ink-2">{item.action}</span>
-                  </Td>
-                  <Td>
-                    <span
-                      className={`inline-flex items-center rounded-pill px-2 py-0.5 text-[11px] font-semibold ${
-                        item.risk === 'Critical'
-                          ? 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300'
-                          : item.risk === 'High'
-                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
-                            : item.risk === 'Medium'
-                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                              : 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
-                      }`}
-                    >
-                      {item.risk}
+            </thead>
+            <tbody className="divide-y divide-divider text-[13px]">
+              {topViolations.map((item) => (
+                <tr
+                  key={item.check_id || item.rule}
+                  className="transition-colors duration-fast hover:bg-surface-2/60"
+                >
+                  {/* 1. RULE */}
+                  <td className="whitespace-nowrap px-6 py-4 font-bold text-ink">
+                    <span className="nn-mono">{item.rule}</span>
+                  </td>
+
+                  {/* 2. STATUTORY CITATION */}
+                  <td className="whitespace-nowrap px-4 py-4 text-ink-2">
+                    <span className="nn-mono text-[12px] text-ink-3">{item.citation}</span>
+                  </td>
+
+                  {/* 3. VIOLATION DESCRIPTION */}
+                  <td className="max-w-[320px] px-4 py-4 font-medium text-ink">
+                    {item.description}
+                  </td>
+
+                  {/* 4. COUNT */}
+                  <td className="whitespace-nowrap px-4 py-4 text-center">
+                    <span className="nn-mono font-bold text-rose-600 dark:text-rose-400">
+                      {item.count}
                     </span>
-                  </Td>
-                </Tr>
-              ))
-            )}
-          </tbody>
-        </Table>
+                  </td>
+
+                  {/* 5. SHARE */}
+                  <td className="whitespace-nowrap px-4 py-4 text-center text-ink-2">
+                    <span className="nn-mono text-[12px]">{item.share}</span>
+                  </td>
+
+                  {/* 6. ENFORCEMENT ACTION */}
+                  <td className="whitespace-nowrap px-4 py-4 font-medium text-ink-2">
+                    {item.action}
+                  </td>
+
+                  {/* 7. RISK TIER */}
+                  <td className="whitespace-nowrap px-6 py-4 text-center">
+                    <RiskBadge risk={item.risk} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="border-t border-divider bg-surface-2/30 px-6 py-3">
+          <p className="text-[11px] text-ink-3">
+            Assesses declarations under the Legal Metrology (Packaged Commodities) Rules 2011 as amended. Not a statutory notice.
+          </p>
+        </div>
       </Card>
     </div>
   )

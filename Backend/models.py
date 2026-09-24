@@ -438,3 +438,14 @@ class IdempotencyKey(Base):
     __table_args__ = (
         Index("ix_idem_created", "created_at"),
     )
+
+
+# --------------------------------------------- 12. rule version state persistence
+class RuleVersionState(Base):
+    """Stores the enabled/disabled state of rule versions for compliance evaluation."""
+    __tablename__ = "rule_version_states"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+

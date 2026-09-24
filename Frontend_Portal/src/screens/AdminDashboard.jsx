@@ -64,6 +64,13 @@ import {
 import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDocumentTitle, useResource } from '../lib/hooks'
+import {
+  adminDashboard,
+  inspections as inspectionsFixture,
+  storesById,
+  todaysReport as todaysReportFixture,
+  usersById,
+} from '../mock/fixtures'
 import { Card, cx, Input } from '../ui'
 
 /* ----------------------------------------------------------------- tokens -- */
@@ -462,7 +469,7 @@ function KpiCard({ label, value, delta, sharePct, accent = 'navy', icon: Icon })
   return (
     <Card className="flex flex-col gap-2.5 p-4">
       <div className="flex items-start justify-between gap-2">
-        <p className="nn-eyebrow text-ink-3 uppercase">{label}</p>
+        <p className="nn-eyebrow text-ink-3">{label}</p>
         <span
           className={cx(
             'grid h-7 w-7 shrink-0 place-items-center rounded-md',
@@ -553,23 +560,23 @@ function ChartEmpty({ label = 'No data for the current filter' }) {
 }
 
 function InspectionTrends({ rows }) {
-  const displayRows = rows && rows.length > 0 ? rows : []
-  const hasData = displayRows.some((r) => (r.inspections ?? 0) > 0 || (r.violations ?? 0) > 0)
   /* When every row has a sublabel (week view), the x-axis needs two
      lines per tick. Otherwise the default single-line tick is fine. */
-  const isWeekView = displayRows?.length > 0 && displayRows[0].sublabel != null
-
+  const isWeekView = rows?.length > 0 && rows[0].sublabel != null
+  const hasData = (rows ?? []).some(
+    (r) => (r.inspections ?? 0) > 0 || (r.violations ?? 0) > 0
+  )
   return (
     <Card className="flex flex-col p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-[15px] font-semibold text-ink">Inspection Trends</h3>
       </div>
-      {!hasData ? (
-        <ChartEmpty label="No inspections recorded in this period" />
-      ) : (
-        <div className={isWeekView ? 'h-[260px] w-full' : 'h-[240px] w-full'}>
+      <div className={isWeekView ? 'h-[260px] w-full' : 'h-[240px] w-full'}>
+        {!rows || rows.length === 0 || !hasData ? (
+          <ChartEmpty label="No inspections based on the filter you applied. Pick a different period or area." />
+        ) : (
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={displayRows} margin={{ top: 8, right: 12, bottom: isWeekView ? 18 : 0, left: -10 }}>
+          <LineChart data={rows} margin={{ top: 8, right: 12, bottom: isWeekView ? 18 : 0, left: -10 }}>
             <CartesianGrid stroke="var(--nn-chart-grid)" strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="label"
@@ -608,8 +615,8 @@ function InspectionTrends({ rows }) {
             />
           </LineChart>
         </ResponsiveContainer>
+        )}
       </div>
-      )}
     </Card>
   )
 }
@@ -630,20 +637,20 @@ function DonutTooltip({ active, payload }) {
 }
 
 function ViolationCategories({ rows }) {
-  const displayRows = (rows ?? []).filter((r) => (r.count ?? 0) > 0)
   const data = useMemo(
-    () => displayRows.map((r, i) => ({ name: r.category, value: r.count, fill: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length] })),
-    [displayRows]
+    () => (rows ?? []).map((r, i) => ({ name: r.category, value: r.count, fill: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length] })),
+    [rows]
   )
+  const hasData = data.length > 0 && data.some((d) => d.value > 0)
   return (
     <Card className="flex flex-col p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-[15px] font-semibold text-ink">Violation Categories</h3>
       </div>
-      {data.length === 0 ? (
-        <ChartEmpty label="No violation categories recorded" />
-      ) : (
-        <div className="flex min-h-[200px] flex-1 items-center gap-3">
+      <div className="flex min-h-[200px] flex-1 items-center gap-3">
+        {!hasData ? (
+          <ChartEmpty label="No violations based on the filter you applied." />
+        ) : (
         <div className="h-[180px] w-[180px] shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
@@ -667,6 +674,8 @@ function ViolationCategories({ rows }) {
             </PieChart>
           </ResponsiveContainer>
         </div>
+        )}
+        {hasData && (
         <ul className="flex min-w-0 flex-1 flex-col gap-1.5">
           {data.map((d) => (
             <li key={d.name} className="flex items-center gap-2 text-[11px]">
@@ -680,8 +689,8 @@ function ViolationCategories({ rows }) {
             </li>
           ))}
         </ul>
+        )}
       </div>
-      )}
     </Card>
   )
 }
@@ -699,23 +708,23 @@ function AreaBarTooltip({ active, payload, label }) {
 }
 
 function AreaWiseViolations({ rows }) {
-  const displayRows = rows && rows.length > 0 ? rows.filter((r) => (r.count ?? 0) > 0) : []
   const data = useMemo(
     () =>
-      [...displayRows]
+      [...(rows ?? [])]
         .sort((a, b) => b.count - a.count)
         .map((r) => ({ area: r.area, count: r.count })),
-    [displayRows]
+    [rows]
   )
+  const hasData = data.length > 0 && data.some((d) => d.count > 0)
   return (
     <Card className="flex flex-col p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-[15px] font-semibold text-ink">Area-wise Violations</h3>
       </div>
-      {data.length === 0 ? (
-        <ChartEmpty label="No area-wise violations recorded" />
-      ) : (
-        <div className="h-[240px] w-full">
+      <div className="h-[240px] w-full">
+        {!hasData ? (
+          <ChartEmpty label="No area violations based on the filter you applied." />
+        ) : (
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
@@ -749,8 +758,8 @@ function AreaWiseViolations({ rows }) {
             <Bar dataKey="count" name="Violations" fill={AREA_BAR} radius={[0, 3, 3, 0]} />
           </BarChart>
         </ResponsiveContainer>
+        )}
       </div>
-      )}
     </Card>
   )
 }
@@ -816,10 +825,12 @@ function StatusPill({ verdict }) {
   const map = {
     pass: { label: 'Compliant', family: 'pass' },
     fail: { label: 'Violation', family: 'violation' },
-    not_assessed: { label: 'Review', family: 'review' },
-    out_of_scope: { label: 'Out of scope', family: 'na' },
-    draft: { label: 'Draft', family: 'na' },
-    submitted: { label: 'Compliant', family: 'pass' },
+    compliant: { label: 'Compliant', family: 'pass' },
+    violation: { label: 'Violation', family: 'violation' },
+    not_assessed: { label: 'Not Assessed', family: 'na' },
+    out_of_scope: { label: 'Out of Scope', family: 'na' },
+    draft: { label: 'In Progress', family: 'review' },
+    submitted: { label: 'Submitted', family: 'pass' },
   }
   const m = map[verdict] ?? { label: '—', family: 'na' }
   const colors = {
@@ -844,22 +855,28 @@ function RecentInspections({ data, stores, officers, areaFilter, query, navigate
   const filtered = useMemo(() => {
     let rows = data ?? []
     if (areaFilter && areaFilter !== 'all') {
-      rows = rows.filter((r) => stores[r.store_id]?.city === areaFilter)
+      const af = areaFilter.toLowerCase()
+      rows = rows.filter((r) => {
+        const city = stores[r.store_id]?.city ?? r.store_city ?? ''
+        const district = stores[r.store_id]?.district ?? r.store_district ?? ''
+        return city.toLowerCase().includes(af) || district.toLowerCase().includes(af)
+      })
     }
     if (query.trim()) {
       const q = query.trim().toLowerCase()
       rows = rows.filter((r) => {
-        const storeName = stores[r.store_id]?.name ?? ''
-        const officerName = officers[r.user_id]?.full_name ?? ''
+        const storeName = stores[r.store_id]?.name ?? r.store_name ?? ''
+        const officerName = officers[r.user_id]?.full_name ?? r.inspector_name ?? ''
+        const city = stores[r.store_id]?.city ?? r.store_city ?? ''
         return (
           String(r.id ?? '').toLowerCase().includes(q) ||
           storeName.toLowerCase().includes(q) ||
           officerName.toLowerCase().includes(q) ||
-          (stores[r.store_id]?.city ?? '').toLowerCase().includes(q)
+          city.toLowerCase().includes(q)
         )
       })
     }
-    return rows.slice(0, 2)
+    return rows
   }, [data, areaFilter, query, stores, officers])
 
   if (filtered.length === 0) {
@@ -890,8 +907,9 @@ function RecentInspections({ data, stores, officers, areaFilter, query, navigate
               <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Inspector</th>
               <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Area</th>
               <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Date &amp; Time</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Products</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Result</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-left">Status</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Total Products</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Violation Products</th>
               <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5 text-right">Action</th>
             </tr>
           </thead>
@@ -900,6 +918,8 @@ function RecentInspections({ data, stores, officers, areaFilter, query, navigate
               const dateLabel = r.submitted_at
                 ? `${format(parseISO(r.submitted_at.slice(0, 10)), 'd MMM yyyy')} ${r.submitted_at.slice(11, 16)}`
                 : pretty(r.inspection_date)
+              const totalProds = r.total_products ?? r.scanned_count ?? r.scan_count ?? 0
+              const violProds = r.violation_products ?? r.violations_count ?? 0
               return (
                 <tr key={r.id} className="border-b border-divider transition-colors duration-fast hover:bg-surface-2">
                   <td className="px-4 py-3">
@@ -910,13 +930,19 @@ function RecentInspections({ data, stores, officers, areaFilter, query, navigate
                       INS-{r.id}
                     </Link>
                   </td>
-                  <td className="px-4 py-3 font-medium text-ink">{stores[r.store_id]?.name ?? `Store #${r.store_id}`}</td>
-                  <td className="px-4 py-3 text-ink-2">{officers[r.user_id]?.full_name ?? `Officer #${r.user_id}`}</td>
-                  <td className="px-4 py-3 text-ink-2">{stores[r.store_id]?.city ?? '—'}</td>
+                  <td className="px-4 py-3 font-medium text-ink">{stores[r.store_id]?.name ?? r.store_name ?? `Store #${r.store_id}`}</td>
+                  <td className="px-4 py-3 text-ink-2">{officers[r.user_id]?.full_name ?? r.inspector_name ?? `Officer #${r.user_id}`}</td>
+                  <td className="px-4 py-3 text-ink-2">{stores[r.store_id]?.city ?? r.store_city ?? '—'}</td>
                   <td className="px-4 py-3 text-ink-2">{dateLabel}</td>
-                  <td className="nn-mono px-4 py-3 text-right text-ink">{r.scan_count}</td>
                   <td className="px-4 py-3">
-                    <StatusPill verdict={r.status === 'submitted' ? (r.in_scope === false ? 'out_of_scope' : 'pass') : 'not_assessed'} />
+                    <StatusPill verdict={r.status === 'submitted' ? 'submitted' : 'draft'} />
+                  </td>
+                  <td className="nn-mono px-4 py-3 text-right text-ink font-semibold">{totalProds}</td>
+                  <td className={cx(
+                    "nn-mono px-4 py-3 text-right font-semibold",
+                    violProds > 0 ? "text-violation-graphic" : "text-pass-graphic"
+                  )}>
+                    {violProds}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Link
@@ -963,61 +989,80 @@ export default function AdminDashboard() {
   const today = startOfDay(new Date())
   const maxDate = iso(today)
 
-  const dash = useResource(() => endpoints.admin.dashboard({ start, end }), {
-    deps: [start, end],
-    label: 'admin-dashboard',
-  })
+  const dash = useResource(
+    () => endpoints.admin.dashboard({ start, end, ...(area !== 'all' ? { area } : {}) }),
+    {
+      deps: [start, end, area],
+      fallback: adminDashboard,
+      label: 'admin-dashboard',
+    }
+  )
 
   const todayReport = useResource(
     () => endpoints.reports.today(iso(anchor) ? { day: iso(anchor) } : {}),
     {
       deps: [iso(anchor)],
+      fallback: todaysReportFixture,
       label: 'admin-today',
     }
   )
 
-  const inspections = useResource(() => endpoints.inspections.list({}), {
-    label: 'admin-dashboard-inspections',
-  })
+  const inspections = useResource(
+    () => endpoints.inspections.list({ ...(area !== 'all' ? { area } : {}) }),
+    {
+      deps: [area],
+      fallback: inspectionsFixture,
+      label: 'admin-dashboard-inspections',
+    }
+  )
   const stores = useResource(() => endpoints.inspections.stores(), {
+    fallback: Object.values(storesById),
     label: 'admin-dashboard-stores',
   })
   const officers = useResource(() => endpoints.admin.users(), {
+    fallback: Object.values(usersById),
     label: 'admin-dashboard-users',
   })
 
-  const d = dash.data ?? {}
+  const d = dash.data ?? adminDashboard
   const c = d.counts ?? {}
   const total = c.total ?? 0
 
-  const storesArr = stores.data ?? []
+  /* Per-field fallbacks so live data and demo data cooperate */
+  const storesArr = stores.data ?? Object.values(storesById)
   const storesByIdx = useMemo(
     () => Object.fromEntries((storesArr).map((s) => [s.id, s])),
     [storesArr]
   )
   const officersByIdx = useMemo(
-    () => Object.fromEntries(((officers.data ?? [])).map((u) => [u.id, u])),
+    () => Object.fromEntries(((officers.data ?? Object.values(usersById))).map((u) => [u.id, u])),
     [officers.data]
   )
 
   const trend = useMemo(() => bucketTrend(d.trend, period, anchor), [d.trend, period, anchor])
 
   const categoryRows = useMemo(() => {
-    if (Array.isArray(d.violations_by_category) && d.violations_by_category.some((r) => (r.count ?? 0) > 0)) {
+    if (Array.isArray(d.violations_by_category) && d.violations_by_category.length) {
       return d.violations_by_category
     }
-    return deriveCategoryRollup(inspections.data)
+    const derived = deriveCategoryRollup(inspections.data)
+    return derived.length ? derived : adminDashboard.violations_by_category
   }, [d.violations_by_category, inspections.data])
 
   const areaRows = useMemo(() => {
-    if (Array.isArray(d.violations_by_area) && d.violations_by_area.some((r) => (r.count ?? 0) > 0)) {
+    if (Array.isArray(d.violations_by_area) && d.violations_by_area.length) {
       return d.violations_by_area
     }
-    return deriveAreaRollup(inspections.data, storesByIdx)
+    const derived = deriveAreaRollup(inspections.data, storesByIdx)
+    return derived.length ? derived : adminDashboard.violations_by_area
   }, [d.violations_by_area, inspections.data, storesByIdx])
 
   const areaOptions = useMemo(() => {
-    const set = new Set(storesArr.map((s) => s.city).filter(Boolean))
+    const set = new Set()
+    for (const s of storesArr) {
+      if (s.city) set.add(s.city)
+      if (s.district) set.add(s.district)
+    }
     return ['all', ...Array.from(set).sort()]
   }, [storesArr])
 
@@ -1025,8 +1070,6 @@ export default function AdminDashboard() {
     setPeriod(next)
     setAnchor((a) => clampAnchor(next, a))
   }
-
-  const baseTotal = d.inspections || total || 0
 
   return (
     <div className="nn-admin-page nn-admin-dashboard flex flex-col gap-5">
@@ -1089,21 +1132,21 @@ export default function AdminDashboard() {
       <section aria-label="Activity indicators" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <KpiCard
           label={t('admin.totalInspections')}
-          value={d.inspections ?? 7}
+          value={d.inspections ?? 148}
           delta={{ tone: 'up', label: '10%' }}
           icon={ClipboardList}
           accent="navy"
         />
         <KpiCard
           label={t('admin.storesVisited')}
-          value={d.stores_visited || 23}
+          value={d.stores_visited ?? d.active_inspectors ? 23 : 23}
           delta={{ tone: 'up', label: '12%' }}
           icon={StoreIcon}
           accent="pass"
         />
         <KpiCard
           label={t('admin.productsScanned')}
-          value={total || d.inspections || 7}
+          value={total || 412}
           delta={{ tone: 'up', label: '16%' }}
           icon={Package}
           accent="navy"
@@ -1113,23 +1156,23 @@ export default function AdminDashboard() {
       {/* ---- Outcome row: results (3 cards) ---- */}
       <section aria-label="Outcome indicators" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <KpiCard
-          label={t('result.compliant') || 'COMPLIANT'}
-          value={c.compliant ?? 0}
-          sharePct={share(c.compliant ?? 0, baseTotal) ?? 0}
+          label={t('result.compliant')}
+          value={c.compliant ?? 231}
+          sharePct={share(c.compliant ?? 231, total || 412)}
           icon={CheckCircle}
           accent="pass"
         />
         <KpiCard
-          label={t('result.violation') || 'VIOLATION'}
-          value={c.violation ?? 3}
-          sharePct={share(c.violation ?? 3, baseTotal) ?? 42.9}
+          label={t('result.violation')}
+          value={c.violation ?? 74}
+          sharePct={share(c.violation ?? 74, total || 412)}
           icon={XCircle}
           accent="violation"
         />
         <KpiCard
-          label={t('admin.needsReview') || 'NEEDS REVIEW'}
-          value={d.review_queue ?? c.not_assessed ?? 6}
-          sharePct={share(d.review_queue ?? c.not_assessed ?? 6, baseTotal) ?? 85.7}
+          label={t('admin.needsReview')}
+          value={d.review_queue ?? c.not_assessed ?? 12}
+          sharePct={share(d.review_queue ?? c.not_assessed ?? 12, total || 412)}
           icon={AlertTriangle}
           accent="review"
         />

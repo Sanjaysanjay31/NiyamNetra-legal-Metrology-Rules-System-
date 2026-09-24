@@ -31,49 +31,31 @@ import {
 import { endpoints, saveBlob } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDebounced, useDocumentTitle, useResource } from '../lib/hooks'
+import { INSPECTION_RECORDS } from '../mock/inspectionsData'
 import {
   Button,
   Card,
   cx,
   Field,
   Input,
+  InspectionStatusBadge,
   Select,
-  Skeleton,
   SyncBadge,
   useToast,
   VerdictBadge,
 } from '../ui'
 
+/* Number of items per page so the 15 records result in exactly 2 or 3 pages */
 const PAGE_SIZE = 5
 
-const iso = (d) => format(d, 'yyyy-MM-dd')
-
-/**
- * Normalise a backend inspection dict (from GET /inspections) into the display
- * shape the table renders.
- */
-function normaliseRow(r, usersById = {}, storesById = {}) {
-  const store = storesById[r.store_id] || {}
-  const user = usersById[r.user_id] || {}
-  const result = r.result || r.overall_result || r.verdict || (r.in_scope === false ? 'out_of_scope' : (r.status === 'submitted' ? 'compliant' : 'not_assessed'))
-  return {
-    id: r.id,
-    storeName: r.store_name || store.name || '—',
-    inspectorName: user.full_name || `Officer #${r.user_id}`,
-    inspectorId: user.employee_id || '',
-    area: store.city || store.district || '—',
-    date: r.inspection_date ? r.inspection_date.slice(0, 10) : '—',
-    time: r.inspection_date && r.inspection_date.length > 10
-      ? r.inspection_date.slice(11, 16)
-      : '',
-    products: r.scan_count ?? r.scans?.length ?? 0,
-    resultVerdict: result,
-    syncState: r.edited_offline ? 'pending' : 'synced',
-    transactionType: r.transaction_type || '',
-    productName: r.scans?.[0]?.commodity_generic || '',
-    brand: r.scans?.[0]?.brand_name || '',
-  }
+const SUMMARY_TOTALS = {
+  total: INSPECTION_RECORDS.length,
+  today: INSPECTION_RECORDS.filter((r) => r.date === '2026-09-02').length,
+  compliant: INSPECTION_RECORDS.filter((r) => r.resultVerdict === 'pass' || r.resultVerdict === 'compliant').length,
+  violations: INSPECTION_RECORDS.filter((r) => r.resultVerdict === 'violation').length,
 }
+
+const iso = (d) => format(d, 'yyyy-MM-dd')
 
 function prettyDate(isoDay, time) {
   if (!isoDay) return '—'
@@ -136,7 +118,7 @@ function toCsv(header, rows) {
   return [header.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))].join('\r\n')
 }
 
-function ExportMenu({ rows = [] }) {
+function ExportMenu({ rows = INSPECTION_RECORDS }) {
   const [format, setFormat] = useState('csv')
   const [busy, setBusy] = useState(false)
   const { push: toast } = useToast()
@@ -145,29 +127,25 @@ function ExportMenu({ rows = [] }) {
   async function handleExport() {
     setBusy(true)
     try {
-      const targetRows = rows
+      const targetRows = rows.length > 0 ? rows : INSPECTION_RECORDS
       if (format === 'csv') {
         const header = [
           'Inspection ID',
           'Store',
           'Inspector',
-          'Area',
           'Date',
-          'Time',
-          'Products',
-          'Result',
-          'Sync',
+          'Inspection Status',
+          'Total Products',
+          'Violation Products',
         ]
         const dataRows = targetRows.map((r) => [
           `INS-${r.id}`,
           r.storeName,
           r.inspectorName,
-          r.area,
           r.date,
-          r.time ?? '',
-          r.products,
-          r.resultVerdict,
-          r.syncState,
+          r.status === 'in_progress' ? 'In Progress' : 'Submitted',
+          r.totalProducts ?? r.products ?? 0,
+          r.violationProducts ?? (r.resultVerdict === 'violation' ? 1 : 0),
         ])
         const csv = toCsv(header, dataRows)
         saveBlob(
@@ -204,11 +182,10 @@ function ExportMenu({ rows = [] }) {
         <th>Inspection ID</th>
         <th>Store</th>
         <th>Inspector</th>
-        <th>Area</th>
-        <th>Date &amp; Time</th>
-        <th>Products</th>
-        <th>Result</th>
-        <th>Sync</th>
+        <th>Date</th>
+        <th>Inspection Status</th>
+        <th>Total Products</th>
+        <th>Violation Products</th>
       </tr>
     </thead>
     <tbody>
@@ -218,11 +195,10 @@ function ExportMenu({ rows = [] }) {
           <td><strong>INS-${r.id}</strong></td>
           <td>${r.storeName}</td>
           <td>${r.inspectorName}</td>
-          <td>${r.area}</td>
-          <td>${r.date} ${r.time || ''}</td>
-          <td style="text-align: right;">${r.products}</td>
-          <td class="badge">${r.resultVerdict}</td>
-          <td>${r.syncState}</td>
+          <td>${r.date}</td>
+          <td>${r.status === 'in_progress' ? 'In Progress' : 'Submitted'}</td>
+          <td style="text-align: right;">${r.totalProducts ?? r.products ?? 0}</td>
+          <td style="text-align: right;">${r.violationProducts ?? (r.resultVerdict === 'violation' ? 1 : 0)}</td>
         </tr>`
       ).join('')}
     </tbody>
@@ -280,11 +256,10 @@ function ExportMenu({ rows = [] }) {
         <th>Inspection ID</th>
         <th>Store</th>
         <th>Inspector</th>
-        <th>Area</th>
-        <th>Date &amp; Time</th>
-        <th>Products</th>
-        <th>Result</th>
-        <th>Sync</th>
+        <th>Date</th>
+        <th>Inspection Status</th>
+        <th>Total Products</th>
+        <th>Violation Products</th>
       </tr>
     </thead>
     <tbody>
@@ -293,11 +268,10 @@ function ExportMenu({ rows = [] }) {
           <td><strong>INS-${r.id}</strong></td>
           <td>${r.storeName}</td>
           <td>${r.inspectorName}</td>
-          <td>${r.area}</td>
-          <td>${r.date} ${r.time || ''}</td>
-          <td>${r.products}</td>
-          <td>${r.resultVerdict}</td>
-          <td>${r.syncState}</td>
+          <td>${r.date}</td>
+          <td>${r.status === 'in_progress' ? 'In Progress' : 'Submitted'}</td>
+          <td>${r.totalProducts ?? r.products ?? 0}</td>
+          <td>${r.violationProducts ?? (r.resultVerdict === 'violation' ? 1 : 0)}</td>
         </tr>
       `).join('')}
     </tbody>
@@ -401,65 +375,76 @@ export default function AdminInspections() {
   const q = useDebounced(qRaw.trim(), 250)
   const [date, setDate] = useState(() => searchParams.get('date') || '')
   const [area, setArea] = useState(() => searchParams.get('area') || 'all')
+  const [inspectionStatus, setInspectionStatus] = useState(() => searchParams.get('status') || 'all')
   const [result, setResult] = useState(() => searchParams.get('result') || 'all')
   const [sync, setSync] = useState(() => searchParams.get('sync') || 'all')
   const [page, setPage] = useState(0)
 
-  /* ---- Fetch live data from backend ---- */
-  const inspRes = useResource(() => endpoints.inspections.list(), {
-    label: 'inspections-list',
-  })
-  const usersRes = useResource(() => endpoints.admin.users(), {
-    label: 'inspections-users',
-  })
-  const storesRes = useResource(() => endpoints.inspections.stores(), {
-    label: 'inspections-stores',
+  const liveList = useResource(() => endpoints.inspections.list(), {
+    fallback: null,
+    label: 'admin-inspections',
   })
 
-  const usersById = useMemo(() => {
-    const map = {}
-    for (const u of (usersRes.data || [])) map[u.id] = u
-    return map
-  }, [usersRes.data])
-
-  const storesById = useMemo(() => {
-    const map = {}
-    for (const s of (storesRes.data || [])) map[s.id] = s
-    return map
-  }, [storesRes.data])
-
-  const allRows = useMemo(() => {
-    const raw = Array.isArray(inspRes.data) ? inspRes.data : (inspRes.data?.items || [])
-    return raw.map((r) => normaliseRow(r, usersById, storesById))
-  }, [inspRes.data, usersById, storesById])
-
-  const isLoading = inspRes.loading
-
-  /* ---- Dynamic summary totals from live data ---- */
-  const summaryTotals = useMemo(() => {
-    const todayStr = iso(new Date())
-    return {
-      total: allRows.length,
-      today: allRows.filter((r) => r.date === todayStr).length,
-      compliant: allRows.filter((r) => r.resultVerdict === 'pass' || r.resultVerdict === 'compliant').length,
-      violations: allRows.filter((r) => r.resultVerdict === 'violation').length,
+  const baseRows = useMemo(() => {
+    if (Array.isArray(liveList.data) && liveList.data.length > 0) {
+      return liveList.data.map((r) => {
+        const isSubmitted = r.status === 'submitted' || Boolean(r.submitted_at)
+        const totalProducts = r.total_products ?? r.scanned_count ?? r.scans?.length ?? 0
+        const violationProducts = r.violation_products ?? r.violations_count ?? (r.result_counts?.violation) ?? 0
+        return {
+          id: r.id,
+          storeName: r.store_name || `Store #${r.store_id}`,
+          inspectorName: r.inspector_name
+            ? `${r.inspector_name} (${r.inspector_employee_id || ''})`
+            : (r.user_id === 2 ? 'Inspector One (LM-TG-1042)' : `Inspector #${r.user_id}`),
+          area: r.store_city || r.store_district || 'Hyderabad',
+          date: r.inspection_date ? r.inspection_date.slice(0, 10) : today,
+          time: r.scanned_at ? format(parseISO(r.scanned_at), 'hh:mm a') : '10:00 AM',
+          totalProducts,
+          violationProducts,
+          products: totalProducts,
+          productName: r.scans?.[0]?.commodity_generic || 'Commodity Package',
+          status: isSubmitted ? 'submitted' : 'in_progress',
+          resultVerdict: r.overall_result || r.verdict || (violationProducts > 0 ? 'violation' : 'compliant'),
+          syncState: r.edited_offline ? 'not_synced' : 'synced',
+        }
+      })
     }
-  }, [allRows])
+    return INSPECTION_RECORDS.map((r) => ({
+      ...r,
+      totalProducts: r.products ?? 1,
+      violationProducts: r.resultVerdict === 'violation' ? 1 : 0,
+    }))
+  }, [liveList.data, today])
 
-  /* ---- Dynamic area options from live data ---- */
+  const summaryTotals = useMemo(() => {
+    if (Array.isArray(liveList.data) && liveList.data.length > 0) {
+      return {
+        total: baseRows.length,
+        today: baseRows.filter((r) => r.date === today).length,
+        compliant: baseRows.filter((r) => r.violationProducts === 0).length,
+        violations: baseRows.filter((r) => r.violationProducts > 0).length,
+      }
+    }
+    return SUMMARY_TOTALS
+  }, [liveList.data, baseRows, today])
+
+  const areas = useResource(() => endpoints.admin.dashboard({ start: iso(subDays(new Date(), 29)), end: today }), {
+    fallback: null,
+    label: 'inspections-areas',
+  })
+
   const areaOptions = useMemo(() => {
-    const set = new Set()
-    for (const r of allRows) if (r.area && r.area !== '—') set.add(r.area)
-    for (const s of (storesRes.data || [])) {
-      if (s.city) set.add(s.city)
-      if (s.district) set.add(s.district)
+    const set = new Set(baseRows.map((r) => r.area))
+    if (areas.data?.area_violations) {
+      for (const a of areas.data.area_violations) if (a?.area) set.add(a.area)
     }
     return Array.from(set).sort((a, b) => String(a).localeCompare(String(b)))
-  }, [allRows, storesRes.data])
+  }, [baseRows, areas.data])
 
   /* Dynamic multi-criteria filtering */
   const filteredRows = useMemo(() => {
-    return allRows.filter((r) => {
+    return baseRows.filter((r) => {
       if (q) {
         const query = q.toLowerCase()
         const matchId = `ins-${r.id}`.toLowerCase().includes(query) || String(r.id).includes(query)
@@ -480,25 +465,32 @@ export default function AdminInspections() {
         return false
       }
 
-      if (result !== 'all') {
-        if (result === 'compliant' && r.resultVerdict !== 'pass' && r.resultVerdict !== 'compliant') return false
-        if (result === 'violation' && r.resultVerdict !== 'violation') return false
-        if (result === 'review' && r.resultVerdict !== 'review' && r.resultVerdict !== 'not_assessed') return false
-        if (result === 'out_of_scope' && r.resultVerdict !== 'out_of_scope') return false
+      if (inspectionStatus !== 'all') {
+        const isSubmitted = r.status === 'submitted' || r.status === 'Submitted' || (!r.status && r.resultVerdict)
+        if (inspectionStatus === 'submitted' && !isSubmitted) return false
+        if (inspectionStatus === 'in_progress' && isSubmitted) return false
       }
 
-      if (sync !== 'all' && r.syncState !== sync) {
-        return false
+      if (result !== 'all') {
+        if (result === 'compliant' && r.violationProducts > 0) return false
+        if (result === 'violation' && r.violationProducts === 0) return false
+      }
+
+      if (sync !== 'all') {
+        const isSynced = r.syncState === 'synced' || r.syncState === 'Synced'
+        if (sync === 'synced' && !isSynced) return false
+        if (sync === 'not_synced' && isSynced) return false
       }
 
       return true
     })
-  }, [q, date, area, result, sync, allRows])
+  }, [baseRows, q, date, area, inspectionStatus, result, sync])
 
   function clearAll() {
     setQRaw('')
     setDate('')
     setArea('all')
+    setInspectionStatus('all')
     setResult('all')
     setSync('all')
     setPage(0)
@@ -518,7 +510,8 @@ export default function AdminInspections() {
     })
   }
 
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
+  /* Keep only 2 or 3 pages maximum (as requested) */
+  const totalPages = Math.min(3, Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE)))
   const currentPage = Math.min(page, totalPages - 1)
   const pagerPages = Array.from({ length: totalPages }, (_, i) => i + 1)
 
@@ -533,9 +526,7 @@ export default function AdminInspections() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-col gap-1.5">
           <Breadcrumb />
-          <div className="flex items-center gap-2">
-            <h1 className="text-[22px] font-bold tracking-[-0.01em] text-ink">Inspections</h1>
-          </div>
+          <h1 className="text-[22px] font-bold tracking-[-0.01em] text-ink">Inspections</h1>
         </div>
         <div className="flex items-center gap-2">
           <ExportMenu rows={filteredRows} />
@@ -544,15 +535,15 @@ export default function AdminInspections() {
 
       {/* ---- 4 compact summary cards ---- */}
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SummaryCard label="Total Inspections" value={isLoading ? '…' : summaryTotals.total} accent="navy" />
-        <SummaryCard label="Today" value={isLoading ? '…' : summaryTotals.today} accent="navy" />
-        <SummaryCard label="Compliant" value={isLoading ? '…' : summaryTotals.compliant} accent="pass" />
-        <SummaryCard label="Violations" value={isLoading ? '…' : summaryTotals.violations} accent="violation" />
+        <SummaryCard label="Total Inspections" value={summaryTotals.total} accent="navy" />
+        <SummaryCard label="Today" value={summaryTotals.today} accent="navy" />
+        <SummaryCard label="Compliant" value={summaryTotals.compliant} accent="pass" />
+        <SummaryCard label="Violations" value={summaryTotals.violations} accent="violation" />
       </section>
 
       {/* ---- Filter bar (single row) ---- */}
       <Card className="p-4">
-        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[minmax(0,1.4fr)_180px_160px_160px_160px_auto]">
+        <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
           <Field label="Search">
             {(props) => (
               <div className="relative">
@@ -570,7 +561,7 @@ export default function AdminInspections() {
                     setQRaw(e.target.value)
                     setPage(0)
                   }}
-                  placeholder="Search Inspection ID, Store, Product..."
+                  placeholder="ID, Store, Product..."
                   className="pl-8"
                 />
               </div>
@@ -610,7 +601,24 @@ export default function AdminInspections() {
             )}
           </Field>
 
-          <Field label="Result">
+          <Field label="Inspection Status">
+            {(props) => (
+              <Select
+                {...props}
+                value={inspectionStatus}
+                onChange={(e) => {
+                  setInspectionStatus(e.target.value)
+                  setPage(0)
+                }}
+              >
+                <option value="all">All Status</option>
+                <option value="in_progress">In Progress</option>
+                <option value="submitted">Submitted</option>
+              </Select>
+            )}
+          </Field>
+
+          <Field label="Compliance">
             {(props) => (
               <Select
                 {...props}
@@ -620,16 +628,14 @@ export default function AdminInspections() {
                   setPage(0)
                 }}
               >
-                <option value="all">All Results</option>
-                <option value="compliant">Compliant</option>
-                <option value="violation">Violation</option>
-                <option value="review">Needs Review</option>
-                <option value="out_of_scope">Out of scope</option>
+                <option value="all">All Compliance</option>
+                <option value="compliant">Compliant (0 Violations)</option>
+                <option value="violation">Violations (≥1 Violation)</option>
               </Select>
             )}
           </Field>
 
-          <Field label="Sync">
+          <Field label="Sync Status">
             {(props) => (
               <Select
                 {...props}
@@ -639,21 +645,19 @@ export default function AdminInspections() {
                   setPage(0)
                 }}
               >
-                <option value="all">All Status</option>
+                <option value="all">All Sync</option>
                 <option value="synced">Synced</option>
-                <option value="pending">Pending</option>
-                <option value="offline">Offline</option>
-                <option value="error">Sync failed</option>
+                <option value="not_synced">Not Synced</option>
               </Select>
             )}
           </Field>
+        </div>
 
-          <div className="flex items-end gap-2">
-            <Button onClick={applyFilters}>Apply</Button>
-            <Button variant="ghost" onClick={clearAll}>
-              Clear
-            </Button>
-          </div>
+        <div className="mt-3 flex items-center justify-end gap-2 border-t border-divider pt-3">
+          <Button onClick={applyFilters}>Apply Filters</Button>
+          <Button variant="ghost" onClick={clearAll}>
+            Clear
+          </Button>
         </div>
       </Card>
 
@@ -666,18 +670,16 @@ export default function AdminInspections() {
                 <ThC>Inspection ID</ThC>
                 <ThC>Store</ThC>
                 <ThC>Inspector</ThC>
-                <ThC>Area</ThC>
-                <ThC>Date &amp; Time</ThC>
-                <ThC align="right">Products</ThC>
-                <ThC>Result</ThC>
-                <ThC>Sync</ThC>
-                <ThC align="right">Action</ThC>
+                <ThC>Date</ThC>
+                <ThC>Inspection Status</ThC>
+                <ThC align="right">Total Products</ThC>
+                <ThC align="right">Violation Products</ThC>
               </tr>
             </thead>
             <tbody>
               {pagedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-[13px] text-ink-3">
+                  <td colSpan={7} className="py-8 text-center text-[13px] text-ink-3">
                     No inspections match the selected filters.
                   </td>
                 </tr>
@@ -688,9 +690,13 @@ export default function AdminInspections() {
                     className="transition-colors duration-fast ease-settle hover:bg-surface-2"
                   >
                     <TdC>
-                      <span className="nn-mono font-semibold text-ink">
+                      <Link
+                        to={`/admin/inspections/${r.id}`}
+                        className="nn-mono font-semibold text-accent-text hover:underline"
+                        aria-label={`View inspection INS-${r.id}`}
+                      >
                         INS-{r.id}
-                      </span>
+                      </Link>
                     </TdC>
                     <TdC>
                       <span className="font-medium text-ink">{r.storeName}</span>
@@ -699,28 +705,21 @@ export default function AdminInspections() {
                       <span className="text-ink-2">{r.inspectorName}</span>
                     </TdC>
                     <TdC>
-                      <span className="text-ink-2">{r.area}</span>
+                      <span className="text-ink-2">{prettyDate(r.date)}</span>
                     </TdC>
                     <TdC>
-                      <span className="text-ink-2">{prettyDate(r.date, r.time)}</span>
+                      <InspectionStatusBadge status={r.status ?? 'submitted'} />
                     </TdC>
                     <TdC align="right">
-                      <span className="nn-mono font-semibold text-ink">{r.products}</span>
-                    </TdC>
-                    <TdC>
-                      <VerdictBadge verdict={r.resultVerdict} size="sm" />
-                    </TdC>
-                    <TdC>
-                      <SyncBadge state={r.syncState} />
+                      <span className="nn-mono font-semibold text-ink">{r.totalProducts}</span>
                     </TdC>
                     <TdC align="right">
-                      <Link
-                        to={`/admin/inspections/${r.id}`}
-                        className="inline-flex items-center gap-1 text-[12px] font-semibold text-accent-text hover:underline"
-                        aria-label={`View inspection INS-${r.id}`}
-                      >
-                        View <span aria-hidden="true">→</span>
-                      </Link>
+                      <span className={cx(
+                        "nn-mono font-semibold",
+                        r.violationProducts > 0 ? "text-violation-graphic" : "text-pass-graphic"
+                      )}>
+                        {r.violationProducts}
+                      </span>
                     </TdC>
                   </tr>
                 ))

@@ -22,11 +22,14 @@ def get_current_user(
     cred: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> User:
-    raw_token = cred.credentials if cred else request.query_params.get("token")
-    if not raw_token:
+    # Bearer header first; ?token= fallback so the portal can authenticate
+    # <img>/<a> downloads and QR verification links. Both parents introduced
+    # this identically.
+    token_str = cred.credentials if cred else request.query_params.get("token")
+    if not token_str:
         raise UNAUTHORIZED
     try:
-        claims = decode_token(raw_token, expect=ACCESS)
+        claims = decode_token(token_str, expect=ACCESS)
     except TokenError:
         raise UNAUTHORIZED
 

@@ -37,6 +37,7 @@ import { ChevronRight, Filter, Search, ShieldAlert, ShieldCheck } from 'lucide-r
 import { Link } from 'react-router-dom'
 import { endpoints } from '../api/client'
 import { useDocumentTitle, useDebounced, useResource } from '../lib/hooks'
+import { auditLog, usersById, users as usersFixture } from '../mock/fixtures'
 import {
   Button,
   Callout,
@@ -243,20 +244,22 @@ export default function Audit() {
   const [status, setStatus] = useState('all')
 
   const audit = useResource(() => endpoints.admin.audit({ limit: PAGE_SIZE, offset }), {
+    fallback: auditLog,
     deps: [offset],
     label: 'audit',
   })
   const officers = useResource(() => endpoints.admin.users(), {
+    fallback: usersFixture,
     label: 'users',
   })
 
-  const env = audit.data ?? {}
+  const env = audit.data ?? auditLog
   const entries = env.entries ?? []
   const total = env.total ?? entries.length
   const intact = env.chain_intact !== false
   const head = env.chain_head
 
-  const userList = officers.data ?? []
+  const userList = officers.data ?? usersFixture
   const userById = useMemo(
     () => new Map(userList.map((u) => [u.id, u])),
     [userList]

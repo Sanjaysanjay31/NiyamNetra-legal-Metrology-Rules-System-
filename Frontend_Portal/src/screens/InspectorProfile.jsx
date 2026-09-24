@@ -1,398 +1,576 @@
 /**
- * InspectorProfile — Official profile and credential view for the field officer.
+ * InspectorProfile / InspectorSettings — The Inspector's Settings & Account Center.
  *
- * Displays government credentials, jurisdictional assignment, assigned enforcement
- * sector in Hyderabad North, registered device binding, and security controls
- * including password change and session termination.
+ * Implements a clean, simplified government settings experience:
+ * 1. Page Header:
+ *    - Eyebrow: 'SETTINGS' in saffron accent.
+ *    - Heading: 'Settings'.
+ *    - Subtitle: 'Manage your portal preferences and account settings.'
+ * 2. Account Information:
+ *    - Fetched live from /auth/me with fallback to authenticated session.
+ *    - Inspector Name, Officer ID, Role, Assigned Jurisdiction, Email (if available).
+ *    - Account Status: 'Active' / 'Inactive' badge.
+ *    - Clean loading spinner / skeleton and error message states.
+ * 3. Portal Preferences:
+ *    - Theme / Appearance: Light / Dark mode toggle using existing ThemeContext.
+ *    - Language: English / Hindi toggle using existing useI18n.
+ *    - Notification preference: Inspection sync alert switch.
+ * 4. Change Password:
+ *    - Connected to existing backend API: endpoints.auth.changePassword.
+ *    - Password strength verification (>= 12 chars, letter & digit).
+ *    - Match validation, clear error messages, and success handling.
+ * 5. Active Session & Security:
+ *    - Active session confirmation and Sign Out action.
+ *    - No technical clutter, no device hardware specs, no fake cryptographic details.
  */
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
-  ShieldCheck,
-  UserRound,
-  Building2,
-  MapPin,
-  Smartphone,
+  AlertCircle,
+  CheckCircle,
+  Eye,
+  EyeOff,
+  Globe,
   KeyRound,
+  Lock,
   LogOut,
   Mail,
-  Phone,
-  Calendar,
-  CheckCircle2,
-  FileCheck2,
-  Award,
+  MapPin,
+  Moon,
+  Palette,
+  RefreshCw,
+  ShieldCheck,
+  Sun,
+  User,
 } from 'lucide-react'
-import { useAuth } from '../auth/AuthContext'
-import { useDocumentTitle, useMutation } from '../lib/hooks'
 import { endpoints } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
+import { useI18n } from '../i18n'
+import { useDocumentTitle, useLocalPref } from '../lib/hooks'
+import { useTheme } from '../theme/ThemeContext'
 import {
   Button,
   Callout,
   Card,
   Field,
   Input,
-  MetaStat,
-  PageHeader,
-  SectionTitle,
+  Spinner,
+  cx,
   useToast,
 } from '../ui'
 
-function StatusPill({ children, variant = 'pass' }) {
-  const styles = {
-    pass: 'bg-pass-fill text-pass-text border-pass-border',
-    info: 'bg-info-fill text-info-text border-info-border',
-    violation: 'bg-violation-fill text-violation-text border-violation-border',
-  }
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-caption font-semibold border ${
-        styles[variant] || styles.pass
-      }`}
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {children}
-    </span>
-  )
-}
-
 export default function InspectorProfile() {
-  const { user, installId, logout } = useAuth()
+  const { t, locale, setLocale } = useI18n()
+  const { user: authUser, logout } = useAuth()
+  const { theme, setTheme } = useTheme()
   const toast = useToast()
-  useDocumentTitle('Officer Profile — NiyamNetra')
+  const navigate = useNavigate()
+  useDocumentTitle('Settings · NiyamNetra')
 
-  const displayName = user?.full_name || 'Inspector One'
-  const displayId = user?.employee_id || 'LM-TG-1042'
-  const displayJurisdiction = user?.jurisdiction || 'Hyderabad North'
+  // Live profile data from /auth/me
+  const [profile, setProfile] = useState(null)
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true)
+  const [profileError, setProfileError] = useState(null)
+
+  const fetchProfile = useCallback(async () => {
+    setIsLoadingProfile(true)
+    setProfileError(null)
+    try {
+      const data = await endpoints.auth.me()
+      setProfile(data)
+    } catch (err) {
+      // If offline or request fails, fallback gracefully to authenticated context
+      if (authUser) {
+        setProfile(authUser)
+      } else {
+        setProfileError(
+          err?.response?.data?.detail || err?.message || 'Unable to retrieve account details.'
+        )
+      }
+    } finally {
+      setIsLoadingProfile(false)
+    }
+  }, [authUser])
+
+  useEffect(() => {
+    fetchProfile()
+  }, [fetchProfile])
+
+  // Notification Preferences (device-local)
+  const [notifySync, setNotifySync] = useLocalPref('pref.notify.sync', true)
+
+  // Change Password Form State
+  const [oldPassword, setOldPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showOld, setShowOld] = useState(false)
+  const [showNew, setShowNew] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [isUpdating, setIsUpdating] = useState(false)
+  const [passwordError, setPasswordError] = useState(null)
+  const [passwordSuccess, setPasswordSuccess] = useState(false)
+
+  // Merged user object
+  const currentUser = profile || authUser
+  const displayName = currentUser?.full_name || 'Inspector'
+  const displayId = currentUser?.employee_id || '—'
+  const displayJurisdiction = currentUser?.jurisdiction || 'All Jurisdictions'
+  const displayRole =
+    currentUser?.role === 'inspector'
+      ? 'Legal Metrology Inspector'
+      : currentUser?.role === 'admin'
+        ? 'Administrator'
+        : currentUser?.role || 'Inspector'
+  const displayEmail = currentUser?.email || null
+  const isActive = currentUser?.is_active !== false
+
+  // Handle real password update
+  async function handlePasswordSubmit(e) {
+    e.preventDefault()
+    setPasswordError(null)
+    setPasswordSuccess(false)
+
+    if (!oldPassword) {
+      setPasswordError('Please enter your current password.')
+      return
+    }
+
+    if (newPassword.length < 12) {
+      setPasswordError('New password must be at least 12 characters long.')
+      return
+    }
+
+    const hasLetter = /[A-Za-z]/.test(newPassword)
+    const hasDigit = /[0-9]/.test(newPassword)
+    if (!hasLetter || !hasDigit) {
+      setPasswordError('New password must contain at least one letter and one number.')
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New password and confirmation do not match.')
+      return
+    }
+
+    setIsUpdating(true)
+    try {
+      await endpoints.auth.changePassword(oldPassword, newPassword)
+      setPasswordSuccess(true)
+      toast.push({
+        family: 'pass',
+        title: 'Password Updated',
+        body: 'Your account password has been updated successfully.',
+      })
+      setOldPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+    } catch (err) {
+      const msg =
+        err?.response?.data?.detail ||
+        err?.message ||
+        'Failed to update password. Please check your current password.'
+      setPasswordError(msg)
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  const handleSignOut = async () => {
+    await logout()
+    navigate('/login', { replace: true })
+  }
 
   return (
-    <div className="mx-auto max-w-[960px] px-4 py-8 sm:px-6">
-      <PageHeader
-        eyebrow="Legal Metrology Department"
-        title="Officer Profile"
-        subtitle="Credentials, jurisdictional assignments, and security settings for this enforcement terminal."
-      />
+    <div className="mx-auto w-full max-w-[960px] pb-14">
+      {/* ------------------------------------------------------------------ */}
+      {/* 1. PAGE HEADER                                                     */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="border-b border-divider pb-5">
+        <p className="nn-eyebrow text-saffron">SETTINGS</p>
+        <h1 className="mt-1 text-[26px] font-bold tracking-tight text-ink">
+          Settings
+        </h1>
+        <p className="mt-1 text-small text-ink-2">
+          Manage your portal preferences and account settings.
+        </p>
+      </div>
 
-      {/* ---- Profile Hero Card ---- */}
-      <Card className="mt-6 p-6">
-        <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-4">
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-navy text-xl font-bold tracking-wider text-saffron-on-navy shadow-sm ring-4 ring-rail/10">
-              IO
+      <div className="mt-6 flex flex-col gap-6">
+        {/* ------------------------------------------------------------------ */}
+        {/* 2. ACCOUNT INFORMATION CARD                                        */}
+        {/* ------------------------------------------------------------------ */}
+        <Card className="p-6 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-divider pb-4">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy/10 text-navy dark:bg-accent-soft dark:text-accent-text">
+                <User size={18} strokeWidth={2} aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="text-[16px] font-bold text-ink">Account Information</h2>
+                <p className="text-[12px] text-ink-3">Official credentials registered for your account</p>
+              </div>
             </div>
+
+            {/* Account Status Badge */}
+            {isActive ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-pass-border bg-pass-fill px-3 py-1 text-[11px] font-semibold text-pass-text">
+                <CheckCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+                Active
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-[11px] font-semibold text-amber-800">
+                <AlertCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+                Inactive
+              </span>
+            )}
+          </div>
+
+          {/* Loading / Error States */}
+          {isLoadingProfile && !currentUser && (
+            <div className="flex items-center justify-center gap-2 py-8 text-small text-ink-3">
+              <Spinner size="sm" />
+              <span>Loading account information...</span>
+            </div>
+          )}
+
+          {profileError && !currentUser && (
+            <div className="py-4">
+              <Callout family="violation" title="Unable to load account information">
+                {profileError}
+              </Callout>
+              <div className="mt-3">
+                <Button variant="secondary" icon={RefreshCw} onClick={fetchProfile}>
+                  Retry
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {currentUser && (
+            <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <div>
+                <p className="text-caption font-medium text-ink-3">Inspector Name</p>
+                <p className="mt-1 text-[15px] font-semibold text-ink">{displayName}</p>
+              </div>
+
+              <div>
+                <p className="text-caption font-medium text-ink-3">Inspector ID</p>
+                <p className="nn-mono mt-1 text-[15px] font-semibold text-ink">{displayId}</p>
+              </div>
+
+              <div>
+                <p className="text-caption font-medium text-ink-3">Role</p>
+                <p className="mt-1 text-[15px] font-medium text-ink">{displayRole}</p>
+              </div>
+
+              <div>
+                <p className="text-caption font-medium text-ink-3">Assigned Region / Jurisdiction</p>
+                <p className="mt-1 flex items-center gap-1.5 text-[15px] font-medium text-ink">
+                  <MapPin size={14} className="text-saffron shrink-0" aria-hidden="true" />
+                  {displayJurisdiction}
+                </p>
+              </div>
+
+              {/* Email (only displayed if genuinely available) */}
+              {displayEmail && (
+                <div className="sm:col-span-2">
+                  <p className="text-caption font-medium text-ink-3">Email</p>
+                  <p className="mt-1 flex items-center gap-1.5 text-[14px] text-ink-2">
+                    <Mail size={14} className="text-ink-3 shrink-0" aria-hidden="true" />
+                    {displayEmail}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* ------------------------------------------------------------------ */}
+        {/* 3. PORTAL PREFERENCES CARD                                         */}
+        {/* ------------------------------------------------------------------ */}
+        <Card className="p-6 shadow-sm">
+          <div className="flex items-center gap-2.5 border-b border-divider pb-4">
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">
+              <Palette size={18} strokeWidth={2} aria-hidden="true" />
+            </span>
             <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-h2 font-bold text-ink">{displayName}</h2>
-                <StatusPill variant="pass">Active Enforcement Officer</StatusPill>
-              </div>
-              <p className="nn-mono mt-1 text-caption text-ink-3">
-                Officer ID: <span className="font-semibold text-ink-2">{displayId}</span>
-              </p>
-              <p className="mt-1 text-small text-ink-2">
-                Legal Metrology Inspector (Senior Grade) • Government of Telangana
-              </p>
-              <div className="mt-2 flex flex-wrap items-center gap-4 text-caption text-ink-3">
-                <span className="inline-flex items-center gap-1.5">
-                  <MapPin size={14} className="text-saffron" aria-hidden="true" />
-                  {displayJurisdiction} (Zone 4)
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <Calendar size={14} aria-hidden="true" />
-                  Appointed: 14 January 2024
-                </span>
-              </div>
+              <h2 className="text-[16px] font-bold text-ink">Portal Preferences</h2>
+              <p className="text-[12px] text-ink-3">Customize display theme and local portal behavior</p>
             </div>
           </div>
 
-          <div className="flex flex-row gap-2 sm:flex-col sm:items-end">
+          <div className="mt-5 flex flex-col divide-y divide-divider text-small">
+            {/* Theme Preference */}
+            <div className="flex flex-col gap-2 py-4 first:pt-0 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold text-ink">Theme / Appearance</p>
+                <p className="text-caption text-ink-3">
+                  Choose between the light government theme and soft slate dark mode.
+                </p>
+              </div>
+
+              <div className="inline-flex rounded-lg border border-divider bg-surface p-1 shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => setTheme('light')}
+                  className={cx(
+                    'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-all',
+                    theme === 'light'
+                      ? 'bg-navy text-ink-inverse shadow-xs'
+                      : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
+                  )}
+                >
+                  <Sun size={14} aria-hidden="true" />
+                  Light
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTheme('dark')}
+                  className={cx(
+                    'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-all',
+                    theme === 'dark'
+                      ? 'bg-[#1e293b] text-white shadow-xs'
+                      : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
+                  )}
+                >
+                  <Moon size={14} aria-hidden="true" />
+                  Dark
+                </button>
+              </div>
+            </div>
+
+            {/* Language Preference */}
+            <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold text-ink">Portal Language</p>
+                <p className="text-caption text-ink-3">
+                  Select your preferred interface language.
+                </p>
+              </div>
+
+              <div className="inline-flex rounded-lg border border-divider bg-surface p-1 shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => setLocale('en')}
+                  className={cx(
+                    'rounded-md px-3 py-1.5 text-[12px] font-medium transition-all',
+                    locale === 'en'
+                      ? 'bg-navy text-ink-inverse shadow-xs'
+                      : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
+                  )}
+                >
+                  English
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocale('hi')}
+                  className={cx(
+                    'rounded-md px-3 py-1.5 text-[12px] font-medium transition-all',
+                    locale === 'hi'
+                      ? 'bg-navy text-ink-inverse shadow-xs'
+                      : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
+                  )}
+                >
+                  हिन्दी (Hindi)
+                </button>
+              </div>
+            </div>
+
+            {/* Notification Preference */}
+            <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold text-ink">Inspection Sync Alerts</p>
+                <p className="text-caption text-ink-3">
+                  Display toast confirmations when inspections synchronize with the server.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={notifySync}
+                onClick={() => setNotifySync(!notifySync)}
+                className={cx(
+                  'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out',
+                  notifySync ? 'bg-navy' : 'bg-surface-3'
+                )}
+              >
+                <span
+                  className={cx(
+                    'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                    notifySync ? 'translate-x-5' : 'translate-x-0'
+                  )}
+                />
+              </button>
+            </div>
+          </div>
+        </Card>
+
+        {/* ------------------------------------------------------------------ */}
+        {/* 4. CHANGE PASSWORD CARD                                            */}
+        {/* ------------------------------------------------------------------ */}
+        <Card className="p-6 shadow-sm">
+          <div className="flex items-center gap-2.5 border-b border-divider pb-4">
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400">
+              <KeyRound size={18} strokeWidth={2} aria-hidden="true" />
+            </span>
+            <div>
+              <h2 className="text-[16px] font-bold text-ink">Change Password</h2>
+              <p className="text-[12px] text-ink-3">Update your portal login password</p>
+            </div>
+          </div>
+
+          <form onSubmit={handlePasswordSubmit} className="mt-5 flex flex-col gap-4">
+            {passwordSuccess && (
+              <Callout family="pass" title="Password updated successfully">
+                Your password has been changed. Other sessions signed in with this account have been
+                logged out.
+              </Callout>
+            )}
+
+            {passwordError && (
+              <Callout family="violation" title="Password update failed">
+                {passwordError}
+              </Callout>
+            )}
+
+            {/* Current Password */}
+            <Field label="Current Password" required>
+              {(props) => (
+                <div className="relative">
+                  <Input
+                    {...props}
+                    type={showOld ? 'text' : 'password'}
+                    value={oldPassword}
+                    onChange={(e) => {
+                      setOldPassword(e.target.value)
+                      if (passwordSuccess) setPasswordSuccess(false)
+                    }}
+                    placeholder="Enter your current password"
+                    className="pr-10"
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOld(!showOld)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink"
+                    aria-label={showOld ? 'Hide password' : 'Show password'}
+                  >
+                    {showOld ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+              )}
+            </Field>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {/* New Password */}
+              <Field
+                label="New Password"
+                hint="Minimum 12 characters, with at least one letter and one number."
+                required
+              >
+                {(props) => (
+                  <div className="relative">
+                    <Input
+                      {...props}
+                      type={showNew ? 'text' : 'password'}
+                      value={newPassword}
+                      onChange={(e) => {
+                        setNewPassword(e.target.value)
+                        if (passwordSuccess) setPasswordSuccess(false)
+                      }}
+                      placeholder="At least 12 characters"
+                      className="pr-10"
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNew(!showNew)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink"
+                      aria-label={showNew ? 'Hide password' : 'Show password'}
+                    >
+                      {showNew ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
+                )}
+              </Field>
+
+              {/* Confirm New Password */}
+              <Field label="Confirm New Password" required>
+                {(props) => (
+                  <div className="relative">
+                    <Input
+                      {...props}
+                      type={showConfirm ? 'text' : 'password'}
+                      value={confirmPassword}
+                      onChange={(e) => {
+                        setConfirmPassword(e.target.value)
+                        if (passwordSuccess) setPasswordSuccess(false)
+                      }}
+                      placeholder="Repeat new password"
+                      className="pr-10"
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirm(!showConfirm)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink"
+                      aria-label={showConfirm ? 'Hide password' : 'Show password'}
+                    >
+                      {showConfirm ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
+                )}
+              </Field>
+            </div>
+
+            <div className="pt-2">
+              <Button
+                type="submit"
+                variant="primary"
+                icon={Lock}
+                loading={isUpdating}
+                disabled={!oldPassword || !newPassword || !confirmPassword}
+                disabledReason="Please fill in all password fields."
+              >
+                Update Password
+              </Button>
+            </div>
+          </form>
+        </Card>
+
+        {/* ------------------------------------------------------------------ */}
+        {/* 5. SESSION & SECURITY CARD                                         */}
+        {/* ------------------------------------------------------------------ */}
+        <Card className="p-6 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400">
+                <ShieldCheck size={18} strokeWidth={2} aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="text-[16px] font-bold text-ink">Active Session</h2>
+                <p className="mt-0.5 text-small text-ink-2">
+                  Signed in as <span className="font-semibold text-ink">{displayName}</span> ({displayId})
+                </p>
+                <p className="mt-0.5 text-caption text-ink-3">
+                  To end your inspection session on this terminal, click Sign Out below.
+                </p>
+              </div>
+            </div>
+
             <Button
               variant="outline"
               icon={LogOut}
-              onClick={() => logout()}
-              className="text-violation-text hover:bg-violation-fill"
+              onClick={handleSignOut}
+              className="self-start border-violation-border text-violation-text hover:bg-violation-fill sm:self-auto"
             >
               Sign Out
             </Button>
           </div>
-        </div>
-
-        {/* Quick Enforcement Metrics */}
-        <div className="mt-6 grid grid-cols-2 gap-3 border-t border-divider pt-6 sm:grid-cols-4">
-          <div className="rounded-md bg-surface-2 p-3 text-center">
-            <p className="nn-eyebrow text-ink-3">Total Inspections</p>
-            <p className="nn-mono text-h2 font-bold text-ink">128</p>
-            <p className="text-[11px] text-ink-3">Recorded to date</p>
-          </div>
-          <div className="rounded-md bg-surface-2 p-3 text-center">
-            <p className="nn-eyebrow text-ink-3">Compliant</p>
-            <p className="nn-mono text-h2 font-bold text-pass-text">94</p>
-            <p className="text-[11px] text-pass-text">73.4% rate</p>
-          </div>
-          <div className="rounded-md bg-surface-2 p-3 text-center">
-            <p className="nn-eyebrow text-ink-3">Violations Noticed</p>
-            <p className="nn-mono text-h2 font-bold text-violation-text">27</p>
-            <p className="text-[11px] text-violation-text">Notices issued</p>
-          </div>
-          <div className="rounded-md bg-surface-2 p-3 text-center">
-            <p className="nn-eyebrow text-ink-3">Assigned Units</p>
-            <p className="nn-mono text-h2 font-bold text-saffron">6</p>
-            <p className="text-[11px] text-ink-3">Retail & wholesale</p>
-          </div>
-        </div>
-      </Card>
-
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* ---- Station & Officer Details ---- */}
-        <Card className="p-5 sm:p-6">
-          <SectionTitle caption="Official identity registered with the State Legal Metrology Department.">
-            <span className="inline-flex items-center gap-2">
-              <Building2 size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
-              Department & Station
-            </span>
-          </SectionTitle>
-
-          <div className="mt-4 space-y-3 divide-y divide-divider text-small">
-            <div className="pt-2 first:pt-0">
-              <p className="nn-eyebrow">Department</p>
-              <p className="mt-0.5 font-medium text-ink">
-                Department of Legal Metrology, Government of Telangana
-              </p>
-            </div>
-            <div className="pt-3">
-              <p className="nn-eyebrow">Zonal Office</p>
-              <p className="mt-0.5 font-medium text-ink">
-                Musheerabad Zonal Headquarters, Hyderabad — 500020
-              </p>
-            </div>
-            <div className="pt-3">
-              <p className="nn-eyebrow">Official Email</p>
-              <p className="mt-0.5 flex items-center gap-1.5 font-medium text-ink">
-                <Mail size={14} className="text-ink-3" />
-                inspector1.lm@telangana.gov.in
-              </p>
-            </div>
-            <div className="pt-3">
-              <p className="nn-eyebrow">Official Contact</p>
-              <p className="mt-0.5 flex items-center gap-1.5 font-medium text-ink">
-                <Phone size={14} className="text-ink-3" />
-                +91 94401 02845
-              </p>
-            </div>
-            <div className="pt-3">
-              <p className="nn-eyebrow">Reporting Authority</p>
-              <p className="mt-0.5 font-medium text-ink">
-                Joint Controller of Legal Metrology (Enforcement), Hyderabad Zone
-              </p>
-            </div>
-          </div>
-        </Card>
-
-        {/* ---- Jurisdictional Boundaries ---- */}
-        <Card className="p-5 sm:p-6">
-          <SectionTitle caption="Territorial jurisdiction under the Legal Metrology Act, 2009.">
-            <span className="inline-flex items-center gap-2">
-              <MapPin size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
-              Jurisdiction & Sector
-            </span>
-          </SectionTitle>
-
-          <div className="mt-4 space-y-3 divide-y divide-divider text-small">
-            <div className="pt-2 first:pt-0">
-              <p className="nn-eyebrow">Assigned Circle</p>
-              <p className="mt-0.5 font-medium text-ink">
-                Hyderabad North Zone — Sector 4
-              </p>
-            </div>
-            <div className="pt-3">
-              <p className="nn-eyebrow">Covered Localities</p>
-              <p className="mt-0.5 text-ink-2">
-                Begumpet, Secunderabad Station Road, Malkajgiri, Ranigunj Commercial Belt, General Bazaar
-              </p>
-            </div>
-            <div className="pt-3">
-              <p className="nn-eyebrow">Statutory Authority</p>
-              <p className="mt-0.5 text-ink-2">
-                Standards of Weights & Measures (Packaged Commodities) Rules, 2011 (Rules 4, 6, 7, 8, 9, 10, 11, 13, 14, 18, 23).
-              </p>
-            </div>
-            <div className="pt-3">
-              <p className="nn-eyebrow">Assigned Inspection Quota</p>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="font-medium text-ink">September 2026 Progress</span>
-                <span className="nn-mono font-semibold text-pass-text">20 / 25 completed (80%)</span>
-              </div>
-              <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-3">
-                <div className="h-full rounded-full bg-pass" style={{ width: '80%' }} />
-              </div>
-            </div>
-          </div>
         </Card>
       </div>
-
-      {/* ---- Device & Security Binding ---- */}
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card className="p-5 sm:p-6">
-          <SectionTitle caption="Cryptographic terminal authorization for official inspection records.">
-            <span className="inline-flex items-center gap-2">
-              <Smartphone size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
-              Authorized Mobile Terminal
-            </span>
-          </SectionTitle>
-
-          <div className="mt-4 space-y-3 text-small">
-            <div className="flex items-center justify-between rounded-md bg-surface-2 p-3">
-              <div>
-                <p className="font-medium text-ink">Field Scanning Device</p>
-                <p className="text-caption text-ink-3">Samsung Galaxy XCover Pro (Enforcement Model)</p>
-              </div>
-              <StatusPill variant="pass">Paired</StatusPill>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
-              <MetaStat
-                label="Terminal Install ID"
-                value={<span className="nn-mono text-xs">{installId || 'inst-tg-north-1042'}</span>}
-              />
-              <MetaStat
-                label="Keystore Security"
-                value="Hardware TPM 2.0"
-              />
-              <MetaStat
-                label="Clock Skew Threshold"
-                value="< 1.2s against UTC"
-              />
-              <MetaStat
-                label="Geofence Accuracy"
-                value="Dual-Band GNSS (±3m)"
-              />
-            </div>
-          </div>
-        </Card>
-
-        {/* Change Password Card */}
-        <InspectorPasswordForm toast={toast} />
-      </div>
-
-      {/* ---- Statutory Notice ---- */}
-      <Callout family="info" title="Official Records & Integrity Notice" icon={ShieldCheck} className="mt-6">
-        Every inspection report generated under Officer ID {displayId} is cryptographically sealed with
-        SHA-256 digests and timestamped against the state master clock. Modifications to recorded violations
-        or shop verification data require authorization from the State Metrology Review Board.
-      </Callout>
     </div>
-  )
-}
-
-function InspectorPasswordForm({ toast }) {
-  const [current, setCurrent] = useState('')
-  const [next, setNext] = useState('')
-  const [confirm, setConfirm] = useState('')
-  const [done, setDone] = useState(false)
-  const change = useMutation((oldPw, newPw) => endpoints.auth.changePassword(oldPw, newPw))
-
-  const tooShort = next.length > 0 && next.length < 12
-  const mismatch = confirm.length > 0 && next !== confirm
-  const sameAsOld = next.length > 0 && current.length > 0 && next === current
-  const canSubmit =
-    current.length >= 8 && next.length >= 12 && next === confirm && next !== current && !change.pending
-
-  const newError =
-    change.fieldErrors?.new_password ??
-    (tooShort ? 'Must be at least 12 characters.' : sameAsOld ? 'Must be different from old password.' : undefined)
-  const confirmError = mismatch ? 'Passwords do not match.' : undefined
-
-  async function onSubmit(e) {
-    e.preventDefault()
-    if (!canSubmit) return
-    try {
-      await change.run(current, next)
-      setDone(true)
-      setCurrent('')
-      setNext('')
-      setConfirm('')
-      toast.push({
-        family: 'pass',
-        title: 'Credentials updated',
-        body: 'Your portal password has been changed successfully.',
-      })
-    } catch {
-      // Handled by change.error
-    }
-  }
-
-  return (
-    <Card className="p-5 sm:p-6">
-      <SectionTitle caption="Update portal login password. Minimum 12 characters required.">
-        <span className="inline-flex items-center gap-2">
-          <KeyRound size={18} strokeWidth={1.8} className="text-ink-3" aria-hidden="true" />
-          Change Password
-        </span>
-      </SectionTitle>
-
-      {done && !change.pending && (
-        <Callout family="pass" title="Password updated" className="mt-4">
-          Your credentials have been updated securely.
-        </Callout>
-      )}
-
-      {change.error && !change.fieldErrors && (
-        <Callout family="violation" title="Update failed" className="mt-4">
-          {change.error.message}
-        </Callout>
-      )}
-
-      <form onSubmit={onSubmit} className="mt-4 space-y-4">
-        <Field label="Current Password" required>
-          <Input
-            type="password"
-            autoComplete="current-password"
-            value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-            placeholder="••••••••••••"
-          />
-        </Field>
-
-        <Field label="New Password" required error={newError}>
-          <Input
-            type="password"
-            autoComplete="new-password"
-            value={next}
-            onChange={(e) => setNext(e.target.value)}
-            placeholder="At least 12 characters"
-          />
-        </Field>
-
-        <Field label="Confirm New Password" required error={confirmError}>
-          <Input
-            type="password"
-            autoComplete="new-password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            placeholder="Repeat new password"
-          />
-        </Field>
-
-        <Button
-          type="submit"
-          variant="primary"
-          icon={KeyRound}
-          disabled={!canSubmit}
-          disabledReason={
-            current.length < 8
-              ? 'Enter your current password (at least 8 characters).'
-              : next.length < 12
-              ? 'New password must be at least 12 characters.'
-              : next === current
-              ? 'New password must be different from current password.'
-              : next !== confirm
-              ? 'New password and confirmation must match.'
-              : undefined
-          }
-          loading={change.pending}
-          className="w-full"
-        >
-          Update Password
-        </Button>
-      </form>
-    </Card>
   )
 }

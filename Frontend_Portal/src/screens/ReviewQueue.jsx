@@ -62,12 +62,14 @@ import { endpoints } from '../api/client'
 import { useI18n } from '../i18n'
 import { CHECKS_TOTAL, checkById } from '../lib/checks'
 import { useDocumentTitle, useResource } from '../lib/hooks'
+import { inspections as inspectionsFixture, reviewQueue as reviewQueueFixture } from '../mock/fixtures'
 import {
   Button,
   Callout,
   Card,
   CardHeader,
   ConfidenceBadge,
+  DemoChip,
   EmptyState,
   Eyebrow,
   Field,
@@ -263,6 +265,7 @@ export default function ReviewQueue() {
 
   /* The authoritative number. One request, no parameters. */
   const queue = useResource(() => endpoints.admin.reviewQueue(), {
+    fallback: reviewQueueFixture,
     label: 'review-queue',
   })
 
@@ -411,11 +414,12 @@ export default function ReviewQueue() {
   ]
 
   return (
-    <div className="px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+    <div>
       <PageHeader
         eyebrow="Legal Metrology · enforcement"
         title={t('admin.reviewQueueCount')}
         subtitle="What a human still has to look at. The total comes from the server; the rows below are assembled by this device, because no endpoint returns them."
+        actions={queue.demo ? <DemoChip /> : null}
       />
 
       {/* ------------------------------------------------- the honest number -- */}

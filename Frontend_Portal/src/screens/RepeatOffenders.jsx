@@ -61,9 +61,16 @@ import { useI18n } from '../i18n'
 import { useDebounced, useDocumentTitle, useResource } from '../lib/hooks'
 import { CHECKS } from '../lib/checks'
 import {
+  storesById,
+  usersById,
+  repeatOffenders as repeatOffendersFixture,
+  VIOLATION_CATEGORY_OF_MAP,
+} from '../mock/fixtures'
+import {
   Button,
   Callout,
   Card,
+  DemoChip,
   EmptyState,
   Field,
   Input,
@@ -94,19 +101,10 @@ function pretty(isoDate) {
   }
 }
 
-const VIOLATION_CATEGORY_OF_MAP = {
-  CHK01: 'manufacturer',
-  CHK04: 'mrp',
-  CHK05: 'net_quantity',
-  CHK06: 'net_quantity',
-  CHK06b: 'net_quantity',
-  CHK07: 'net_quantity',
-  CHK08: 'consumer_care',
-  CHK11: 'manufacturer',
-  CHK12: 'manufacturer',
-  CHK13: 'date',
-}
-
+/* The "declaration type" of a finding is the category the violations page
+   uses (mrp, net_quantity, etc.). It is the same rollup — the brief just
+   calls it "declaration type" here, which is the same five buckets from
+   the user's perspective. */
 function declarationOf(checkId) {
   return VIOLATION_CATEGORY_OF_MAP[checkId] ?? null
 }
@@ -281,15 +279,17 @@ function SearchBar({ mode, setMode, query, setQuery, appliedCount, reset }) {
 function HistoryDrawer({ offender, open, onClose }) {
   const { t } = useI18n()
   const shops = useResource(() => endpoints.inspections.stores(), {
+    fallback: Object.values(storesById),
     label: 'repeat-stores',
   })
   const officers = useResource(() => endpoints.admin.users(), {
+    fallback: Object.values(usersById),
     label: 'repeat-users',
   })
 
   if (!offender) return null
-  const shopById = new Map((shops.data ?? []).map((s) => [s.id, s]))
-  const userById = new Map((officers.data ?? []).map((u) => [u.id, u]))
+  const shopById = new Map((shops.data ?? Object.values(storesById)).map((s) => [s.id, s]))
+  const userById = new Map((officers.data ?? Object.values(usersById)).map((u) => [u.id, u]))
   const history = offender.history ?? []
 
   return (
@@ -369,7 +369,7 @@ function HistoryDrawer({ offender, open, onClose }) {
                       <span className="nn-mono text-caption">{pretty(h.date)}</span>
                     </td>
                     <td className="px-3 py-2.5 text-ink">
-                      {shop?.name ?? h.store_name ?? (h.store_id ? `Shop #${h.store_id}` : '—')}
+                      {shop?.name ?? `Shop #${h.store_id}`}
                     </td>
                     <td className="px-3 py-2.5 text-ink-2">{h.region ?? '—'}</td>
                     <td className="px-3 py-2.5 text-ink">{h.brand ?? '—'}</td>
@@ -435,6 +435,7 @@ export default function RepeatOffenders() {
 
   /* -------------------------------------------------------------- data --- */
   const list = useResource(() => endpoints.admin.repeatOffenders(), {
+    fallback: repeatOffendersFixture,
     label: 'repeat-offenders',
   })
 
@@ -454,8 +455,8 @@ export default function RepeatOffenders() {
           /* A manufacturer "covers" a shop when any of its history rows
              was recorded at that shop. Client-side join. */
           return (m.history ?? []).some((h) => {
-            const shopName = h.store_name?.toLowerCase() ?? ''
-            return shopName.includes(needle) || String(h.store_id ?? '').includes(needle)
+            const shop = storesById[h.store_id]
+            return shop?.name?.toLowerCase().includes(needle)
           })
         }
         case 'region':
@@ -486,6 +487,7 @@ export default function RepeatOffenders() {
         eyebrow="Legal Metrology · enforcement"
         title={t('repeatOffenders.title')}
         subtitle={t('repeatOffenders.subtitle')}
+        actions={list.demo && <DemoChip />}
       />
 
       <div className="mt-6">

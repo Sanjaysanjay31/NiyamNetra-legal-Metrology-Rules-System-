@@ -299,6 +299,8 @@ class AdminDashboardResponse(BaseModel):
     review_queue: int
     top_failed_checks: list[CheckTally]
     trend: list[TrendPoint]
+    violations_by_category: list[dict] | None = None
+    violations_by_area: list[dict] | None = None
 
 
 class AdminViolationItem(BaseModel):
@@ -371,6 +373,10 @@ class RuleVersionOut(BaseModel):
     is_active: bool
     summary: str
     rules: list[dict] = []
+
+
+class ToggleRuleVersionRequest(BaseModel):
+    is_active: bool
 
 
 # ------------------------------------------------------------------ admin

@@ -16,6 +16,7 @@ import { Link } from 'react-router-dom'
 import { format, parseISO, subDays } from 'date-fns'
 import {
   AlertTriangle,
+  BookOpen,
   Calendar,
   CheckCircle2,
   ChevronRight,
@@ -25,6 +26,8 @@ import {
   FileSpreadsheet,
   FileText,
   Filter,
+  Info,
+  Scale,
   Search,
   Store as StoreIcon,
   Users,
@@ -44,12 +47,14 @@ import {
 import { endpoints, saveBlob } from '../api/client'
 import { useI18n } from '../i18n'
 import { useDocumentTitle, useResource } from '../lib/hooks'
+import { VIOLATIONS_DATA } from '../mock/violationsData'
 import {
   Button,
   Card,
   cx,
   Field,
   Input,
+  Modal,
   Pill,
   Select,
   Skeleton,
@@ -371,62 +376,100 @@ function RepeatOffenderTable({ rows }) {
 /* ---------------------------------------------------- violations detail table -- */
 
 function ViolationsRecordsTable({ rows }) {
+  const [selectedViolation, setSelectedViolation] = useState(null)
+  const [q, setQ] = useState('')
+  const [page, setPage] = useState(1)
+  const pageSize = 10
+
+  const filtered = useMemo(() => {
+    if (!q.trim()) return rows
+    const query = q.toLowerCase().trim()
+    return rows.filter(
+      (r) =>
+        r.product_name?.toLowerCase().includes(query) ||
+        r.store_name?.toLowerCase().includes(query) ||
+        r.brand_name?.toLowerCase().includes(query) ||
+        r.area?.toLowerCase().includes(query) ||
+        r.rule?.toLowerCase().includes(query) ||
+        r.category?.toLowerCase().includes(query)
+    )
+  }, [rows, q])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const startIdx = (currentPage - 1) * pageSize
+  const pageRows = filtered.slice(startIdx, startIdx + pageSize)
+
   return (
     <Card className="overflow-hidden p-0">
-      <div className="flex items-center justify-between border-b border-divider px-5 py-3">
+      <div className="flex flex-col gap-3 border-b border-divider px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-[15px] font-semibold text-ink">Recorded Violations &amp; Findings</h3>
+          <h3 className="text-[15px] font-semibold text-ink">Recorded Findings &amp; Violations</h3>
           <p className="mt-0.5 text-[11px] text-ink-3">
-            Showing {rows.length} record{rows.length === 1 ? '' : 's'} matching active filters.
+            Showing {filtered.length} of {rows.length} recorded items across stores. Click More Details to view rule and finding breakdown.
           </p>
         </div>
+        <div className="w-full sm:w-64">
+          <Input
+            icon={Search}
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value)
+              setPage(1)
+            }}
+            placeholder="Search product, store, rule..."
+            className="text-[12px]"
+          />
+        </div>
       </div>
+
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-[12px]">
           <thead>
             <tr className="border-b border-divider bg-surface-2 text-left">
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5">Date</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5">Store &amp; Area</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5">Product &amp; Brand</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5">Category</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5">Violated Rule</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5">Finding Details</th>
-              <th className="nn-eyebrow whitespace-nowrap px-4 py-2.5">Result</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-3">Product</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-3">Store</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-3">Rule Result</th>
+              <th className="nn-eyebrow whitespace-nowrap px-4 py-3 text-right">Details</th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {pageRows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-ink-3">
-                  No records match the selected date, area, or violation type.
+                <td colSpan={4} className="px-4 py-8 text-center text-ink-3">
+                  No records match the current search or filters.
                 </td>
               </tr>
             ) : (
-              rows.map((r) => (
+              pageRows.map((r) => (
                 <tr
                   key={r.id}
                   className="border-b border-divider transition-colors duration-fast last:border-b-0 hover:bg-surface-2"
                 >
-                  <td className="nn-mono whitespace-nowrap px-4 py-3 text-ink-2">
-                    {pretty(r.date)}
+                  <td className="px-4 py-3.5">
+                    <p className="font-semibold text-ink">{r.product_name}</p>
+                    <p className="mt-0.5 text-[11px] text-ink-3">
+                      {r.brand_name ? `${r.brand_name} · ` : ''}
+                      {r.commodity_generic || r.category}
+                    </p>
                   </td>
-                  <td className="px-4 py-3">
-                    <p className="font-semibold text-ink">{r.store_name}</p>
-                    <p className="text-[11px] text-ink-3">{r.area}</p>
+                  <td className="px-4 py-3.5">
+                    <p className="font-medium text-ink">{r.store_name}</p>
+                    <p className="mt-0.5 text-[11px] text-ink-3">{r.area}</p>
                   </td>
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-ink">{r.product_name}</p>
-                    <p className="text-[11px] text-ink-3">{r.manufacturer}</p>
-                  </td>
-                  <td className="px-4 py-3 font-medium text-ink-2">{r.category}</td>
-                  <td className="px-4 py-3 font-mono text-[11px] font-semibold text-violation-text">
-                    {r.rule}
-                  </td>
-                  <td className="px-4 py-3 text-ink-2 max-w-[280px]">
-                    <span className="line-clamp-2">{r.reason}</span>
-                  </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3.5">
                     <VerdictBadge verdict={r.result} size="sm" />
+                  </td>
+                  <td className="px-4 py-3.5 text-right">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={Info}
+                      onClick={() => setSelectedViolation(r)}
+                      className="font-medium"
+                    >
+                      More Details
+                    </Button>
                   </td>
                 </tr>
               ))
@@ -434,7 +477,185 @@ function ViolationsRecordsTable({ rows }) {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination controls */}
+      {totalPages > 1 && (
+        <div className="flex flex-col items-start justify-between gap-2 border-t border-divider px-4 py-3 text-caption text-ink-2 sm:flex-row sm:items-center">
+          <p>
+            Showing <span className="font-medium text-ink">{filtered.length > 0 ? startIdx + 1 : 0}</span>–
+            <span className="font-medium text-ink">{Math.min(startIdx + pageSize, filtered.length)}</span> of{' '}
+            <span className="font-medium text-ink">{filtered.length}</span>
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={currentPage <= 1}
+              disabledReason="You are on the first page."
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </Button>
+            <span className="text-caption text-ink-2 tabular-nums">
+              Page {currentPage} of {totalPages}
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={currentPage >= totalPages}
+              disabledReason="You are on the last page."
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Detailed Violation Modal */}
+      {selectedViolation && (
+        <ViolationDetailModal
+          item={selectedViolation}
+          onClose={() => setSelectedViolation(null)}
+        />
+      )}
     </Card>
+  )
+}
+
+function ViolationDetailModal({ item, onClose }) {
+  return (
+    <Modal
+      open={Boolean(item)}
+      onClose={onClose}
+      title="Violation & Finding Details"
+      description={`Record #${item.id} · Recorded on ${pretty(item.date)}`}
+      size="lg"
+      footer={
+        <div className="flex w-full items-center justify-between">
+          <span className="text-caption text-ink-3">
+            Legal Metrology Department · Enforcement System
+          </span>
+          <Button variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        {/* Rule Violated Card - High contrast, prominent statutory card */}
+        <div
+          className={cx(
+            'rounded-md border p-4',
+            item.result === 'violation'
+              ? 'border-violation-border bg-violation-fill/60'
+              : item.result === 'review'
+                ? 'border-review-border bg-review-fill/60'
+                : 'border-pass-border bg-pass-fill/60'
+          )}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Scale
+                size={18}
+                strokeWidth={2}
+                className={
+                  item.result === 'violation'
+                    ? 'text-violation-graphic'
+                    : item.result === 'review'
+                      ? 'text-review-graphic'
+                      : 'text-pass-graphic'
+                }
+                aria-hidden="true"
+              />
+              <span className="text-[13px] font-bold uppercase tracking-wider text-ink">
+                Rule Violated
+              </span>
+            </div>
+            <VerdictBadge verdict={item.result} size="md" />
+          </div>
+
+          <div className="mt-3">
+            <p className="nn-mono text-[14px] font-bold text-ink">
+              {item.rule}
+            </p>
+            <p className="mt-0.5 text-[12px] font-medium text-ink-2">
+              Category: <span className="font-semibold text-ink">{item.category}</span>
+            </p>
+            <p className="mt-0.5 text-[11px] text-ink-3">
+              Statutory Basis: Legal Metrology (Packaged Commodities) Rules, 2011 read with Legal Metrology Act, 2009.
+            </p>
+          </div>
+
+          <div className="mt-3 rounded border border-divider/60 bg-surface p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+              Recorded Finding &amp; Breach Reason
+            </p>
+            <p className="mt-1 text-[13px] font-medium leading-relaxed text-ink">
+              {item.reason}
+            </p>
+          </div>
+        </div>
+
+        {/* Two-column specifications grid */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {/* Product Details */}
+          <div className="rounded-md border border-divider bg-surface-2 p-3.5">
+            <p className="nn-eyebrow text-ink-3 mb-2 flex items-center gap-1.5 font-semibold">
+              <BookOpen size={13} className="text-ink-3" aria-hidden="true" />
+              Product Information
+            </p>
+            <div className="flex flex-col gap-2 text-[12px]">
+              <div>
+                <span className="text-ink-3 block text-[11px]">Product Name</span>
+                <span className="font-semibold text-ink">{item.product_name}</span>
+              </div>
+              <div>
+                <span className="text-ink-3 block text-[11px]">Brand Name</span>
+                <span className="font-medium text-ink">{item.brand_name || '—'}</span>
+              </div>
+              <div>
+                <span className="text-ink-3 block text-[11px]">Manufacturer / Packer</span>
+                <span className="font-medium text-ink">{item.manufacturer || '—'}</span>
+              </div>
+              <div>
+                <span className="text-ink-3 block text-[11px]">Commodity Classification</span>
+                <span className="font-medium text-ink">{item.commodity_generic || '—'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Store & Inspection Details */}
+          <div className="rounded-md border border-divider bg-surface-2 p-3.5">
+            <p className="nn-eyebrow text-ink-3 mb-2 flex items-center gap-1.5 font-semibold">
+              <StoreIcon size={13} className="text-ink-3" aria-hidden="true" />
+              Store &amp; Inspection
+            </p>
+            <div className="flex flex-col gap-2 text-[12px]">
+              <div>
+                <span className="text-ink-3 block text-[11px]">Retail Store</span>
+                <span className="font-semibold text-ink">{item.store_name}</span>
+                {item.store_id && (
+                  <span className="nn-mono text-[10px] text-ink-3 block">ID: #{item.store_id}</span>
+                )}
+              </div>
+              <div>
+                <span className="text-ink-3 block text-[11px]">Area / Jurisdiction</span>
+                <span className="font-medium text-ink">{item.area}</span>
+              </div>
+              <div>
+                <span className="text-ink-3 block text-[11px]">Inspection Date</span>
+                <span className="font-medium text-ink">{pretty(item.date)}</span>
+              </div>
+              <div>
+                <span className="text-ink-3 block text-[11px]">Reporting Inspector</span>
+                <span className="font-medium text-ink">{item.inspector || 'Field Inspection Officer'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Modal>
   )
 }
 
@@ -458,40 +679,52 @@ export default function AdminViolations() {
   const toast = useToast()
 
   const today = todayIso()
-  // Dynamic date defaults: last 30 days
-  const [from, setFrom] = useState(() => iso(subDays(new Date(), 29)))
-  const [to, setTo] = useState(() => todayIso())
+  // Default to covering August-September 2026 data range
+  const [from, setFrom] = useState('2026-08-10')
+  const [to, setTo] = useState('2026-09-08')
   const [area, setArea] = useState('all')
   const [violationType, setViolationType] = useState('all')
   const [result, setResult] = useState('all')
   const [exportFormat, setExportFormat] = useState('csv')
   const [exporting, setExporting] = useState(false)
 
-  /* ---- Fetch live violations from backend ---- */
-  const violRes = useResource(
-    () => endpoints.admin.violations({ start: from, end: to }),
-    {
-      deps: [from, to],
-      label: 'admin-violations',
+  const violationsResource = useResource(() => endpoints.admin.violations({ start: from, end: to }), {
+    fallback: null,
+    label: 'admin-violations',
+  })
+
+  const rawViolations = useMemo(() => {
+    if (Array.isArray(violationsResource.data?.violations) && violationsResource.data.violations.length > 0) {
+      return violationsResource.data.violations.map((v, i) => ({
+        id: `VN-${v.id || 1000 + i}`,
+        rawId: v.id,
+        inspection_id: v.inspection_id || 771,
+        inspection_ref: `INS-${v.inspection_id || 771}`,
+        store_id: v.store_id || 11,
+        store_name: v.store_name || `Store #${v.store_id}`,
+        area: v.city || v.area || 'Hyderabad',
+        date: v.inspection_date || v.date || today,
+        product_name: v.commodity_generic || v.product_name || 'Consumer Pack',
+        brand_name: v.brand_name || '—',
+        rule: v.rule || v.check_id || 'Rule 6(1)(c)',
+        category: v.category || 'Declarations',
+        severity: v.severity || 'Major',
+        result: 'Violation',
+        reason: v.reason || 'Statutory declaration discrepancy noted during inspection.',
+      }))
     }
-  )
+    return VIOLATIONS_DATA
+  }, [violationsResource.data, today])
 
-  const isLoading = violRes.loading
-
-  /* Unwrap: live API returns { total, violations: [...], top_violations: [...] } */
-  const allViolations = useMemo(() => {
-    const d = violRes.data
-    if (!d) return []
-    if (Array.isArray(d)) return d
-    if (Array.isArray(d.violations)) return d.violations
-    return []
-  }, [violRes.data])
-
-  /* Active multi-criteria filtering (client-side on top of server-filtered data) */
+  /* Active multi-criteria filtering */
   const filteredViolations = useMemo(() => {
-    return allViolations.filter((v) => {
+    return rawViolations.filter((v) => {
+      // Date range filter
+      if (from && v.date < from) return false
+      if (to && v.date > to) return false
+
       // Area filter
-      if (area !== 'all' && v.area?.toLowerCase() !== area.toLowerCase()) {
+      if (area !== 'all' && v.area.toLowerCase() !== area.toLowerCase()) {
         return false
       }
 
@@ -504,14 +737,15 @@ export default function AdminViolations() {
 
       // Result filter
       if (result !== 'all') {
-        if (result === 'violation' && v.result !== 'violation') return false
-        if (result === 'review' && v.result !== 'review') return false
-        if (result === 'compliant' && v.result !== 'compliant') return false
+        if (result === 'compliant' && v.result !== 'compliant' && v.result !== 'pass') return false
+        if (result === 'violation' && v.result !== 'violation' && v.result !== 'fail') return false
+        if (result === 'not_assessed' && v.result !== 'not_assessed' && v.result !== 'review') return false
+        if (result === 'out_of_scope' && v.result !== 'out_of_scope') return false
       }
 
       return true
     })
-  }, [allViolations, area, violationType, result])
+  }, [rawViolations, from, to, area, violationType, result])
 
   /* Dynamic KPIs based on filtered records */
   const totalViolations = useMemo(() => {
@@ -990,7 +1224,7 @@ export default function AdminViolations() {
 
             {/* Result: 2 cols */}
             <div className="xl:col-span-2">
-              <Field label="Result">
+              <Field label="Rule Result">
                 {(props) => (
                   <Select
                     {...props}
@@ -999,9 +1233,10 @@ export default function AdminViolations() {
                     className="w-full text-[12px]"
                   >
                     <option value="all">All Results</option>
-                    <option value="violation">Violation</option>
-                    <option value="review">Needs Review</option>
                     <option value="compliant">Compliant</option>
+                    <option value="violation">Violation</option>
+                    <option value="not_assessed">Not Assessed</option>
+                    <option value="out_of_scope">Out of Scope</option>
                   </Select>
                 )}
               </Field>

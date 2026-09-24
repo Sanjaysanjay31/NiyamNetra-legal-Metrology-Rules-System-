@@ -46,10 +46,12 @@ import { endpoints, saveBlob } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
 import { useDocumentTitle, useResource } from '../lib/hooks'
+import { reportCalendar, todaysReport } from '../mock/fixtures'
 import {
   Button,
   Callout,
   Card,
+  DemoChip,
   EmptyState,
   Input,
   MetaStat,
@@ -109,17 +111,19 @@ export default function TodaysReport() {
 
   const report = useResource(() => endpoints.reports.today(day === today ? {} : { day }), {
     deps: [day],
+    fallback: todaysReport,
     label: t('reports.today'),
   })
   const calendar = useResource(
     () => endpoints.reports.calendar({ year: month.year, month: month.month }),
     {
       deps: [month.year, month.month],
+      fallback: reportCalendar,
       label: 'report calendar',
     }
   )
 
-  const data = report.data ?? {}
+  const data = report.data ?? todaysReport
   const counts = data.counts ?? {}
   const stores = data.stores ?? []
   const visits = data.inspections ?? 0
@@ -198,6 +202,7 @@ export default function TodaysReport() {
         subtitle="Your own day, exactly as it will appear in the document. Nothing here is an office total — the server scopes this report to your account."
         actions={
           <div className="flex items-center gap-2">
+            {(report.demo || calendar.demo) && <DemoChip />}
             <Button
               variant="secondary"
               icon={Download}
