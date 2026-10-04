@@ -27,6 +27,7 @@ import {
   updateScanScope,
   assessScan,
 } from '../../api/inspections';
+import { persistOriginalCapture, createAnalysisImage } from '../../offline/evidenceManager';
 
 let ImageManipulator = null;
 try { ImageManipulator = require('expo-image-manipulator'); } catch { ImageManipulator = null; }
@@ -91,7 +92,8 @@ export default function InspectionSessionScreen({
 }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [activePanel, setActivePanel] = useState('front');
-  const [panelPhotos, setPanelPhotos] = useState({}); // { front: uri, back: uri, ... }
+  const [panelPhotos, setPanelPhotos] = useState({}); // { front: uri, back: uri, ... } (derived analysis representation for display)
+  const [panelEvidence, setPanelEvidence] = useState({}); // { front: EvidenceRecord, ... } (immutable original camera captures)
   const [capturing, setCapturing] = useState(false);
 
   // Package fields
@@ -141,49 +143,54 @@ export default function InspectionSessionScreen({
     setCapturing(true);
     const tCaptureStart = Date.now();
     try {
-      // No `skipProcessing`: the camera's processing pipeline is what physically
-      // applies the EXIF orientation. Skipping it returns an image that only
-      // carries the orientation tag, which React Native's <Image> ignores (the
-      // thumbnail looks rotated) and the server's OCR does not read either (no
-      // orientation detection on the backend) — so evidence could be stored
-      // sideways and read as sideways text.
+      // Step A: Camera capture. No `skipProcessing`: the camera's processing pipeline physically
+      // applies the EXIF orientation to the initial JPEG stream.
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
       const tCaptureEnd = Date.now();
       if (photo?.uri) {
-        let finalUri = photo.uri;
-        let manipDurationMs = 0;
-        const tManipStart = Date.now();
-        // Fast client-side image compression down to 1600px width (drops 10MB to ~300KB)
-        if (ImageManipulator?.manipulateAsync) {
-          try {
-            const manip = await ImageManipulator.manipulateAsync(
-              photo.uri,
-              [{ resize: { width: 1600 } }],
-              { compress: 0.75, format: ImageManipulator.SaveFormat.JPEG }
-            );
-            if (manip?.uri) finalUri = manip.uri;
-          } catch (manipErr) {
-            console.warn('[Session] Image compression fallback:', manipErr);
-          }
-        }
-        const tManipEnd = Date.now();
-        manipDurationMs = tManipEnd - tManipStart;
-
-        console.log('[PERF_BASELINE] capture_completed', JSON.stringify({
+        // Step B: Immediately establish an immutable local evidence copy in durable storage.
+        // Original bytes are preserved untouched without any downsampling or compression.
+        const tPersistStart = Date.now();
+        const evidenceRecord = await persistOriginalCapture(photo, {
           panel: activePanel,
-          rawUri: photo.uri,
-          processedUri: finalUri,
-          width: photo.width,
-          height: photo.height,
-          captureDurationMs: tCaptureEnd - tCaptureStart,
-          manipDurationMs,
-          totalLocalMs: tManipEnd - tCaptureStart,
+          inspectionId: inspectionSession?.serverInspectionId || inspectionSession?.id || null,
+          scanId: null,
+        });
+        const tPersistEnd = Date.now();
+
+        // Step C: Create a separate, derived analysis image (1600px width, 75% quality JPEG)
+        // for downstream OCR and quality gating. The original capture remains pristine.
+        const tAnalysisStart = Date.now();
+        const processedRecord = await createAnalysisImage(evidenceRecord);
+        const tAnalysisEnd = Date.now();
+
+        const captureMs = tCaptureEnd - tCaptureStart;
+        const persistMs = tPersistEnd - tPersistStart;
+        const analysisMs = tAnalysisEnd - tAnalysisStart;
+
+        console.log('[PERF_EVIDENCE] capture_and_preservation_completed', JSON.stringify({
+          panel: activePanel,
+          originalUri: processedRecord.original_uri,
+          analysisUri: processedRecord.analysis_uri,
+          width: processedRecord.width,
+          height: processedRecord.height,
+          fileSizeBytes: processedRecord.file_size_bytes,
+          captureDurationMs: captureMs,
+          persistOriginalMs: persistMs,
+          createAnalysisMs: analysisMs,
+          totalPreservationMs: tAnalysisEnd - tCaptureStart,
+        }));
+
+        setPanelEvidence((prev) => ({
+          ...prev,
+          [activePanel]: processedRecord,
         }));
 
         setPanelPhotos((prev) => ({
           ...prev,
-          [activePanel]: finalUri,
+          [activePanel]: processedRecord.analysis_uri || processedRecord.original_uri,
         }));
+
         // Auto-advance to next panel
         const idx = PANELS.findIndex((p) => p.key === activePanel);
         if (idx < PANELS.length - 1) {
@@ -191,7 +198,11 @@ export default function InspectionSessionScreen({
         }
       }
     } catch (e) {
-      Alert.alert('Capture failed', 'Could not take photo. Please try again.');
+      console.error('[Session] Capture / evidence preservation error:', e);
+      Alert.alert(
+        'Capture Failed',
+        e?.message || 'Could not preserve photo evidence. Please check storage and try again.'
+      );
     } finally {
       setCapturing(false);
     }
@@ -269,15 +280,18 @@ export default function InspectionSessionScreen({
         }
       }
 
-      // 2. Geometry conforming to Backend/schemas.py PanelGeometry
+      // 2. Honest Geometry: No fabricated dimensions (C14 / Legal Metrology Act)
+      // When no calibrated physical reference (ID-1 card / ₹5 coin) or verified declared
+      // dimension is provided, scale_source must be 'none'. Downstream statutory typography
+      // checks will honestly report 'not_assessed' rather than manufactured facts.
       const geometry = {
         panel_shape: panelShape || 'rectangular',
-        panel_height_mm: panelShape === 'other' ? undefined : 120.0,
-        panel_width_mm: panelShape === 'rectangular' ? 80.0 : undefined,
-        panel_diameter_mm: panelShape === 'cylindrical' ? 65.0 : undefined,
-        total_surface_area_cm2: panelShape === 'other' ? 200.0 : undefined,
-        is_blown_moulded: isBlownMoulded,
-        scale_source: 'declared',
+        panel_height_mm: null,
+        panel_width_mm: null,
+        panel_diameter_mm: null,
+        total_surface_area_cm2: null,
+        is_blown_moulded: Boolean(isBlownMoulded),
+        scale_source: 'none',
       };
 
       // 3. Try server createScan -> scope -> upload images -> assessScan
@@ -303,11 +317,12 @@ export default function InspectionSessionScreen({
 
             // Upload all captured panel images concurrently in parallel for max speed
             const tUploadsStart = Date.now();
-            const uploadTasks = Object.entries(panelPhotos)
-              .filter(([_, uri]) => Boolean(uri))
-              .map(async ([panelKey, uri]) => {
+            const uploadTasks = Object.entries(panelEvidence)
+              .filter(([_, ev]) => Boolean(ev?.analysis_uri || ev?.original_uri))
+              .map(async ([panelKey, ev]) => {
                 const tPStart = Date.now();
-                const res = await uploadScanImage(serverScanId, panelKey, uri);
+                const uploadUri = ev.analysis_uri || ev.original_uri;
+                const res = await uploadScanImage(serverScanId, panelKey, uploadUri);
                 const tPEnd = Date.now();
                 bench.panelUploads[panelKey] = tPEnd - tPStart;
                 return res;
@@ -352,6 +367,18 @@ export default function InspectionSessionScreen({
           batch_number: assessedScan.batch_number || batch.trim() || null,
           geometry,
           panelPhotos: { ...panelPhotos },
+          panelEvidence: { ...panelEvidence },
+          files: Object.values(panelEvidence).filter(Boolean).map((e) => ({
+            uri: e.original_uri,
+            panel: e.panel,
+            original_uri: e.original_uri,
+            analysis_uri: e.analysis_uri,
+            width: e.width,
+            height: e.height,
+            file_size_bytes: e.file_size_bytes,
+            captured_at: e.captured_at,
+            capture_source: e.capture_source,
+          })),
           is_imported: isImported,
           is_perishable: isPerishable,
           has_sticker: hasSticker,
@@ -380,6 +407,18 @@ export default function InspectionSessionScreen({
           batch_number: batch.trim() || null,
           geometry,
           panelPhotos: { ...panelPhotos },
+          panelEvidence: { ...panelEvidence },
+          files: Object.values(panelEvidence).filter(Boolean).map((e) => ({
+            uri: e.original_uri,
+            panel: e.panel,
+            original_uri: e.original_uri,
+            analysis_uri: e.analysis_uri,
+            width: e.width,
+            height: e.height,
+            file_size_bytes: e.file_size_bytes,
+            captured_at: e.captured_at,
+            capture_source: e.capture_source,
+          })),
           is_imported: isImported,
           is_perishable: isPerishable,
           has_sticker: hasSticker,
@@ -404,12 +443,14 @@ export default function InspectionSessionScreen({
 
       // Reset current package inputs for next item
       setPanelPhotos({});
+      setPanelEvidence({});
       setCommodity('');
       setBrand('');
       setBatch('');
       setHasSticker(false);
       setIsImported(false);
       setIsPerishable(false);
+      setIsBlownMoulded(false);
       setActivePanel('front');
 
       // Navigate to findings review for this package
@@ -606,7 +647,10 @@ export default function InspectionSessionScreen({
               <View style={styles.previewOverlay}>
                 <Text style={styles.previewLabel}>{PANELS.find((p) => p.key === activePanel)?.label} Captured</Text>
                 <Pressable
-                  onPress={() => setPanelPhotos((prev) => ({ ...prev, [activePanel]: null }))}
+                  onPress={() => {
+                    setPanelPhotos((prev) => ({ ...prev, [activePanel]: null }));
+                    setPanelEvidence((prev) => ({ ...prev, [activePanel]: null }));
+                  }}
                   style={styles.retakeBtn}
                 >
                   <Text style={styles.retakeText}>Retake Photo</Text>

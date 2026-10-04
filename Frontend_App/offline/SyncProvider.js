@@ -195,10 +195,10 @@ export function SyncProvider({ children }) {
 
                   const geometry = s.geometry || {
                     panel_shape: 'rectangular',
-                    panel_height_mm: 120.0,
-                    panel_width_mm: 80.0,
+                    panel_height_mm: null,
+                    panel_width_mm: null,
                     is_blown_moulded: false,
-                    scale_source: 'declared',
+                    scale_source: 'none',
                   };
 
                   const scanResp = await api.post(
@@ -270,10 +270,10 @@ export function SyncProvider({ children }) {
               if (!scanBody.geometry) {
                 scanBody.geometry = {
                   panel_shape: 'rectangular',
-                  panel_height_mm: 120.0,
-                  panel_width_mm: 80.0,
+                  panel_height_mm: null,
+                  panel_width_mm: null,
                   is_blown_moulded: false,
-                  scale_source: 'declared',
+                  scale_source: 'none',
                 };
               }
 

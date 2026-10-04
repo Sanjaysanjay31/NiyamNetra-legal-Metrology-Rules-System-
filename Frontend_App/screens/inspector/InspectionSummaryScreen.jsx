@@ -108,16 +108,20 @@ export default function InspectionSummaryScreen({
         notes: officerNotes,
         is_synced: liveSubmitted,
         scans: packages.map((p) => ({
-          panelUris: Object.values(p.panelPhotos || {}),
+          panelUris: p.panelEvidence
+            ? Object.values(p.panelEvidence).map((e) => e?.original_uri).filter(Boolean)
+            : Object.values(p.panelPhotos || {}),
+          panelEvidence: p.panelEvidence,
+          files: p.files,
           commodity_generic: p.commodity_generic,
           brand_name: p.brand_name,
           batch_number: p.batch_number,
           geometry: p.geometry || {
-            panel_shape: 'rectangular',
-            panel_height_mm: 120.0,
-            panel_width_mm: 80.0,
-            is_blown_moulded: false,
-            scale_source: 'declared',
+            panel_shape: p.panelShape || 'rectangular',
+            panel_height_mm: null,
+            panel_width_mm: null,
+            is_blown_moulded: Boolean(p.isBlownMoulded),
+            scale_source: 'none',
           },
           is_imported: p.is_imported,
           is_perishable: p.is_perishable,

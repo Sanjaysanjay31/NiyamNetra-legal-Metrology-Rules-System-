@@ -129,6 +129,11 @@ class PanelGeometry(BaseModel):
 
     @model_validator(mode="after")
     def _shape_needs_its_dimensions(self) -> PanelGeometry:
+        if self.scale_source in ("none", "id1_card", "coin_5inr"):
+            # When scale_source is 'none', dimensions are not declared and cannot be fabricated.
+            # Millimetre typography rules will evaluate to 'not_assessed' (C14 / Rule 7).
+            # When scale_source is a reference object (ID-1 / 5-INR coin), scale comes from the object.
+            return self
         if self.panel_shape == "rectangular" and not (
             self.panel_height_mm and self.panel_width_mm
         ):

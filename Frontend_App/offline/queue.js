@@ -99,13 +99,13 @@ async function copyIntoPending(uris, panels, idPrefix) {
     if (isWeb) {
       // No filesystem on web: keep the original uri (blob/object URL) plus
       // the panel label so the sync pass still knows what to upload.
-      files.push({ uri, panel });
+      files.push({ uri, panel, original_uri: uri });
       continue;
     }
     const dest = DIR + uniqueName(idPrefix);
     try {
       await FileSystem.copyAsync({ from: uri, to: dest });
-      files.push({ uri: dest, panel });
+      files.push({ uri: dest, panel, original_uri: dest });
     } catch (e) {
       console.warn('[queue] copy failed, marking incomplete:', uri, e?.message || e);
       incompleteFiles.push(uri);
@@ -133,21 +133,32 @@ export async function enqueueInspection({ store_id, transaction_type, latitude, 
   for (let sIdx = 0; sIdx < scanList.length; sIdx++) {
     const s = scanList[sIdx];
     const sId = `${id}-scan-${sIdx + 1}`;
-    const panelUris = s.panelUris || (s.panelPhotos ? Object.values(s.panelPhotos) : []);
-    const panels = s.panels || (s.panelPhotos ? Object.keys(s.panelPhotos) : panelUris.map((_, i) => (
-      ['front', 'back', 'mrp', 'batch'][i] || `extra-${i - 3}`
-    )));
+    let panelUris = [];
+    let panels = [];
+    if (s.panelEvidence && Object.keys(s.panelEvidence).length > 0) {
+      // Authoritative original camera captures take absolute priority over analysis images
+      panels = Object.keys(s.panelEvidence);
+      panelUris = panels.map((p) => s.panelEvidence[p]?.original_uri || s.panelPhotos?.[p]);
+    } else if (s.files && s.files.length > 0 && s.files[0]?.original_uri) {
+      panels = s.files.map((f) => f.panel);
+      panelUris = s.files.map((f) => f.original_uri || f.uri);
+    } else {
+      panelUris = s.panelUris || (s.panelPhotos ? Object.values(s.panelPhotos) : []);
+      panels = s.panels || (s.panelPhotos ? Object.keys(s.panelPhotos) : panelUris.map((_, i) => (
+        ['front', 'back', 'mrp', 'batch'][i] || `extra-${i - 3}`
+      )));
+    }
     const { files, incompleteFiles } = await copyIntoPending(panelUris, panels, sId);
     allFiles.push(...files);
     allIncomplete.push(...incompleteFiles);
 
-    // Default compliant rectangular geometry if none provided (prevents 422 Unprocessable Entity)
+    // Honest geometry without fabricated dimensions (scale_source: none)
     const geometry = s.geometry || {
       panel_shape: 'rectangular',
-      panel_height_mm: 120.0,
-      panel_width_mm: 80.0,
+      panel_height_mm: null,
+      panel_width_mm: null,
       is_blown_moulded: false,
-      scale_source: 'declared',
+      scale_source: 'none',
     };
 
     processedScans.push({
@@ -189,10 +200,10 @@ export async function enqueueScan(inspectionLocalId, { commodity_generic, brand_
   const id = newId('scan');
   const geom = geometry || {
     panel_shape: 'rectangular',
-    panel_height_mm: 120.0,
-    panel_width_mm: 80.0,
+    panel_height_mm: null,
+    panel_width_mm: null,
     is_blown_moulded: false,
-    scale_source: 'declared',
+    scale_source: 'none',
   };
   const { files, incompleteFiles } = await copyIntoPending(
     panelUris,
