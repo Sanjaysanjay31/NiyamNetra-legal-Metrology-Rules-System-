@@ -189,6 +189,9 @@ class ScanImageOut(ORMModel):
     rectified: bool
     residual_tilt_deg: float | None = None
     blur_variance: float | None = None
+    similarity_status: str | None = None
+    duplicate_of_image_id: int | None = None
+    hamming_distance: int | None = None
 
 
 class VerdictCounts(BaseModel):

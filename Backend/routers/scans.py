@@ -124,6 +124,11 @@ async def upload_image(
               .filter(ScanImage.scan_id == scan.id, ScanImage.sha256 == _sha)
               .first())
     if _dup is not None:
+        from audit import append_audit as _append_audit
+        _append_audit(db, inspection_id=scan.inspection_id, scan_id=scan.id,
+                      user_id=user.id, action="image_replayed",
+                      new_value=f"{_dup.panel}:{_sha[:16]}",
+                      reason="Same-scan exact SHA-256 replay (idempotent)")
         response.status_code = status.HTTP_200_OK
         return {
             "image_id": _dup.id,
@@ -132,7 +137,22 @@ async def upload_image(
             "quality_note": "already stored (replayed upload)",
             "suggested_corners": None,
             "replayed": True,
+            "similarity_status": "exact_replay",
+            "duplicate_of_image_id": _dup.id,
+            "hamming_distance": 0,
         }
+
+    # Cross-scan exact duplicate detection (Section 7 & 17: review signal, not automatic fraud)
+    _cross_dup = (db.query(ScanImage)
+                    .filter(ScanImage.scan_id != scan.id, ScanImage.sha256 == _sha)
+                    .first())
+    _initial_similarity = "pending"
+    _dup_img_id = None
+    _hamming_dist = None
+    if _cross_dup is not None:
+        _initial_similarity = "exact_replay"
+        _dup_img_id = _cross_dup.id
+        _hamming_dist = 0
 
     from image_processor import (
         PHASH_BANDS, assess_quality, phash_bands, read_capture_time,
@@ -218,22 +238,9 @@ async def upload_image(
     quality = assess_quality(bgr)
     t_quality_end = time.perf_counter()
 
+    # pHash is deferred to non-blocking background analysis (Section 8 & 25)
     t_phash_start = time.perf_counter()
-    try:
-        phash_hex, bands = phash_bands(stored.path)
-    except Exception:
-        # A hash failure is a client-visible 422, never a 500: the file is
-        # stored but unhashable (e.g. truncated write); remove orphan.
-        try:
-            from pathlib import Path as _P2
-            _p2 = _P2(str(stored.path))
-            if _p2.exists():
-                _p2.unlink()
-        except Exception:
-            pass
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="Image could not be hashed")
-    t_phash_end = time.perf_counter()
+    t_phash_end = t_phash_start
 
     # Sequence race: (scan_id, panel, sequence) is unique. Two concurrent
     # uploads can read the same COUNT; retry with max+1 requery (3 attempts),
@@ -259,10 +266,12 @@ async def upload_image(
                 file_path=str(stored.path), byte_size=stored.byte_size,
                 width_px=stored.width_px, height_px=stored.height_px,
                 mime_type=stored.mime_type, sha256=stored.sha256,
-                phash=phash_hex,
-                **{f"phash_b{i}": bands[i] for i in range(PHASH_BANDS)},
+                phash=None,
                 captured_at=read_capture_time(raw),
                 blur_variance=quality.blur_variance, glare_ratio=quality.glare_ratio,
+                similarity_status=_initial_similarity,
+                duplicate_of_image_id=_dup_img_id,
+                hamming_distance=_hamming_dist,
             )
             db.add(img)
             db.commit()
@@ -280,6 +289,28 @@ async def upload_image(
     append_audit(db, inspection_id=scan.inspection_id, scan_id=scan.id,
                  user_id=user.id, action="image_uploaded",
                  new_value=f"{normalized_panel}:{stored.sha256[:16]}")
+    if _cross_dup is not None:
+        append_audit(db, inspection_id=scan.inspection_id, scan_id=scan.id,
+                     user_id=user.id, action="cross_scan_exact_duplicate_detected",
+                     new_value=f"{normalized_panel}:matched_img_{_cross_dup.id}",
+                     reason="Exact SHA-256 match found in previous scan (review signal)")
+
+    # Dispatch non-blocking background similarity analysis (pHash & cross-scan near duplicate search)
+    import threading
+    from image_processor import process_image_similarity_background
+    threading.Thread(
+        target=process_image_similarity_background,
+        kwargs={
+            "image_id": img.id,
+            "file_path_str": str(stored.path),
+            "scan_id": scan.id,
+            "inspection_id": scan.inspection_id,
+            "panel": normalized_panel,
+            "user_id": user.id,
+            "db": db,
+        },
+        daemon=True,
+    ).start()
 
     # A poor-quality image is accepted and flagged. It is NOT rejected: doing
     # so throws away the capture and leaves no record that an unreadable
@@ -345,6 +376,9 @@ async def upload_image(
         "residual_tilt_deg": _geom_meta.get("residual_tilt_deg", 0.0),
         "rectified_width": _geom_meta.get("rectified_width"),
         "rectified_height": _geom_meta.get("rectified_height"),
+        "similarity_status": _initial_similarity,
+        "duplicate_of_image_id": _dup_img_id,
+        "hamming_distance": _hamming_dist,
     }
 
 
@@ -598,12 +632,17 @@ def verify_evidence(scan: Scan = Depends(owned_scan), db: Session = Depends(get_
     for img in db.query(ScanImage).filter(ScanImage.scan_id == scan.id).all():
         path = Path(img.file_path)
         exists = path.exists()
+        matches = exists and verify_stored_image(path, img.sha256)
         results.append({
             "image_id": img.id,
             "panel": img.panel,
             "file_present": exists,
             "sha256_recorded": img.sha256,
-            "sha256_matches": exists and verify_stored_image(path, img.sha256),
+            "sha256_matches": matches,
+            "tamper_evident": matches,
+            "similarity_status": img.similarity_status or "unique",
+            "duplicate_of_image_id": img.duplicate_of_image_id,
+            "hamming_distance": img.hamming_distance,
             "thumbnail_url": f"/scans/{scan.id}/images/{img.id}/thumbnail",
         })
     return {

@@ -603,8 +603,14 @@ def hamming(a: str, b: str) -> int:
     return bin(int(a, 16) ^ int(b, 16)).count("1")
 
 
-def find_near_duplicates(db, phash_hex: str, bands, exclude_scan_id: int) -> list[int]:
-    """Returns scan_image ids within the near-duplicate threshold."""
+def find_near_duplicates_with_distances(
+    db, phash_hex: str, bands: tuple[int, ...], exclude_scan_id: int, panel: str | None = None
+) -> list[tuple[int, int]]:
+    """Returns list of (scan_image_id, hamming_distance) within PHASH_NEAR_DUPLICATE threshold.
+
+    If panel is provided, restricts candidate search to matching panel semantics (Section 19).
+    Sorted by ascending hamming distance (closest visual match first).
+    """
     from functools import reduce
     from operator import or_
 
@@ -616,15 +622,123 @@ def find_near_duplicates(db, phash_hex: str, bands, exclude_scan_id: int) -> lis
     )
     band_cols = [getattr(ScanImage, f"phash_b{i}") for i in range(PHASH_BANDS)]
     band_match = reduce(or_, (col == val for col, val in zip(band_cols, bands)))
-    candidates = (
-        db.query(ScanImage.id, ScanImage.phash)
-        .filter(ScanImage.scan_id != exclude_scan_id, band_match)
-        .all()
+    query = db.query(ScanImage.id, ScanImage.phash).filter(
+        ScanImage.scan_id != exclude_scan_id, band_match
     )
-    return [
-        cid for cid, ph in candidates
-        if ph and hamming(phash_hex, ph) <= PHASH_NEAR_DUPLICATE
-    ]
+    if panel:
+        query = query.filter(ScanImage.panel == panel)
+    candidates = query.all()
+    matches = []
+    for cid, ph in candidates:
+        if ph:
+            dist = hamming(phash_hex, ph)
+            if dist <= PHASH_NEAR_DUPLICATE:
+                matches.append((cid, dist))
+    matches.sort(key=lambda x: x[1])
+    return matches
+
+
+def find_near_duplicates(
+    db, phash_hex: str, bands: tuple[int, ...], exclude_scan_id: int, panel: str | None = None
+) -> list[int]:
+    """Returns scan_image ids within the near-duplicate threshold."""
+    return [cid for cid, _ in find_near_duplicates_with_distances(db, phash_hex, bands, exclude_scan_id, panel)]
+
+
+def process_image_similarity_background(
+    image_id: int,
+    file_path_str: str,
+    scan_id: int,
+    inspection_id: int,
+    panel: str,
+    user_id: int | None = None,
+    db=None,
+) -> dict:
+    """Asynchronously compute pHash, evaluate cross-scan near-duplicates, and update ScanImage.
+
+    Fails safely per Section 23: an error never invalidates the evidence or fails the inspection.
+    """
+    from pathlib import Path
+    from audit import append_audit
+    from models import ScanImage
+
+    session = None
+    should_close = False
+    try:
+        if db is not None:
+            try:
+                if db.is_active:
+                    session = db
+            except Exception:
+                session = None
+        if session is None:
+            from database import SessionLocal
+            session = SessionLocal()
+            should_close = True
+
+        p = Path(file_path_str)
+        if not p.exists():
+            return {"status": "analysis_failed", "reason": "Evidence file missing"}
+
+        # 1. Compute pHash
+        phash_hex, bands = phash_bands(p)
+
+        # 2. Query near duplicates in matching panel
+        matches = find_near_duplicates_with_distances(session, phash_hex, bands, exclude_scan_id=scan_id, panel=panel)
+
+        img = session.query(ScanImage).filter(ScanImage.id == image_id).first()
+        if not img:
+            return {"status": "analysis_failed", "reason": "ScanImage not found"}
+
+        img.phash = phash_hex
+        for i in range(PHASH_BANDS):
+            setattr(img, f"phash_b{i}", bands[i])
+
+        if matches:
+            best_id, best_dist = matches[0]
+            # Near duplicate is a review signal, not an automatic violation
+            img.similarity_status = "near_duplicate"
+            img.duplicate_of_image_id = best_id
+            img.hamming_distance = best_dist
+            append_audit(
+                session,
+                inspection_id=inspection_id,
+                scan_id=scan_id,
+                user_id=user_id,
+                action="near_duplicate_detected",
+                new_value=f"{panel}:matched_img_{best_id}:dist_{best_dist}",
+                reason="Cross-scan perceptual hash match (review signal)",
+            )
+        else:
+            if img.similarity_status != "exact_replay":
+                img.similarity_status = "unique"
+                img.duplicate_of_image_id = None
+                img.hamming_distance = None
+
+        session.commit()
+        return {
+            "status": img.similarity_status,
+            "phash": phash_hex,
+            "matched_image_id": img.duplicate_of_image_id,
+            "hamming_distance": img.hamming_distance,
+        }
+    except Exception as e:
+        if session:
+            try:
+                session.rollback()
+                img = session.query(ScanImage).filter(ScanImage.id == image_id).first()
+                if img:
+                    img.similarity_status = "analysis_failed"
+                    session.commit()
+            except Exception:
+                pass
+        return {"status": "analysis_failed", "reason": str(e)}
+    finally:
+        if should_close and session:
+            try:
+                session.close()
+            except Exception:
+                pass
 
 def read_capture_time(raw: bytes) -> "datetime | None":
     import io

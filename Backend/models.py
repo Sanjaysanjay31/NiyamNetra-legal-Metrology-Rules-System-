@@ -256,6 +256,9 @@ class ScanImage(Base):
     residual_tilt_deg: Mapped[float | None] = mapped_column(Float)
     blur_variance: Mapped[float | None] = mapped_column(Float)
     glare_ratio: Mapped[float | None] = mapped_column(Float)
+    similarity_status: Mapped[str | None] = mapped_column(String(32), default=None)
+    duplicate_of_image_id: Mapped[int | None] = mapped_column(ForeignKey("scan_images.id"), index=True, default=None)
+    hamming_distance: Mapped[int | None] = mapped_column(Integer, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     scan: Mapped[Scan] = relationship(back_populates="images")
