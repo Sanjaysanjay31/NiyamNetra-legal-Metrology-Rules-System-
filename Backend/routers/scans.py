@@ -290,9 +290,18 @@ async def upload_image(
     # assess; None means "frame it manually".
     t_quad_start = time.perf_counter()
     _corners = None
+    _geom_meta = {
+        "geometry_status": "unavailable",
+        "rectification_status": "skipped",
+        "confidence": 0.0,
+        "perspective_severity": "unusable",
+        "residual_tilt_deg": 0.0,
+        "rectified_width": None,
+        "rectified_height": None,
+    }
     try:
-        from image_processor import detect_panel_quad
-        _q = detect_panel_quad(bgr)
+        from image_processor import detect_candidate_quad
+        _q, _geom_meta = detect_candidate_quad(bgr)
         if _q is not None:
             _corners = [[round(float(x), 1), round(float(y), 1)] for x, y in _q.tolist()]
     except Exception:
@@ -329,6 +338,13 @@ async def upload_image(
         "usable": quality.usable,
         "quality_note": quality.reason,
         "suggested_corners": _corners,
+        "geometry_status": _geom_meta.get("geometry_status", "unavailable"),
+        "rectification_status": _geom_meta.get("rectification_status", "skipped"),
+        "geometry_confidence": _geom_meta.get("confidence", 0.0),
+        "perspective_severity": _geom_meta.get("perspective_severity", "unusable"),
+        "residual_tilt_deg": _geom_meta.get("residual_tilt_deg", 0.0),
+        "rectified_width": _geom_meta.get("rectified_width"),
+        "rectified_height": _geom_meta.get("rectified_height"),
     }
 
 
@@ -951,14 +967,35 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     t_rectify_start = t_quad_start
     t_rectify_end = t_quad_start
     try:
-        _quad = detect_panel_quad(bgr)
+        from image_processor import detect_candidate_quad, safe_rectify
+        _quad, _geom_meta = detect_candidate_quad(bgr)
         t_quad_end = time.perf_counter()
         if _quad is not None:
             t_rectify_start = time.perf_counter()
-            _rect, _tilt = rectify(bgr, _quad)
+            _rect, _tilt, _rect_meta = safe_rectify(bgr, _quad)
             t_rectify_end = time.perf_counter()
-            if _rect is not None and getattr(_rect, "shape", (0,))[0] > 0:
+            if _rect_meta.get("rectification_status") == "applied" and getattr(_rect, "shape", (0,))[0] > 0:
                 _measure = _rect
+                front.rectified = True
+                front.residual_tilt_deg = _tilt
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            else:
+                front.rectified = False
+                front.residual_tilt_deg = _tilt if _tilt is not None else None
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+        else:
+            front.rectified = False
+            front.residual_tilt_deg = None
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
     except Exception:
         _measure = bgr
 

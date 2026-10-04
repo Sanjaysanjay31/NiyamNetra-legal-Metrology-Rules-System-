@@ -217,27 +217,269 @@ def assess_quality(bgr: np.ndarray) -> Quality:
     return Quality(blur, glare, luma, usable=reason is None, reason=reason)
 
 
+@dataclass(slots=True)
+class GeometryResult:
+    corners: np.ndarray | None
+    geometry_status: str       # 'detected' | 'unavailable' | 'failed'
+    rectification_status: str  # 'applied' | 'skipped' | 'failed'
+    confidence: float          # 0.0 to 1.0
+    perspective_severity: str  # 'near_front_facing' | 'moderate' | 'severe' | 'unusable'
+    residual_tilt_deg: float   # degrees
+    rectified_width: int | None
+    rectified_height: int | None
+    reason: str | None
+
+
+def order_corners_robust(pts: np.ndarray) -> np.ndarray:
+    """Order 4 points as tl, tr, br, bl (clockwise starting from top-left).
+
+    Guarantees consistent ordering, prevents self-intersection (bowtie),
+    and handles rotated boxes robustly.
+    """
+    pts = np.asarray(pts, dtype=np.float32).reshape(4, 2)
+    cx, cy = pts.mean(axis=0)
+    angles = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
+    order = np.argsort(angles)
+    sorted_pts = pts[order]
+
+    tl_idx = np.argmin(sorted_pts.sum(axis=1))
+    ordered = np.roll(sorted_pts, -tl_idx, axis=0)
+
+    v1 = ordered[1] - ordered[0]
+    v2 = ordered[2] - ordered[1]
+    cross = v1[0] * v2[1] - v1[1] * v2[0]
+    if cross < 0:
+        ordered = np.array([ordered[0], ordered[3], ordered[2], ordered[1]], dtype=np.float32)
+
+    tl, tr, br, bl = ordered
+    if tr[0] < tl[0] or bl[1] < tl[1]:
+        s = pts.sum(axis=1)
+        d = np.diff(pts, axis=1).ravel()
+        ordered = np.array([pts[np.argmin(s)], pts[np.argmin(d)],
+                            pts[np.argmax(s)], pts[np.argmax(d)]], dtype=np.float32)
+    return ordered
+
+
+_order_corners = order_corners_robust
+
+
+def validate_quadrilateral(quad: np.ndarray, img_w: int, img_h: int) -> tuple[bool, str | None, dict]:
+    """Validate candidate quadrilateral against geometric safety and distortion constraints."""
+    meta = {
+        "area_ratio": 0.0,
+        "aspect_ratio": 1.0,
+        "residual_tilt_deg": 0.0,
+        "perspective_severity": "unusable",
+        "confidence": 0.0,
+    }
+    if quad is None:
+        return False, "Candidate quad is None", meta
+
+    quad = np.asarray(quad, dtype=np.float32).reshape(4, 2)
+    if not np.all(np.isfinite(quad)):
+        return False, "Candidate quad contains NaN or Inf coordinates", meta
+
+    # 1. Boundary safety: check if corners are within frame (with 2% margin)
+    x_min, x_max = -0.02 * img_w, 1.02 * img_w
+    y_min, y_max = -0.02 * img_h, 1.02 * img_h
+    if (quad[:, 0] < x_min).any() or (quad[:, 0] > x_max).any() or \
+       (quad[:, 1] < y_min).any() or (quad[:, 1] > y_max).any():
+        return False, "Corners exceed image boundary tolerance", meta
+
+    # Clamp corners safely to image domain
+    quad[:, 0] = np.clip(quad[:, 0], 0.0, float(max(0, img_w - 1)))
+    quad[:, 1] = np.clip(quad[:, 1], 0.0, float(max(0, img_h - 1)))
+
+    # 2. Strict convexity check
+    if not cv2.isContourConvex(quad.astype(np.int32)):
+        return False, "Quadrilateral is not convex", meta
+
+    # 3. Area check
+    area = float(cv2.contourArea(quad))
+    frame_area = float(img_w * img_h)
+    if area <= 0.0:
+        return False, "Candidate area is zero or negative", meta
+    area_ratio = area / (frame_area + 1e-6)
+    meta["area_ratio"] = round(area_ratio, 4)
+    if area_ratio < 0.05:
+        return False, f"Candidate area too small ({area_ratio:.1%} of frame, min 5%)", meta
+    if area_ratio > 0.98:
+        return False, f"Candidate area too large ({area_ratio:.1%} of frame, max 98%)", meta
+
+    # 4. Interior angles & non-collinearity
+    angles = []
+    for i in range(4):
+        p_prev = quad[(i - 1) % 4]
+        p_curr = quad[i]
+        p_next = quad[(i + 1) % 4]
+        v1 = p_prev - p_curr
+        v2 = p_next - p_curr
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+        if norm1 < 1e-4 or norm2 < 1e-4:
+            return False, "Zero-length edge detected", meta
+        cos_ang = np.dot(v1, v2) / (norm1 * norm2)
+        ang = np.degrees(np.arccos(np.clip(cos_ang, -1.0, 1.0)))
+        angles.append(ang)
+        if ang < 35.0 or ang > 145.0:
+            return False, f"Degenerate corner angle {ang:.1f}° (must be between 35° and 145°)", meta
+
+    # 5. Edge lengths & opposite side ratios
+    tl, tr, br, bl = quad
+    l_top = float(np.linalg.norm(tr - tl))
+    l_right = float(np.linalg.norm(br - tr))
+    l_bot = float(np.linalg.norm(bl - br))
+    l_left = float(np.linalg.norm(tl - bl))
+    min_edge = min(l_top, l_right, l_bot, l_left)
+    min_allowed_edge = max(25.0, 0.07 * min(img_w, img_h))
+    if min_edge < min_allowed_edge:
+        return False, f"Edge too short ({min_edge:.1f}px, min {min_allowed_edge:.1f}px)", meta
+
+    r_horiz = max(l_top, l_bot) / (min(l_top, l_bot) + 1e-6)
+    r_vert = max(l_left, l_right) / (min(l_left, l_right) + 1e-6)
+    if r_horiz > 3.0 or r_vert > 3.0:
+        return False, f"Extreme perspective asymmetry (horiz {r_horiz:.1f}, vert {r_vert:.1f})", meta
+
+    # 6. Diagonal ratio
+    d1 = float(np.linalg.norm(br - tl))
+    d2 = float(np.linalg.norm(bl - tr))
+    r_diag = max(d1, d2) / (min(d1, d2) + 1e-6)
+    if r_diag > 2.8:
+        return False, f"Extreme diagonal distortion ratio ({r_diag:.1f})", meta
+
+    # 7. Aspect ratio (per §9, allows skinny/long packs up to 8.0, rejects pathological slivers)
+    w_est = max(l_top, l_bot)
+    h_est = max(l_left, l_right)
+    ar = max(w_est, h_est) / (min(w_est, h_est) + 1e-6)
+    meta["aspect_ratio"] = round(ar, 2)
+    if ar > 8.0:
+        return False, f"Pathological aspect ratio ({ar:.1f})", meta
+
+    # 8. Perspective tilt & severity
+    top_vec = tr - tl
+    left_vec = bl - tl
+    top_tilt = abs(float(np.degrees(np.arctan2(top_vec[1], top_vec[0]))))
+    top_tilt = min(top_tilt, 180.0 - top_tilt)
+    left_tilt = abs(float(np.degrees(np.arctan2(left_vec[0], left_vec[1]))))
+    left_tilt = min(left_tilt, 180.0 - left_tilt)
+    tilt = max(top_tilt, left_tilt)
+    meta["residual_tilt_deg"] = round(tilt, 2)
+
+    if tilt < 10.0:
+        severity = "near_front_facing"
+    elif tilt < 25.0:
+        severity = "moderate"
+    elif tilt < 40.0:
+        severity = "severe"
+    else:
+        severity = "unusable"
+    meta["perspective_severity"] = severity
+
+    # 9. Confidence scoring
+    ortho_penalty = float(np.mean([abs(a - 90.0) for a in angles])) / 90.0
+    ratio_penalty = (max(r_horiz, r_vert) - 1.0) / 2.0
+    conf = max(0.1, min(1.0, 1.0 - 0.5 * ortho_penalty - 0.3 * ratio_penalty))
+    meta["confidence"] = round(conf, 3)
+
+    return True, None, meta
+
+
+def safe_rectify(bgr: np.ndarray, corners: np.ndarray, max_dim: int = 1600) -> tuple[np.ndarray, float, dict]:
+    """Safe perspective rectification onto a fronto-parallel plane.
+
+    Validates source geometry, destination bounds, and homography condition.
+    Never mutates original evidence; produces a bounded derived representation.
+    """
+    default_meta = {
+        "geometry_status": "unavailable",
+        "rectification_status": "skipped",
+        "confidence": 0.0,
+        "perspective_severity": "unusable",
+        "residual_tilt_deg": 0.0,
+        "rectified_width": None,
+        "rectified_height": None,
+        "reason": "Invalid input",
+    }
+    if bgr is None or getattr(bgr, "size", 0) == 0:
+        default_meta["reason"] = "Empty or null image"
+        return bgr, 0.0, default_meta
+
+    h_img, w_img = bgr.shape[:2]
+    if corners is None:
+        default_meta["reason"] = "No candidate corners provided"
+        return bgr, 0.0, default_meta
+
+    try:
+        ordered = order_corners_robust(corners)
+    except Exception as e:
+        default_meta["geometry_status"] = "failed"
+        default_meta["rectification_status"] = "failed"
+        default_meta["reason"] = f"Corner ordering failed: {e}"
+        return bgr, 0.0, default_meta
+
+    valid, reason, meta = validate_quadrilateral(ordered, w_img, h_img)
+    if not valid:
+        geom_status = "unavailable" if ("small" in (reason or "") or "None" in (reason or "")) else "failed"
+        meta["geometry_status"] = geom_status
+        meta["rectification_status"] = "skipped"
+        meta["rectified_width"] = None
+        meta["rectified_height"] = None
+        meta["reason"] = reason
+        return bgr, 0.0, meta
+
+    tl, tr, br, bl = ordered
+    w_top = float(np.linalg.norm(tr - tl))
+    w_bot = float(np.linalg.norm(br - bl))
+    h_left = float(np.linalg.norm(bl - tl))
+    h_right = float(np.linalg.norm(br - tr))
+
+    w_dst = int(round(np.clip(max(w_top, w_bot), 50, max_dim)))
+    h_dst = int(round(np.clip(max(h_left, h_right), 50, max_dim)))
+
+    if meta.get("perspective_severity") == "unusable":
+        meta["geometry_status"] = "detected"
+        meta["rectification_status"] = "skipped"
+        meta["rectified_width"] = None
+        meta["rectified_height"] = None
+        meta["reason"] = f"Perspective tilt {meta.get('residual_tilt_deg')}° is unusable (>= 40°)"
+        return bgr, meta.get("residual_tilt_deg", 0.0), meta
+
+    dst = np.array([[0, 0], [w_dst - 1, 0], [w_dst - 1, h_dst - 1], [0, h_dst - 1]], dtype=np.float32)
+    try:
+        M = cv2.getPerspectiveTransform(ordered, dst)
+        if not np.all(np.isfinite(M)):
+            raise ValueError("Homography matrix contains NaN or Inf")
+        det = float(np.linalg.det(M))
+        cond = float(np.linalg.cond(M))
+        if abs(det) < 1e-9 or abs(det) > 1e12 or cond > 1e6 or np.isnan(cond):
+            raise ValueError(f"Numerically unstable homography: det={det:.2e}, cond={cond:.2e}")
+
+        warped = cv2.warpPerspective(bgr, M, (w_dst, h_dst), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        meta["geometry_status"] = "detected"
+        meta["rectification_status"] = "applied"
+        meta["rectified_width"] = w_dst
+        meta["rectified_height"] = h_dst
+        meta["reason"] = None
+        return warped, meta.get("residual_tilt_deg", 0.0), meta
+    except Exception as e:
+        meta["geometry_status"] = "detected"
+        meta["rectification_status"] = "failed"
+        meta["confidence"] = 0.0
+        meta["rectified_width"] = None
+        meta["rectified_height"] = None
+        meta["reason"] = f"Rectification failed: {e}"
+        return bgr, meta.get("residual_tilt_deg", 0.0), meta
+
+
 def rectify(bgr: np.ndarray, corners: np.ndarray) -> tuple[np.ndarray, float]:
     """Four-point homography onto a fronto-parallel plane.
 
-    corners: (4,2) float32, in order tl, tr, br, bl — from the YOLOv8 panel
-    detector or from the operator's on-screen adjustment.
+    corners: (4,2) float32, in order tl, tr, br, bl.
     Returns the rectified image and the residual tilt in degrees.
+    Preserves backward compatibility while utilizing safe_rectify.
     """
-    corners = np.asarray(corners, dtype=np.float32).reshape(4, 2)
-    tl, tr, br, bl = corners
-
-    w = int(round(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl))))
-    h = int(round(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr))))
-    dst = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
-
-    M = cv2.getPerspectiveTransform(corners, dst)
-    warped = cv2.warpPerspective(bgr, M, (w, h), flags=cv2.INTER_CUBIC)
-
-    # Residual tilt: how far the top edge still departs from horizontal.
-    top = tr - tl
-    tilt = abs(float(np.degrees(np.arctan2(top[1], top[0]))))
-    return warped, min(tilt, 180.0 - tilt)
+    warped, tilt, _ = safe_rectify(bgr, corners)
+    return warped, tilt
 
 
 @dataclass(slots=True)
@@ -427,49 +669,120 @@ def estimate_contrast_ratio(bgr) -> float | None:
         return None
 
 
-def _order_corners(pts: np.ndarray) -> np.ndarray:
-    """Order 4 points as tl, tr, br, bl (sums/differences method)."""
-    s = pts.sum(axis=1)
-    d = np.diff(pts, axis=1).ravel()
-    return np.array([pts[np.argmin(s)], pts[np.argmin(d)],
-                     pts[np.argmax(s)], pts[np.argmax(d)]], dtype=np.float32)
+def detect_candidate_quad(bgr: np.ndarray) -> tuple[np.ndarray | None, dict]:
+    """Authoritative candidate quadrilateral detector (no YOLO or torch required).
+
+    Finds the candidate packaging panel quadrilateral using multi-pass edge
+    detection, contour approximation, geometric validation, and composite scoring.
+    Returns (ordered_corners, metadata). If no valid candidate is found, returns
+    (None, metadata_with_unavailable_status).
+    """
+    default_meta = {
+        "geometry_status": "unavailable",
+        "rectification_status": "skipped",
+        "confidence": 0.0,
+        "perspective_severity": "unusable",
+        "residual_tilt_deg": 0.0,
+        "rectified_width": None,
+        "rectified_height": None,
+        "reason": "No candidate quadrilateral found",
+    }
+    if bgr is None or getattr(bgr, "size", 0) == 0:
+        default_meta["reason"] = "Empty or null image"
+        return None, default_meta
+
+    h, w = bgr.shape[:2]
+    frame = float(h * w)
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Multi-pass Canny thresholds: standard contrast (50, 150), then sensitive low-contrast (20, 70)
+    passes = [(50, 150), (20, 70)]
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    img_center = np.array([w / 2.0, h / 2.0], dtype=np.float32)
+    diag_img = float(np.hypot(w, h))
+
+    best_quad = None
+    best_score = -1.0
+    best_meta = default_meta
+    seen_quads = []
+
+    for low_th, high_th in passes:
+        edges = cv2.Canny(blurred, low_th, high_th)
+        dilated = cv2.dilate(edges, kernel, iterations=1)
+        contours, _ = cv2.findContours(dilated, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in contours:
+            area = float(cv2.contourArea(cnt))
+            if area < 0.05 * frame or area > 0.98 * frame:
+                continue
+            peri = cv2.arcLength(cnt, True)
+
+            for eps in (0.02, 0.03, 0.04):
+                approx = cv2.approxPolyDP(cnt, eps * peri, True)
+                if len(approx) != 4 or not cv2.isContourConvex(approx):
+                    continue
+
+                raw_pts = approx.reshape(4, 2).astype(np.float32)
+                try:
+                    ordered = order_corners_robust(raw_pts)
+                except Exception:
+                    continue
+
+                # Deduplicate similar quads
+                is_duplicate = False
+                for prev in seen_quads:
+                    if np.max(np.abs(prev - ordered)) < 15.0:
+                        is_duplicate = True
+                        break
+                if is_duplicate:
+                    continue
+                seen_quads.append(ordered)
+
+                valid, reason, meta = validate_quadrilateral(ordered, w, h)
+                if not valid:
+                    continue
+
+                # Scoring criteria:
+                # 1. Centrality: distance of quad center from image center
+                q_center = ordered.mean(axis=0)
+                dist_center = float(np.linalg.norm(q_center - img_center)) / (diag_img + 1e-6)
+                centrality = max(0.0, 1.0 - dist_center * 1.5)
+
+                # 2. Orthogonality & quality from validation confidence
+                quality = meta.get("confidence", 0.5)
+
+                # 3. Area score: sweet spot between 0.15 and 0.85
+                area_ratio = meta.get("area_ratio", 0.0)
+                if 0.15 <= area_ratio <= 0.85:
+                    area_score = 1.0
+                elif area_ratio < 0.15:
+                    area_score = area_ratio / 0.15
+                else:
+                    area_score = max(0.2, (0.98 - area_ratio) / 0.13)
+
+                # Composite score prioritizing centered, orthogonal packages
+                score = quality * 0.45 + centrality * 0.35 + area_score * 0.20
+                if score > best_score:
+                    best_score = score
+                    best_quad = ordered
+                    meta["geometry_status"] = "detected"
+                    meta["rectification_status"] = "skipped"
+                    meta["reason"] = None
+                    best_meta = meta
+
+        if best_quad is not None and best_score >= 0.65:
+            break
+
+    return best_quad, best_meta
 
 
 def detect_panel_quad(bgr: np.ndarray) -> np.ndarray | None:
     """Classical panel-quad detector (no YOLO/torch needed).
 
-    Finds the largest convex quadrilateral contour (the pack's front face),
-    for the operator's on-screen adjustment or rectify(). ADVISORY ONLY: the
-    upload endpoint returns it as suggested_corners and never acts on it —
-    a wrong quad must not move evidence. Returns (4,2) float32 tl,tr,br,bl
+    Preserves backward compatibility: returns (4, 2) float32 tl, tr, br, bl
     or None when no confident quad exists.
     """
-    try:
-        h, w = bgr.shape[:2]
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(gray, 50, 150)
-        edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL,
-                                       cv2.CHAIN_APPROX_SIMPLE)
-        frame = float(h * w)
-        best: np.ndarray | None = None
-        best_area = 0.0
-        for cnt in contours:
-            area = float(cv2.contourArea(cnt))
-            if area < 0.05 * frame or area > 0.95 * frame or area <= best_area:
-                continue
-            peri = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-            if len(approx) != 4 or not cv2.isContourConvex(approx):
-                continue
-            quad = approx.reshape(4, 2).astype(np.float32)
-            # Reject degenerate quads: every edge must clear 10% of min dim.
-            edges_len = [float(np.linalg.norm(quad[(i + 1) % 4] - quad[i]))
-                         for i in range(4)]
-            if min(edges_len) < 0.10 * min(h, w):
-                continue
-            best, best_area = quad, area
-        return _order_corners(best) if best is not None else None
-    except Exception:
-        return None
+    quad, _ = detect_candidate_quad(bgr)
+    return quad

@@ -54,9 +54,12 @@ export const GUIDANCE_MESSAGES = {
   OVEREXPOSURE: 'Too bright. Move away from direct light',
   CONTRAST: 'Low contrast. Ensure lighting is even',
   TILT: 'Hold the package more front-facing',
-  CROP: 'Move back and keep the full label inside the frame',
+  TILT_MODERATE: 'Hold the package more front-facing',
+  TILT_SEVERE: 'Move closer and align the package with the frame',
+  CROP: 'Keep all important package edges inside the frame',
   TOO_SMALL: 'Move closer to the package',
   CORRUPT: 'Retake image for clearer evidence',
+  UNAVAILABLE: 'Move to a clearer view of the package',
 };
 
 export default QUALITY_THRESHOLDS;
