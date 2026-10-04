@@ -1,12 +1,23 @@
 // offline/evidenceManager.js — Immutable original camera evidence management and provenance
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
+import {
+  IMAGE_PROCESSING_CONFIG,
+  computeAnalysisActions,
+  validateImageSafety,
+} from '../config/imageProcessing';
+
+export { IMAGE_PROCESSING_CONFIG, computeAnalysisActions, validateImageSafety };
 
 let ImageManipulator = null;
 try {
   ImageManipulator = require('expo-image-manipulator');
 } catch {
   ImageManipulator = null;
+}
+
+export function setImageManipulator(manipulator) {
+  ImageManipulator = manipulator;
 }
 
 const isWeb = Platform.OS === 'web';
@@ -16,6 +27,14 @@ let monotonic = 0;
 function nextMonotonic() {
   monotonic += 1;
   return `${Date.now()}-${monotonic}`;
+}
+
+// Bounded concurrency queue: serializes native image manipulation to prevent OOM
+let analysisQueue = Promise.resolve();
+function enqueueAnalysis(task) {
+  const next = analysisQueue.then(task, task);
+  analysisQueue = next.catch(() => {});
+  return next;
 }
 
 export function evidenceDir() {
@@ -100,63 +119,98 @@ export async function persistOriginalCapture(photo, { panel = 'front', inspectio
     sync_status: 'pending',
     upload_status: 'not_uploaded',
     error: null,
+    original_status: 'preserved',
   };
 
   return record;
 }
 
 /**
- * Creates a separate, derived analysis image (e.g. 1600px width, 75% quality JPEG)
- * for downstream OCR and quality gating without mutating or overwriting the original capture.
+ * Creates a separate, derived analysis image for downstream OCR and quality gating
+ * without mutating or overwriting the original capture.
+ *
+ * Implements an adaptive policy:
+ * - If original image is already within target bounds, never upscale; preserve native resolution.
+ * - If original image is large, downscale along longest edge preserving aspect ratio.
+ * - Color (RGB) and logical orientation are preserved.
+ * - Pathological inputs (> 25MB, > 50MP) are caught and reported cleanly without crashing.
+ * - Derivation is serialized via enqueueAnalysis to bound mobile memory usage.
  *
  * @param {object} evidenceRecord - The immutable evidence record from persistOriginalCapture
- * @returns {Promise<object>} Copy of evidenceRecord with analysis_uri and analysis dimensions
+ * @param {object} options - Optional configuration { highRes: boolean, quality: number, manipulator: object }
+ * @returns {Promise<object>} Record with analysis_uri, analysis_status, and analysis dimensions
  */
-export async function createAnalysisImage(evidenceRecord) {
-  if (!evidenceRecord?.original_uri) {
-    throw new Error('Cannot create analysis image: original_uri is missing from evidence record');
-  }
+export async function createAnalysisImage(evidenceRecord, options = {}) {
+  const t0 = Date.now();
+  const config = options.config || IMAGE_PROCESSING_CONFIG;
 
-  // If ImageManipulator is not available (e.g. standard Node / basic Web test env)
-  if (!ImageManipulator?.manipulateAsync) {
+  const safety = validateImageSafety(evidenceRecord, config);
+  if (!safety.valid) {
+    if (!evidenceRecord?.original_uri) {
+      throw new Error(`Cannot create analysis image: ${safety.error}`);
+    }
     return {
       ...evidenceRecord,
-      analysis_uri: evidenceRecord.original_uri,
-      analysis_width: evidenceRecord.width,
-      analysis_height: evidenceRecord.height,
+      original_status: 'preserved',
+      analysis_status: 'failed',
+      analysis_uri: null,
+      analysis_width: null,
+      analysis_height: null,
+      analysis_error: safety.error,
+      analysis_duration_ms: Date.now() - t0,
     };
   }
 
-  try {
-    // Only downsample if image is larger than 1600px; never upscale small images
-    const origWidth = evidenceRecord.width;
-    const actions = [];
-    if (origWidth && origWidth > 1600) {
-      actions.push({ resize: { width: 1600 } });
-    } else if (!origWidth) {
-      // Width unknown, apply standard width constraint
-      actions.push({ resize: { width: 1600 } });
+  // Bounded execution to ensure mobile memory safety
+  return enqueueAnalysis(async () => {
+    const activeManipulator = options.manipulator || ImageManipulator;
+
+    // Passthrough mode if ImageManipulator native module is not available
+    if (!activeManipulator?.manipulateAsync) {
+      return {
+        ...evidenceRecord,
+        original_status: 'preserved',
+        analysis_status: 'passthrough',
+        analysis_uri: evidenceRecord.original_uri,
+        analysis_width: evidenceRecord.width || null,
+        analysis_height: evidenceRecord.height || null,
+        analysis_quality: 1.0,
+        analysis_duration_ms: Date.now() - t0,
+        analysis_error: null,
+      };
     }
 
-    const manip = await ImageManipulator.manipulateAsync(
-      evidenceRecord.original_uri,
-      actions,
-      { compress: 0.75, format: ImageManipulator.SaveFormat.JPEG }
-    );
+    try {
+      const { actions, quality } = computeAnalysisActions(evidenceRecord.width, evidenceRecord.height, options);
 
-    return {
-      ...evidenceRecord,
-      analysis_uri: manip.uri,
-      analysis_width: manip.width || null,
-      analysis_height: manip.height || null,
-    };
-  } catch (manipErr) {
-    // Section 16.B: Analysis-image generation failure must NOT destroy or discard original evidence
-    console.warn('[EvidenceManager] Analysis image generation failed, preserving original:', manipErr?.message || manipErr);
-    return {
-      ...evidenceRecord,
-      analysis_uri: evidenceRecord.original_uri,
-      analysis_error: manipErr?.message || 'Image manipulation failed',
-    };
-  }
+      const format = activeManipulator.SaveFormat?.JPEG || 'jpeg';
+      const manip = await activeManipulator.manipulateAsync(
+        evidenceRecord.original_uri,
+        actions,
+        { compress: quality, format }
+      );
+
+      return {
+        ...evidenceRecord,
+        original_status: 'preserved',
+        analysis_status: 'ready',
+        analysis_uri: manip.uri,
+        analysis_width: manip.width || (actions.length === 0 ? evidenceRecord.width : null),
+        analysis_height: manip.height || (actions.length === 0 ? evidenceRecord.height : null),
+        analysis_quality: quality,
+        analysis_duration_ms: Date.now() - t0,
+        analysis_error: null,
+      };
+    } catch (manipErr) {
+      console.warn('[EvidenceManager] Analysis image generation failed, preserving original:', manipErr?.message || manipErr);
+      return {
+        ...evidenceRecord,
+        original_status: 'preserved',
+        analysis_status: 'failed',
+        analysis_uri: null,
+        analysis_error: manipErr?.message || 'Image manipulation failed',
+        analysis_duration_ms: Date.now() - t0,
+      };
+    }
+  });
 }
