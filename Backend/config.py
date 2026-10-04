@@ -193,6 +193,11 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     GROQ_TIMEOUT_S: float = 8.0
 
+    # Azure AI Vision OCR (Read API v4.0 / Analyze features=read)
+    AZURE_VISION_KEY: str | None = None
+    AZURE_VISION_ENDPOINT: str | None = None
+    AZURE_VISION_TIMEOUT_S: float = 15.0
+
     # --- rules ---
     RULES_AS_AT: str = "2026-07-01"        # C6; GSR 128(E) in force
     RULES_CATALOG: Path = BASE_DIR / "rules" / "catalog_2026_07_01.json"

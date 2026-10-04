@@ -25,9 +25,7 @@ bcrypt==4.0.1                   # pin: passlib 1.7.4 reads bcrypt.__about__, rem
 # --- vision / OCR ---
 numpy==1.26.4                   # imported directly by image_processor/ocr_engine; <2 for paddle/opencv
 opencv-python-headless==4.9.0.80
-paddlepaddle==2.6.2
-paddleocr==2.8.0
-pytesseract==0.3.10             # needs the tesseract-ocr binary, see OCR_DEPS.md
+# Cloud OCR architecture (Google Vision / OCR.space / Azure) requires 0MB local ML models
 Pillow==10.3.0
 imagehash==4.3.1
 pyzbar==0.1.9                   # needs libzbar0

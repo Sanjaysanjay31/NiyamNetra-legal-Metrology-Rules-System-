@@ -1,0 +1,42 @@
+"""Backend/ocr package — Cloud OCR provider abstraction for NiyamNetra."""
+from ocr.azure_vision import AzureVisionProvider
+from ocr.base import (
+    BaseOCRProvider,
+    OcrBlock,
+    OcrLine,
+    OcrResult,
+    OcrWord,
+    STATUS_AUTH_ERROR,
+    STATUS_INPUT_UNAVAILABLE,
+    STATUS_INVALID_RESPONSE,
+    STATUS_NO_TEXT,
+    STATUS_PROVIDER_ERROR,
+    STATUS_RATE_LIMITED,
+    STATUS_SUCCESS,
+    STATUS_TIMEOUT,
+    STATUS_UNAVAILABLE,
+)
+from ocr.factory import get_ocr_provider
+from ocr.google_vision import GoogleVisionProvider
+from ocr.ocr_space import OCRSpaceProvider
+
+__all__ = [
+    "BaseOCRProvider",
+    "GoogleVisionProvider",
+    "OCRSpaceProvider",
+    "AzureVisionProvider",
+    "get_ocr_provider",
+    "OcrLine",
+    "OcrResult",
+    "OcrBlock",
+    "OcrWord",
+    "STATUS_SUCCESS",
+    "STATUS_INPUT_UNAVAILABLE",
+    "STATUS_TIMEOUT",
+    "STATUS_RATE_LIMITED",
+    "STATUS_PROVIDER_ERROR",
+    "STATUS_AUTH_ERROR",
+    "STATUS_INVALID_RESPONSE",
+    "STATUS_NO_TEXT",
+    "STATUS_UNAVAILABLE",
+]

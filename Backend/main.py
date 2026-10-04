@@ -20,22 +20,15 @@ async def lifespan(app: FastAPI):
         assert_env_clean()
     except Exception:
         pass  # config.Settings validator is authoritative; this is belt-and-braces
-    # Warm the OCR model once so the first real scan is not the slow one.
-    # Skipped when cloud OCR is forced or paddle disabled (512MB Render):
-    # importing paddleocr there costs 1.5GB and OOMs the worker.
+    # Cloud OCR Provider Architecture (Section 4 & 21):
+    # No heavy local OCR models (PaddleOCR / Tesseract) are loaded into memory.
     if settings.ENV != "test":
         try:
-            if getattr(settings, "DISABLE_PADDLE", False):
-                logger.info("[OCR] PaddleOCR disabled in configuration (cloud OCR deploy).")
-                raise RuntimeError("paddle disabled (cloud OCR deploy)")
-            if getattr(settings, "OCR_PROVIDER", "auto") in ("google", "ocrspace"):
-                logger.info(f"[OCR] Cloud provider '{settings.OCR_PROVIDER}' selected; local model warmup bypassed.")
-                raise RuntimeError("cloud OCR forced; no local warmup needed")
-            from ocr_engine import get_paddle
-            get_paddle()
-            logger.info("[OCR] Local PaddleOCR engine initialized and warmed up successfully.")
+            from ocr import get_ocr_provider
+            provider = get_ocr_provider()
+            logger.info(f"[OCR] Cloud OCR architecture active. Configured provider: '{provider.name}'. 0MB local model RAM.")
         except Exception as e:
-            logger.info(f"[OCR] Engine initialization note: {e}. Fallback pipeline (Tesseract / Cloud) active.")
+            logger.info(f"[OCR] Provider selector note: {e}.")
     yield
 
 

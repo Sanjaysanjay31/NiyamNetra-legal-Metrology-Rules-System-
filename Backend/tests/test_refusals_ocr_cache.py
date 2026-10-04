@@ -214,6 +214,8 @@ def test_reports_today_carries_refusals(tmp_path):
 def _create_dummy_image(path: Path) -> str:
     img = np.full((100, 100, 3), 255, dtype=np.uint8)
     cv2.imwrite(str(path), img)
+    analysis_path = path.parent / f"{path.stem}_analysis.jpg"
+    cv2.imwrite(str(analysis_path), img)
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
 

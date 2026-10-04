@@ -667,8 +667,11 @@ def process_image_similarity_background(
     try:
         if db is not None:
             try:
-                if db.is_active:
-                    session = db
+                bind = getattr(db, "bind", None)
+                if bind is not None:
+                    from sqlalchemy.orm import sessionmaker
+                    session = sessionmaker(bind=bind)()
+                    should_close = True
             except Exception:
                 session = None
         if session is None:
@@ -900,3 +903,93 @@ def detect_panel_quad(bgr: np.ndarray) -> np.ndarray | None:
     """
     quad, _ = detect_candidate_quad(bgr)
     return quad
+
+
+def prepare_derived_analysis_image(original_path: Path, bgr: np.ndarray | None = None) -> tuple[Path, int, int]:
+    """Create a derived analysis image (1600px max long-edge, 80% JPEG) separate from original evidence.
+
+    Preserves 3-channel color. Never modifies the authoritative original evidence.
+    """
+    analysis_path = original_path.parent / f"{original_path.stem}_analysis.jpg"
+    if analysis_path.exists():
+        try:
+            with Image.open(analysis_path) as im:
+                return analysis_path, im.width, im.height
+        except Exception:
+            pass
+
+    if bgr is None:
+        bgr = cv2.imread(str(original_path))
+        if bgr is None:
+            raise ValueError(f"Cannot read original image from {original_path}")
+
+    h, w = bgr.shape[:2]
+    target_max = 1600
+    if max(h, w) > target_max:
+        scale = target_max / float(max(h, w))
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        bgr = cv2.resize(bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    h_out, w_out = bgr.shape[:2]
+    # Save as 80% JPEG
+    cv2.imwrite(str(analysis_path), bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+    return analysis_path, w_out, h_out
+
+
+def prepare_derived_rectified_artifact(original_path: Path, rectified_bgr: np.ndarray) -> tuple[Path, int, int]:
+    """Store a derived rectified measurement artifact separate from original evidence."""
+    rect_path = original_path.parent / f"{original_path.stem}_rectified.jpg"
+    h_out, w_out = rectified_bgr.shape[:2]
+    cv2.imwrite(str(rect_path), rectified_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    return rect_path, w_out, h_out
+
+
+def get_ocr_input_artifact(scan_image) -> tuple[Path | None, str, dict]:
+    """Determine the valid derived OCR input artifact for a ScanImage record.
+
+    HARD SAFETY RULE (Section 2 & 9 & 28):
+    THE ORIGINAL EVIDENCE FILE MUST NEVER BE SENT TO CLOUD OCR.
+    Only derived artifacts (rectified artifact or analysis image) may be returned.
+    If neither derived artifact is available, returns (None, "input_unavailable", {...}).
+    NEVER falls back to scan_image.file_path (original evidence).
+    """
+    orig_path = Path(scan_image.file_path)
+
+    # 1. Prefer rectified artifact if geometry status was valid and rectification applied
+    if getattr(scan_image, "rectified", False):
+        rect_path = getattr(scan_image, "rectified_file_path", None)
+        if rect_path and Path(rect_path).exists():
+            try:
+                with Image.open(rect_path) as im:
+                    return Path(rect_path), "rectified", {"source_width": im.width, "source_height": im.height}
+            except Exception:
+                pass
+        default_rect = orig_path.parent / f"{orig_path.stem}_rectified.jpg"
+        if default_rect.exists():
+            try:
+                with Image.open(default_rect) as im:
+                    return default_rect, "rectified", {"source_width": im.width, "source_height": im.height}
+            except Exception:
+                pass
+
+    # 2. Use derived analysis image
+    analysis_path = getattr(scan_image, "analysis_file_path", None)
+    if analysis_path and Path(analysis_path).exists():
+        try:
+            with Image.open(analysis_path) as im:
+                return Path(analysis_path), "analysis", {"source_width": im.width, "source_height": im.height}
+        except Exception:
+            pass
+
+    default_analysis = orig_path.parent / f"{orig_path.stem}_analysis.jpg"
+    if default_analysis.exists():
+        try:
+            with Image.open(default_analysis) as im:
+                return default_analysis, "analysis", {"source_width": im.width, "source_height": im.height}
+        except Exception:
+            pass
+
+    # 3. If neither derived artifact is present, do NOT fall back to original evidence.
+    return None, "input_unavailable", {"error": "Missing derived analysis artifact"}
+

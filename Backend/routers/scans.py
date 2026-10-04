@@ -245,6 +245,9 @@ async def upload_image(
     # Sequence race: (scan_id, panel, sequence) is unique. Two concurrent
     # uploads can read the same COUNT; retry with max+1 requery (3 attempts),
     # else 409 so the client retries instead of seeing a 500.
+    from image_processor import prepare_derived_analysis_image
+    analysis_path, a_w, a_h = prepare_derived_analysis_image(stored.path, bgr)
+
     t_db_start = time.perf_counter()
     img = None
     for _attempt in range(3):
@@ -272,6 +275,8 @@ async def upload_image(
                 similarity_status=_initial_similarity,
                 duplicate_of_image_id=_dup_img_id,
                 hamming_distance=_hamming_dist,
+                analysis_file_path=str(analysis_path),
+                rectified_file_path=None,
             )
             db.add(img)
             db.commit()
@@ -883,7 +888,7 @@ def _lines_to_cache(ocr) -> str | None:
         serialised = [
             [
                 getattr(ln, "text", "") or "",
-                float(getattr(ln, "confidence", 0) or 0),
+                float(getattr(ln, "confidence", 0)) if getattr(ln, "confidence", None) is not None else None,
                 [[round(float(x), 1), round(float(y), 1)] for x, y in (getattr(ln, "box", None) or [])],
                 float(getattr(ln, "height_px", 0) or 0),
             ]
@@ -1018,6 +1023,12 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
                 front.rectified = True
                 front.residual_tilt_deg = _tilt
                 try:
+                    from image_processor import prepare_derived_rectified_artifact
+                    r_path, r_w, r_h = prepare_derived_rectified_artifact(Path(front.file_path), _rect)
+                    front.rectified_file_path = str(r_path)
+                except Exception:
+                    pass
+                try:
                     db.commit()
                 except Exception:
                     db.rollback()
@@ -1094,39 +1105,82 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         )
         ocr = _cached_ocr
     else:
-        # Cache miss: run OCR as normal, then stage the result for next time.
-        _bgr_list = []
+        # Cache miss: run OCR per panel using DERIVED ARTIFACTS ONLY.
+        # MANDATORY INVARIANT (Section 2 & 3 & 28):
+        # THE ORIGINAL EVIDENCE FILE MUST NEVER BE SENT TO CLOUD OCR.
+        # If derived artifact is missing, fail safely with STATUS_INPUT_UNAVAILABLE.
+        from image_processor import get_ocr_input_artifact
+        from ocr.base import STATUS_INPUT_UNAVAILABLE, STATUS_NO_TEXT, STATUS_SUCCESS
+
+        _panel_jobs = []
         for _im in images:
-            try:
-                if not Path(_im.file_path).exists():
-                    continue
-                _b = cv2.imread(_im.file_path) if _im is not front else _measure
-                if _b is not None:
-                    _bgr_list.append(_b)
-            except Exception:
+            art_path, art_type, meta = get_ocr_input_artifact(_im)
+            if art_path is None or not art_path.exists():
+                if _fail_reason is None:
+                    _fail_reason = f"OCR input unavailable for panel {_im.panel}: missing derived artifact"
                 continue
+            _panel_jobs.append((_im, art_path, art_type, meta))
 
-        if _bgr_list:
+        _ocr_results = []
+        if _panel_jobs:
+            def _ocr_single(job):
+                _img_rec, _p, _atype, _m = job
+                try:
+                    _res = run_ocr(
+                        _p,
+                        panel=_img_rec.panel,
+                        image_id=_img_rec.id,
+                        scan_id=scan.id,
+                        inspection_id=scan.inspection_id,
+                    )
+                except TypeError:
+                    _res = run_ocr(_p)
+                if getattr(_res, "panel", None) is None:
+                    _res.panel = _img_rec.panel
+                if getattr(_res, "image_id", None) is None:
+                    _res.image_id = _img_rec.id
+                if getattr(_res, "scan_id", None) is None:
+                    _res.scan_id = scan.id
+                if getattr(_res, "inspection_id", None) is None:
+                    _res.inspection_id = scan.inspection_id
+                _res.input_artifact_type = _atype
+                return _res
+
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=min(4, len(_bgr_list))) as _pool:
-                _ocr_results = list(_pool.map(run_ocr, _bgr_list))
+            with ThreadPoolExecutor(max_workers=min(4, len(_panel_jobs))) as _pool:
+                _ocr_results = list(_pool.map(_ocr_single, _panel_jobs))
 
-            for _ocr in _ocr_results:
-                if _ocr.lines:
-                    _all_lines.extend(_ocr.lines)
-                    _engines.append(_ocr.engine)
-                if _ocr.mean_confidence is not None:
-                    _confs.append(float(_ocr.mean_confidence))
-                if _ocr.failure_reason and _fail_reason is None:
-                    _fail_reason = _ocr.failure_reason
+        for _ocr in _ocr_results:
+            if _ocr.lines:
+                _all_lines.extend(_ocr.lines)
+                _engines.append(_ocr.engine)
+            if _ocr.mean_confidence is not None:
+                _confs.append(float(_ocr.mean_confidence))
+            if _ocr.failure_reason and _fail_reason is None:
+                _fail_reason = _ocr.failure_reason
 
         if _all_lines:
             _mean = float(sum(_confs) / len(_confs)) if _confs else None
-            ocr = OcrResult(lines=_all_lines, engine=_engines[0] if _engines else "unknown",
-                            mean_confidence=_mean, failure_reason=None)
+            ocr = OcrResult(
+                lines=_all_lines,
+                engine=_engines[0] if _engines else "unknown",
+                mean_confidence=_mean,
+                failure_reason=None,
+                status=STATUS_SUCCESS,
+                scan_id=scan.id,
+                inspection_id=scan.inspection_id,
+            )
         else:
-            # Fall back to the front-panel result for an honest failure reason.
-            ocr = run_ocr(_measure)
+            _status = STATUS_NO_TEXT if _panel_jobs else STATUS_INPUT_UNAVAILABLE
+            ocr = OcrResult(
+                lines=[],
+                engine=_engines[0] if _engines else "none",
+                mean_confidence=None,
+                failure_reason=_fail_reason or "No text detected across panels",
+                status=_status,
+                scan_id=scan.id,
+                inspection_id=scan.inspection_id,
+            )
 
         # Stage the cache on the scan instance; _assess_inner commits it.
         try:

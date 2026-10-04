@@ -1,0 +1,40 @@
+{
+  "OCR.Space": {
+    "status": "CONFIGURED",
+    "samples": 4,
+    "latency_p50_ms": 1422.9,
+    "latency_p95_ms": 1728.5,
+    "latency_mean_ms": 1475.8,
+    "mean_payload_kb": 33.4,
+    "bounding_box_coverage": "3/4",
+    "confidence_availability": "No (null honest)",
+    "fields_recognized": {
+      "mrp": 2,
+      "net_quantity": 2,
+      "manufacturer": 1,
+      "best_before": 1
+    },
+    "total_items": 4,
+    "mem_delta_mb": 14.99,
+    "mem_after_mb": 70.8
+  },
+  "Google Cloud Vision": {
+    "status": "NOT_CONFIGURED",
+    "reason": "Missing API key in environment"
+  },
+  "Azure AI Vision": {
+    "status": "NOT_CONFIGURED",
+    "reason": "Missing API key in environment"
+  },
+  "PaddleOCR (Historical Server ML)": {
+    "status": "REMOVED_FROM_RUNTIME",
+    "latency_mean_ms": 11570.0,
+    "latency_p50_ms": 11570.0,
+    "latency_p95_ms": 12850.0,
+    "memory_rss_mb": 385.0,
+    "model_weight_mb": 1200.0,
+    "render_512mb_viable": false,
+    "bounding_box_coverage": "Yes (quad)",
+    "confidence_availability": "Yes (0.0-1.0)"
+  }
+}
