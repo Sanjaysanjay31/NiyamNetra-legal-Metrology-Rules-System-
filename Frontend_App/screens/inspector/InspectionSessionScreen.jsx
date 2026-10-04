@@ -28,6 +28,7 @@ import {
   assessScan,
 } from '../../api/inspections';
 import { persistOriginalCapture, createAnalysisImage } from '../../offline/evidenceManager';
+import { assessCaptureQuality } from '../../offline/qualityGate';
 
 let ImageManipulator = null;
 try { ImageManipulator = require('expo-image-manipulator'); } catch { ImageManipulator = null; }
@@ -158,17 +159,25 @@ export default function InspectionSessionScreen({
         });
         const tPersistEnd = Date.now();
 
-        // Step C: Create a separate, derived analysis image (1600px width, 75% quality JPEG)
+        // Step C: Create a separate, derived analysis image (1600px width, 80% quality JPEG)
         // for downstream OCR and quality gating. The original capture remains pristine.
         const tAnalysisStart = Date.now();
         const processedRecord = await createAnalysisImage(evidenceRecord);
         const tAnalysisEnd = Date.now();
 
+        // Step D: Fast Image Quality Gate evaluation on derived analysis image
+        const tQualityStart = Date.now();
+        const qualityResult = await assessCaptureQuality(processedRecord);
+        const tQualityEnd = Date.now();
+
+        processedRecord.quality_gate = qualityResult;
+
         const captureMs = tCaptureEnd - tCaptureStart;
         const persistMs = tPersistEnd - tPersistStart;
         const analysisMs = tAnalysisEnd - tAnalysisStart;
+        const qualityMs = tQualityEnd - tQualityStart;
 
-        console.log('[PERF_EVIDENCE] capture_and_preservation_completed', JSON.stringify({
+        console.log('[PERF_EVIDENCE] capture_preservation_and_quality_completed', JSON.stringify({
           panel: activePanel,
           originalUri: processedRecord.original_uri,
           analysisUri: processedRecord.analysis_uri,
@@ -178,7 +187,10 @@ export default function InspectionSessionScreen({
           captureDurationMs: captureMs,
           persistOriginalMs: persistMs,
           createAnalysisMs: analysisMs,
-          totalPreservationMs: tAnalysisEnd - tCaptureStart,
+          qualityGateMs: qualityMs,
+          qualityDecision: qualityResult.decision,
+          primaryGuidance: qualityResult.primary_guidance,
+          totalPreservationMs: tQualityEnd - tCaptureStart,
         }));
 
         setPanelEvidence((prev) => ({
@@ -191,10 +203,14 @@ export default function InspectionSessionScreen({
           [activePanel]: processedRecord.analysis_uri || processedRecord.original_uri,
         }));
 
-        // Auto-advance to next panel
-        const idx = PANELS.findIndex((p) => p.key === activePanel);
-        if (idx < PANELS.length - 1) {
-          setActivePanel(PANELS[idx + 1].key);
+        // Quality-aware advance:
+        // If RETAKE_REQUIRED, keep the inspector on activePanel so they see guidance and retake immediately.
+        // If READY or READY_WITH_WARNINGS, advance to the next panel.
+        if (qualityResult.decision !== 'RETAKE_REQUIRED') {
+          const idx = PANELS.findIndex((p) => p.key === activePanel);
+          if (idx < PANELS.length - 1) {
+            setActivePanel(PANELS[idx + 1].key);
+          }
         }
       }
     } catch (e) {
@@ -645,15 +661,48 @@ export default function InspectionSessionScreen({
             <View style={styles.previewBox}>
               <Image source={{ uri: panelPhotos[activePanel] }} style={styles.previewImage} resizeMode="cover" />
               <View style={styles.previewOverlay}>
-                <Text style={styles.previewLabel}>{PANELS.find((p) => p.key === activePanel)?.label} Captured</Text>
+                <View style={{ flex: 1, marginRight: spacing.sm }}>
+                  <Text style={styles.previewLabel}>{PANELS.find((p) => p.key === activePanel)?.label} Captured</Text>
+                  {panelEvidence[activePanel]?.quality_gate && (
+                    <View style={[
+                      styles.qualityBadge,
+                      panelEvidence[activePanel].quality_gate.decision === 'READY' && styles.qualityBadgeReady,
+                      panelEvidence[activePanel].quality_gate.decision === 'READY_WITH_WARNINGS' && styles.qualityBadgeWarning,
+                      panelEvidence[activePanel].quality_gate.decision === 'RETAKE_REQUIRED' && styles.qualityBadgeRetake,
+                    ]}>
+                      <Text style={[
+                        styles.qualityBadgeText,
+                        panelEvidence[activePanel].quality_gate.decision === 'READY' && styles.qualityTextReady,
+                        panelEvidence[activePanel].quality_gate.decision === 'READY_WITH_WARNINGS' && styles.qualityTextWarning,
+                        panelEvidence[activePanel].quality_gate.decision === 'RETAKE_REQUIRED' && styles.qualityTextRetake,
+                      ]}>
+                        {panelEvidence[activePanel].quality_gate.decision === 'READY'
+                          ? '✓ Image ready'
+                          : panelEvidence[activePanel].quality_gate.decision === 'READY_WITH_WARNINGS'
+                          ? `⚠️ Usable: ${panelEvidence[activePanel].quality_gate.primary_guidance}`
+                          : `⛔ Retake: ${panelEvidence[activePanel].quality_gate.primary_guidance}`}
+                      </Text>
+                    </View>
+                  )}
+                </View>
                 <Pressable
                   onPress={() => {
                     setPanelPhotos((prev) => ({ ...prev, [activePanel]: null }));
                     setPanelEvidence((prev) => ({ ...prev, [activePanel]: null }));
                   }}
-                  style={styles.retakeBtn}
+                  style={[
+                    styles.retakeBtn,
+                    panelEvidence[activePanel]?.quality_gate?.decision === 'RETAKE_REQUIRED' && styles.retakeBtnUrgent,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retake photo"
                 >
-                  <Text style={styles.retakeText}>Retake Photo</Text>
+                  <Text style={[
+                    styles.retakeText,
+                    panelEvidence[activePanel]?.quality_gate?.decision === 'RETAKE_REQUIRED' && styles.retakeTextUrgent,
+                  ]}>
+                    Retake Photo
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -1054,6 +1103,50 @@ const styles = StyleSheet.create({
     color: colors.niyamBlue,
     fontSize: 11,
     fontWeight: '700',
+  },
+  retakeBtnUrgent: {
+    backgroundColor: '#dc2626',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+  },
+  retakeTextUrgent: {
+    color: colors.white,
+    fontWeight: '800',
+  },
+  qualityBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.xs,
+    marginTop: 3,
+    alignSelf: 'flex-start',
+  },
+  qualityBadgeReady: {
+    backgroundColor: 'rgba(34, 197, 94, 0.25)',
+    borderColor: '#22c55e',
+    borderWidth: 1,
+  },
+  qualityBadgeWarning: {
+    backgroundColor: 'rgba(234, 179, 8, 0.25)',
+    borderColor: '#eab308',
+    borderWidth: 1,
+  },
+  qualityBadgeRetake: {
+    backgroundColor: 'rgba(239, 68, 68, 0.25)',
+    borderColor: '#ef4444',
+    borderWidth: 1,
+  },
+  qualityBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  qualityTextReady: {
+    color: '#4ade80',
+  },
+  qualityTextWarning: {
+    color: '#fde047',
+  },
+  qualityTextRetake: {
+    color: '#f87171',
   },
   sectionTitle: {
     fontSize: 11,

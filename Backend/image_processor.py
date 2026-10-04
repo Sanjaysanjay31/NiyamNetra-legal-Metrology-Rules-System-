@@ -202,14 +202,16 @@ def assess_quality(bgr: np.ndarray) -> Quality:
             f"(sharpness {blur:.0f}, minimum {BLUR_FLOOR:.0f})."
         )
     elif glare > GLARE_CEILING:
-        # Differentiate between uniform white label/carton packaging (where text is sharp)
-        # and localized specular glare/flash hotspot that washes out text.
-        is_clean_white_package = blur >= BLUR_FLOOR and luma > 180.0
+        # Differentiate between uniform white label/carton packaging (where the entire background is white >= 250)
+        # and a localized specular glare / flash hotspot (which covers a fraction GLARE_CEILING < glare <= 0.80).
+        is_clean_white_package = blur >= BLUR_FLOOR and luma > 180.0 and glare > 0.80
         if not is_clean_white_package:
             reason = f"Glare over {glare:.0%} of the panel obscures the declarations."
     elif not (LUMA_FLOOR <= luma <= LUMA_CEILING):
-        # A bright white packaging panel with sharp text is legible even with high mean luma
-        if not (luma > LUMA_CEILING and blur >= BLUR_FLOOR):
+        # A bright white packaging panel with sharp text is legible even with high mean luma;
+        # similarly, a dark packaging panel with sharp text is legible even with low mean luma.
+        is_clean_dark_package = luma < LUMA_FLOOR and blur >= BLUR_FLOOR
+        if not ((luma > LUMA_CEILING and blur >= BLUR_FLOOR) or is_clean_dark_package):
             reason = f"Exposure outside the usable range (mean luminance {luma:.0f})."
 
     return Quality(blur, glare, luma, usable=reason is None, reason=reason)
