@@ -139,6 +139,7 @@ export default function InspectionSessionScreen({
       return;
     }
     setCapturing(true);
+    const tCaptureStart = Date.now();
     try {
       // No `skipProcessing`: the camera's processing pipeline is what physically
       // applies the EXIF orientation. Skipping it returns an image that only
@@ -147,8 +148,11 @@ export default function InspectionSessionScreen({
       // orientation detection on the backend) — so evidence could be stored
       // sideways and read as sideways text.
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+      const tCaptureEnd = Date.now();
       if (photo?.uri) {
         let finalUri = photo.uri;
+        let manipDurationMs = 0;
+        const tManipStart = Date.now();
         // Fast client-side image compression down to 1600px width (drops 10MB to ~300KB)
         if (ImageManipulator?.manipulateAsync) {
           try {
@@ -162,6 +166,19 @@ export default function InspectionSessionScreen({
             console.warn('[Session] Image compression fallback:', manipErr);
           }
         }
+        const tManipEnd = Date.now();
+        manipDurationMs = tManipEnd - tManipStart;
+
+        console.log('[PERF_BASELINE] capture_completed', JSON.stringify({
+          panel: activePanel,
+          rawUri: photo.uri,
+          processedUri: finalUri,
+          width: photo.width,
+          height: photo.height,
+          captureDurationMs: tCaptureEnd - tCaptureStart,
+          manipDurationMs,
+          totalLocalMs: tManipEnd - tCaptureStart,
+        }));
 
         setPanelPhotos((prev) => ({
           ...prev,
@@ -187,6 +204,17 @@ export default function InspectionSessionScreen({
       Alert.alert('Evidence Required', 'Please take at least one panel photograph before assessment.');
       return;
     }
+
+    const tFlowStart = Date.now();
+    const bench = {
+      panelCount: photoUris.length,
+      inspectionCreationMs: 0,
+      scanCreationMs: 0,
+      panelUploads: {},
+      totalUploadMs: 0,
+      serverAssessMs: 0,
+      totalInspectorWaitMs: 0,
+    };
 
     assessingRef.current = true;
     setAssessing(true);
@@ -220,6 +248,7 @@ export default function InspectionSessionScreen({
           }
 
           if (storeId && typeof storeId === 'number' && storeId > 0) {
+            const tInspStart = Date.now();
             const newInsp = await createInspection({
               store_id: Number(storeId),
               transaction_type: inspectionSession?.transaction_type || 'retail_sale',
@@ -228,6 +257,7 @@ export default function InspectionSessionScreen({
               gps_accuracy_m: inspectionSession?.coords?.accuracy,
               local_created_at: inspectionSession?.started_at || new Date().toISOString(),
             });
+            bench.inspectionCreationMs = Date.now() - tInspStart;
             usedServerId = newInsp?.id || newInsp?.inspection_id;
             if (usedServerId && inspectionSession) {
               inspectionSession.serverInspectionId = usedServerId;
@@ -253,12 +283,14 @@ export default function InspectionSessionScreen({
       // 3. Try server createScan -> scope -> upload images -> assessScan
       if (usedServerId) {
         try {
+          const tScanStart = Date.now();
           const scanRes = await createScan(usedServerId, {
             commodity_generic: commodity.trim() || null,
             brand_name: brand.trim() || null,
             batch_number: batch.trim() || null,
             geometry,
           });
+          bench.scanCreationMs = Date.now() - tScanStart;
           serverScanId = scanRes?.id || scanRes?.scan_id;
 
           if (serverScanId) {
@@ -270,13 +302,23 @@ export default function InspectionSessionScreen({
             });
 
             // Upload all captured panel images concurrently in parallel for max speed
+            const tUploadsStart = Date.now();
             const uploadTasks = Object.entries(panelPhotos)
               .filter(([_, uri]) => Boolean(uri))
-              .map(([panelKey, uri]) => uploadScanImage(serverScanId, panelKey, uri));
+              .map(async ([panelKey, uri]) => {
+                const tPStart = Date.now();
+                const res = await uploadScanImage(serverScanId, panelKey, uri);
+                const tPEnd = Date.now();
+                bench.panelUploads[panelKey] = tPEnd - tPStart;
+                return res;
+              });
             await Promise.all(uploadTasks);
+            bench.totalUploadMs = Date.now() - tUploadsStart;
 
             // Run authoritative statutory assessment across all 19 rules
+            const tAssessStart = Date.now();
             assessedScan = await assessScan(serverScanId);
+            bench.serverAssessMs = Date.now() - tAssessStart;
           }
         } catch (serverErr) {
           // Distinguish "server reachable but failed" from "device offline /
@@ -295,6 +337,9 @@ export default function InspectionSessionScreen({
       } else if (!serverErrorDetail) {
         serverErrorDetail = 'No active server connection (offline mode)';
       }
+
+      bench.totalInspectorWaitMs = Date.now() - tFlowStart;
+      console.log('[PERF_BASELINE] package_assessment_flow', JSON.stringify(bench));
 
       let scanItem;
       if (assessedScan && Array.isArray(assessedScan.findings)) {

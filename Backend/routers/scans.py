@@ -101,7 +101,13 @@ async def upload_image(
     except Exception:
         pass
 
+    import time
+    from perf_baseline import get_process_memory_mb, record_upload_timing
+    t_arrival = time.perf_counter()
+    mem_before = get_process_memory_mb()
+
     raw = await file.read()
+    t_raw = time.perf_counter()
     if len(raw) > MAX_BYTES:
         raise HTTPException(
             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -140,6 +146,7 @@ async def upload_image(
     # MIME sniffing: never trust file.content_type; sniff via PIL.
     # sniff_mime enforces MAX_IMAGE_PIXELS (decompression-bomb ceiling) via
     # PIL before any cv2 decode, so a bomb fails fast with 413, not OOM.
+    t_mime_start = time.perf_counter()
     try:
         sniffed_mime = sniff_mime(raw)
     except ValueError as e:
@@ -147,9 +154,11 @@ async def upload_image(
         if "too large" in msg.lower():
             raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=msg)
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=msg)
+    t_mime_end = time.perf_counter()
 
     # Pre-validate decodability BEFORE store_upload to avoid orphan files.
     # PIL already verified pixels above; cv2 probe is the second gate.
+    t_probe_start = time.perf_counter()
     try:
         _probe = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
     except Exception:
@@ -158,7 +167,9 @@ async def upload_image(
     if _probe is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="Image could not be decoded")
+    t_probe_end = time.perf_counter()
 
+    t_store_start = time.perf_counter()
     try:
         stored = store_upload(raw, sniffed_mime, scan.inspection_id, scan.id)
     except ValueError as e:
@@ -185,7 +196,9 @@ async def upload_image(
     except Exception as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail=f"Image store failed: {type(e).__name__}")
+    t_store_end = time.perf_counter()
 
+    t_decode_start = time.perf_counter()
     bgr = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
     if bgr is None:
         # Pre-validation passed but decode now fails; remove orphan if created.
@@ -198,8 +211,14 @@ async def upload_image(
             pass
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="Image could not be decoded")
+    t_decode_end = time.perf_counter()
+    mem_peak = get_process_memory_mb()
 
+    t_quality_start = time.perf_counter()
     quality = assess_quality(bgr)
+    t_quality_end = time.perf_counter()
+
+    t_phash_start = time.perf_counter()
     try:
         phash_hex, bands = phash_bands(stored.path)
     except Exception:
@@ -214,10 +233,12 @@ async def upload_image(
             pass
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="Image could not be hashed")
+    t_phash_end = time.perf_counter()
 
     # Sequence race: (scan_id, panel, sequence) is unique. Two concurrent
     # uploads can read the same COUNT; retry with max+1 requery (3 attempts),
     # else 409 so the client retries instead of seeing a 500.
+    t_db_start = time.perf_counter()
     img = None
     for _attempt in range(3):
         try:
@@ -254,6 +275,7 @@ async def upload_image(
             continue
     assert img is not None
     db.refresh(img)
+    t_db_end = time.perf_counter()
 
     append_audit(db, inspection_id=scan.inspection_id, scan_id=scan.id,
                  user_id=user.id, action="image_uploaded",
@@ -266,6 +288,7 @@ async def upload_image(
     # Advisory panel-quad suggestion (classical detector, never acts on
     # evidence). The client may offer it for on-screen adjustment before
     # assess; None means "frame it manually".
+    t_quad_start = time.perf_counter()
     _corners = None
     try:
         from image_processor import detect_panel_quad
@@ -274,6 +297,31 @@ async def upload_image(
             _corners = [[round(float(x), 1), round(float(y), 1)] for x, y in _q.tolist()]
     except Exception:
         _corners = None
+    t_quad_end = time.perf_counter()
+
+    mem_after = get_process_memory_mb()
+    t_finish = time.perf_counter()
+
+    record_upload_timing({
+        "scan_id": scan.id,
+        "panel": normalized_panel,
+        "byte_size": len(raw),
+        "width_px": stored.width_px,
+        "height_px": stored.height_px,
+        "byte_read_ms": round((t_raw - t_arrival) * 1000, 2),
+        "mime_sniff_ms": round((t_mime_end - t_mime_start) * 1000, 2),
+        "probe_decode_ms": round((t_probe_end - t_probe_start) * 1000, 2),
+        "file_write_ms": round((t_store_end - t_store_start) * 1000, 2),
+        "decode_ms": round((t_decode_end - t_decode_start) * 1000, 2),
+        "quality_ms": round((t_quality_end - t_quality_start) * 1000, 2),
+        "phash_ms": round((t_phash_end - t_phash_start) * 1000, 2),
+        "db_persist_ms": round((t_db_end - t_db_start) * 1000, 2),
+        "quad_detect_ms": round((t_quad_end - t_quad_start) * 1000, 2),
+        "total_ms": round((t_finish - t_arrival) * 1000, 2),
+        "mem_before_mb": mem_before,
+        "mem_peak_mb": mem_peak,
+        "mem_after_mb": mem_after,
+    })
 
     return {
         "image_id": img.id,
@@ -368,6 +416,10 @@ def assess_batch(
 
 
 def _assess_inner(scan: Scan, user: User, db: Session, force: bool = False):
+    import time
+    from perf_baseline import record_assess_timing
+    t_assess_start = time.perf_counter()
+
     inspection = db.get(Inspection, scan.inspection_id)
     if inspection is not None and inspection.status == "submitted" and not force:
         # In dev mode, allow re-assessing packages for testing and demonstration
@@ -377,7 +429,9 @@ def _assess_inner(scan: Scan, user: User, db: Session, force: bool = False):
     ctx = build_context(db, scan, inspection)
 
     from rules_engine import assess as run_assessment
+    t_rules_start = time.perf_counter()
     findings, verdict, provenance = run_assessment(ctx)
+    t_rules_end = time.perf_counter()
 
     # Persist OCR evidence on the scan (truncated 20k) + mean confidence so
     # reports and the review queue can show what the engine actually read
@@ -437,6 +491,19 @@ def _assess_inner(scan: Scan, user: User, db: Session, force: bool = False):
         _logging.getLogger("niyamnetra.assess").error("Assessment commit IntegrityError: %s", exc)
         raise HTTPException(status.HTTP_409_CONFLICT,
                             detail="Assessment conflicts with existing data; retry")
+
+    t_assess_end = time.perf_counter()
+    from perf_baseline import pop_context_timing
+    ctx_timings = pop_context_timing(scan.id)
+    record_assess_timing({
+        "scan_id": scan.id,
+        "total_ms": round((t_assess_end - t_assess_start) * 1000, 2),
+        "load_disk_ms": ctx_timings.get("load_disk_ms", 0.0),
+        "quad_ms": ctx_timings.get("quad_ms", 0.0),
+        "rectify_ms": ctx_timings.get("rectify_ms", 0.0),
+        "ocr_ms": ctx_timings.get("ocr_ms", 0.0),
+        "rules_ms": round((t_rules_end - t_rules_start) * 1000, 2),
+    })
     append_audit(db, inspection_id=scan.inspection_id, scan_id=scan.id,
                  user_id=user.id, action="assessed", new_value=verdict.overall_result)
 
@@ -852,7 +919,10 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         )
         return ctx
 
+    import time
+    t_disk_load_start = time.perf_counter()
     bgr = cv2.imread(front.file_path)
+    t_disk_load_end = time.perf_counter()
     if bgr is None:
         # Missing/corrupt/purged file: mark unusable and return early instead
         # of crashing on assess_quality / bgr.shape (would be a 500).
@@ -862,7 +932,9 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
             "so nothing on the principal display panel can be read or measured."
         )
         return ctx
+    t_quality_start = time.perf_counter()
     quality = assess_quality(bgr)
+    t_quality_end = time.perf_counter()
     ctx.image_usable, ctx.image_quality_reason = quality.usable, quality.reason
 
     # Rectification (Backend.md §image_processor): the stored file stays
@@ -874,10 +946,17 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     # and when no quad is found or warping fails the raw frame is used
     # exactly as before, so behaviour only changes when a usable quad exists.
     _measure = bgr
+    t_quad_start = time.perf_counter()
+    t_quad_end = t_quad_start
+    t_rectify_start = t_quad_start
+    t_rectify_end = t_quad_start
     try:
         _quad = detect_panel_quad(bgr)
+        t_quad_end = time.perf_counter()
         if _quad is not None:
+            t_rectify_start = time.perf_counter()
             _rect, _tilt = rectify(bgr, _quad)
+            t_rectify_end = time.perf_counter()
             if _rect is not None and getattr(_rect, "shape", (0,))[0] > 0:
                 _measure = _rect
     except Exception:
@@ -906,6 +985,7 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     # Multi-panel OCR: run every stored panel concurrently, concat lines for field
     # extraction. Front-panel quality above still governs image_usable; OCR
     # availability is true if ANY panel yields text.
+    t_ocr_start = time.perf_counter()
     _all_lines: list = []
     _engines: list[str] = []
     _confs: list[float] = []
@@ -980,6 +1060,17 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
                 scan.ocr_cache = _cached_blob
         except Exception:
             pass
+    t_ocr_end = time.perf_counter()
+
+    from perf_baseline import record_context_timing
+    record_context_timing(scan.id, {
+        "load_disk_ms": round((t_disk_load_end - t_disk_load_start) * 1000, 2),
+        "quality_ms": round((t_quality_end - t_quality_start) * 1000, 2),
+        "quad_ms": round((t_quad_end - t_quad_start) * 1000, 2),
+        "rectify_ms": round((t_rectify_end - t_rectify_start) * 1000, 2),
+        "ocr_ms": round((t_ocr_end - t_ocr_start) * 1000, 2),
+    })
+
     ctx.ocr_available = ocr.engine != "none"
     if not ctx.ocr_available:
         ctx.ocr_failure_reason = ocr.failure_reason
