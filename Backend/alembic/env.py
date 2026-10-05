@@ -58,15 +58,30 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=settings.is_sqlite,
-        )
+    try:
+        with connectable.connect() as connection:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                render_as_batch=settings.is_sqlite,
+            )
 
-        with context.begin_transaction():
-            context.run_migrations()
+            with context.begin_transaction():
+                context.run_migrations()
+    except Exception as exc:
+        print(f"[Alembic] Primary connection failed: {exc}. Migrating fallback SQLite.")
+        from pathlib import Path
+        from sqlalchemy import create_engine
+        sqlite_file = Path(__file__).resolve().parent.parent / "niyamnetra.db"
+        fb_eng = create_engine(f"sqlite:///{sqlite_file}")
+        with fb_eng.connect() as connection:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                render_as_batch=True,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
 
 
 if context.is_offline_mode():
