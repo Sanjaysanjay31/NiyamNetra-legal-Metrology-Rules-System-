@@ -175,7 +175,7 @@ def _check_to_panel(check_id: str) -> str:
 @router.get("/inspections/{inspection_id}/tasks")
 def get_capture_tasks(
     inspection_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Get all pending and fulfilled capture tasks for an inspection.
@@ -249,7 +249,7 @@ def get_capture_tasks(
 @router.get("/tasks/{inspection_id}")
 def get_capture_tasks_alias(
     inspection_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Direct alias for GET /recapture/tasks/{inspection_id}."""
@@ -261,7 +261,7 @@ def fulfill_capture_task_alias(
     request_id: str,
     body: FulfillCaptureRequest,
     inspection_id: int | None = Query(default=None),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Direct alias for POST /recapture/tasks/{request_id}/fulfill with inspection_id in body or query."""
@@ -276,7 +276,7 @@ def fulfill_capture_task(
     inspection_id: int,
     request_id: str,
     body: FulfillCaptureRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Mark a capture request as fulfilled or skipped.
@@ -343,7 +343,7 @@ def fulfill_capture_task(
 def trigger_reassessment(
     inspection_id: int,
     body: RecaptureAssessRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Trigger re-assessment for specified scans after recapture.
@@ -398,7 +398,7 @@ def trigger_reassessment(
 def trigger_reassessment_alias(
     body: RecaptureAssessRequest,
     inspection_id: int | None = Query(default=None),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Direct alias for POST /recapture/reassess with inspection_id in body or query."""
@@ -415,7 +415,7 @@ def trigger_reassessment_alias(
 @router.get("/inspections/{inspection_id}/coverage")
 def get_panel_coverage(
     inspection_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Analyze panel coverage for an inspection — which panels are captured,

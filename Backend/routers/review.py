@@ -232,7 +232,7 @@ def get_review_queue(
     date_to: date | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Return the officer review queue with filtering, pagination, and priority ordering.
@@ -372,7 +372,7 @@ def get_review_queue(
 
 @router.get("/queue/summary")
 def get_review_queue_summary(
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Return a summary count of review queue items by category."""
@@ -432,7 +432,7 @@ def get_review_queue_summary(
 @router.get("/inspections/{inspection_id}")
 def get_review_detail(
     inspection_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Detailed review view for a specific inspection, including assessment,
@@ -572,7 +572,7 @@ def get_review_detail(
 def adjudicate_review(
     inspection_id: int,
     body: AdjudicateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Officer adjudicates a review item. Status transitions:
@@ -683,7 +683,7 @@ def adjudicate_review(
 @router.post("/adjudicate")
 def adjudicate_review_root(
     body: AdjudicateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Direct alias endpoint for /review/adjudicate with inspection_id in body."""
@@ -697,7 +697,7 @@ def resolve_conflict(
     inspection_id: int,
     conflict_id: str,
     body: ConflictResolutionRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Resolve a specific cross-panel conflict identified by the aggregation layer."""
@@ -731,7 +731,7 @@ def resolve_conflict(
 @router.post("/resolve-conflict")
 def resolve_conflict_root(
     body: ConflictResolutionRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Direct alias endpoint for /review/resolve-conflict with inspection_id in body."""

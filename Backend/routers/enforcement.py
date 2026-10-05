@@ -202,7 +202,7 @@ def _violation_dossier_data(
 @router.get("/summary/{inspection_id}")
 def get_compliance_summary(
     inspection_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Comprehensive compliance summary for an inspection.
@@ -328,7 +328,7 @@ def get_compliance_summary(
 @router.get("/inspections/{inspection_id}/dossier")
 def get_violation_dossier(
     inspection_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Generate a complete violation dossier for an inspection.
@@ -428,7 +428,7 @@ def get_violation_dossier(
 @router.get("/dossier/{identifier}")
 def get_dossier_by_identifier(
     identifier: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Retrieve violation dossier by inspection_id or scan_id."""
@@ -481,7 +481,7 @@ def get_dossier_by_identifier(
 @router.get("/pdf/{inspection_id}")
 def get_enforcement_pdf(
     inspection_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Generate or retrieve official PDF for an inspection."""
@@ -497,7 +497,7 @@ def get_enforcement_pdf(
 def enforcement_stats(
     days: int = Query(default=30, ge=1, le=365),
     area: str | None = Query(default=None),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Enforcement statistics for the dashboard.
@@ -623,7 +623,7 @@ def enforcement_stats(
 @router.get("/reference/{check_id}")
 def get_legal_reference(
     check_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
 ):
     """Quick-lookup of the legal reference for a specific compliance check.
 
@@ -798,7 +798,7 @@ def get_legal_reference(
 def get_store_enforcement_history(
     store_id: int,
     days: int = Query(default=90, ge=1, le=365),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ):
     """Get the enforcement history for a specific store.
