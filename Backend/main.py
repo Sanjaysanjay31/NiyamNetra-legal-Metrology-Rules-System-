@@ -108,6 +108,15 @@ async def value_error_handler(_r: Request, exc: ValueError):
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(_r: Request, exc: Exception):
+    import traceback
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "traceback": traceback.format_exc()},
+    )
+
+
 app.include_router(auth.router)
 app.include_router(inspections.router)
 app.include_router(scans.router)
