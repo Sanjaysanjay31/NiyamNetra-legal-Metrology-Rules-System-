@@ -127,6 +127,17 @@ class CheckContext:
     declaration_medium: str | None = None
     coverage_sufficient: bool | None = None
 
+    # --- Rule 6(4A)(d) / former Rule 6(8) origin marking extensions (GSR 826(E)) ---
+    commodity_category: str | None = None
+    product_origin: str | None = None          # "vegetarian" | "non_vegetarian" | "unknown"
+    origin_symbol_detected: bool | None = None
+    origin_symbol_panel: str | None = None
+    origin_symbol_image_id: str | int | None = None
+    origin_symbol_bbox: Any = None
+    origin_symbol_colour: str | None = None     # "green" | "red" | "brown"
+    origin_symbol_placement: str | None = None  # "top_pdp" | "bottom_pdp" | ...
+    origin_symbol_engineering_signal: dict = field(default_factory=dict)
+
     # --- set by the runner, read by later checks ---
     halted: str | None = None          # the check_id that halted the run
     halt_reason: str | None = None

@@ -37,6 +37,10 @@ from rules.schema import (
     StatutoryLimb,
     Verdict,
 )
+from rules.visual_evaluator import (
+    evaluate_origin_marking,
+    evaluate_visual_and_geometry_rules,
+)
 
 __all__ = [
     "ApplicabilitySpec",
@@ -61,6 +65,8 @@ __all__ = [
     "deduplicate_findings",
     "detect_cross_panel_conflicts",
     "determine_assessment_completeness",
+    "evaluate_origin_marking",
+    "evaluate_visual_and_geometry_rules",
     "generate_actionable_capture_requests",
     "generate_review_dossier",
     "generate_rule_pack_report",

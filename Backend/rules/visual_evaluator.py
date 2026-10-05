@@ -1352,12 +1352,259 @@ def evaluate_conspicuous_contrast(ctx: CheckContext) -> FindingResult:
 
 
 # ---------------------------------------------------------------------------
+# 7. Rule 6(4A)(d) / Historical Rule 6(8): Origin Marking for Cosmetics & Toiletries (CHK23)
+# ---------------------------------------------------------------------------
+
+COSMETICS_TOILETRIES_CATEGORIES = {
+    "soap", "soaps",
+    "shampoo", "shampoos",
+    "toothpaste", "toothpastes", "tooth_paste", "tooth_pastes",
+    "cosmetic", "cosmetics",
+    "toiletries", "toiletry",
+    "personal_care",
+    "skin_care",
+    "hair_care",
+    "body_wash",
+    "face_wash",
+    "lotion",
+    "creams",
+}
+
+FOURTH_AMENDMENT_EFFECTIVE_DATE = date(2026, 9, 21)
+
+
+def evaluate_origin_marking(ctx: CheckContext) -> FindingResult:
+    """Deterministic evaluation of Origin Marking (green/red/brown dot) under Rule 6(4A)(d) / former Rule 6(8) (CHK23).
+
+    G.S.R. 826(E) dated 21.09.2026:
+    - Substituted/relocated former Rule 6(8) into Rule 6(4A)(d) w.e.f 21.09.2026.
+    - Applies strictly to soap, shampoo, toothpaste, other cosmetics, and toiletries.
+    - Vegetarian origin: green dot at top of PDP.
+    - Non-vegetarian origin: red or brown dot at top of PDP.
+
+    Critical Legal Interpretation (Section 3):
+    Parent sub-rule 6(4A) introductory wording is permissive ('Nothing in these rules shall preclude...').
+    The engine NEVER converts this statutory ambiguity into a false criminal Section 36(1) violation.
+    Missing origin symbols on post-amendment inspections evaluate to not_assessed (MANUAL_REVIEW),
+    requiring human Metrology Officer adjudication rather than automated prosecution.
+    """
+    as_at = getattr(ctx, "rules_as_at", None) or date(2026, 7, 1)
+    pack = getattr(ctx, "rule_pack", None) or load_rule_pack("2026.09.v1")
+    rule = pack.get_rule_by_id("CHK23", as_at=as_at)
+
+    rule_id = rule.rule_id if rule else "RULE_LMPC_23_ORIGIN_MARKING_COSMETICS"
+    pack_ver = pack.rule_pack_version
+    source_rule = rule.source_rule if rule else "Rule 6(4A)(d)"
+
+    t = FindingResult(
+        "CHK23",
+        "Origin marking (veg/non-veg dot) on cosmetics and toiletries",
+        "pass",
+        severity=rule.severity if rule else "advisory",
+        citation=cite("R6-4A-d", f"{source_rule}, origin marking on cosmetics/toiletries"),
+        rule_id=rule_id,
+        rule_pack_version=pack_ver,
+        evaluation_timestamp=_now_iso(),
+    )
+
+    if rule is None:
+        t.verdict = "not_assessed"
+        t.reason = f"No applicable rule found for CHK23 on inspection date {as_at.isoformat()}."
+        return t
+
+    # 1. Effective date check
+    if not rule.is_effective_on(as_at):
+        t.verdict = "not_assessed"
+        t.reason = f"Rule CHK23 ({rule.rule_id}) is not effective on inspection date {as_at.isoformat()} (effective from {rule.effective_from} to {rule.effective_to or 'indefinite'})."
+        return t
+
+    # 2. Halt check
+    if getattr(ctx, "halted", None):
+        t.verdict = "not_assessed"
+        t.reason = getattr(ctx, "halt_reason", "Assessment halted")
+        return t
+
+    # 3. Category Applicability (Section 8)
+    raw_cat = (
+        getattr(ctx, "commodity_category", None)
+        or getattr(ctx, "product_category", None)
+        or getattr(ctx, "commodity_generic", None)
+    )
+    if not raw_cat or not str(raw_cat).strip():
+        t.verdict = "not_assessed"
+        t.reason = "Product category could not be established reliably from evidence; cannot determine applicability of Rule 6(4A)(d)."
+        return t
+
+    cat_norm = str(raw_cat).strip().lower().replace("-", "_").replace(" ", "_")
+    is_applicable_category = (
+        cat_norm in COSMETICS_TOILETRIES_CATEGORIES
+        or any(
+            c in cat_norm
+            for c in (
+                "soap", "shampoo", "toothpaste", "cosmetic", "toiletry",
+                "toiletries", "lotion", "cream", "skin_care", "hair_care",
+                "body_wash", "face_wash", "personal_care",
+            )
+        )
+    )
+
+    if not is_applicable_category:
+        t.verdict = "pass"
+        t.observed = f"Commodity '{raw_cat}' is not soap, shampoo, toothpaste, cosmetic, or toiletry; origin marking under Rule 6(4A)(d) does not apply."
+        return t
+
+    # 4. Product Origin Verification (Section 9)
+    # Origin must be grounded in structured context; do NOT guess from product name or visual color!
+    raw_origin = getattr(ctx, "product_origin", None)
+    if not raw_origin or str(raw_origin).strip().lower() in ("unknown", "unspecified", "none"):
+        t.verdict = "not_assessed"
+        t.reason = "Product origin (vegetarian vs non-vegetarian) is unknown in evidence; origin symbol cannot be evaluated without verified origin."
+        return t
+
+    origin_norm = str(raw_origin).strip().lower()
+    is_veg = origin_norm in ("vegetarian", "veg", "green")
+    is_non_veg = origin_norm in ("non_vegetarian", "non_veg", "non-vegetarian", "brown", "red")
+
+    if not is_veg and not is_non_veg:
+        t.verdict = "not_assessed"
+        t.reason = f"Product origin '{raw_origin}' is unrecognized; expected 'vegetarian' or 'non_vegetarian'."
+        return t
+
+    # 5. PDP Affirmative Evidence Check (Section 12)
+    pdp_established = getattr(ctx, "pdp_surface_established", False) or getattr(ctx, "pdp_detected", False)
+    established_panel = getattr(ctx, "established_pdp_panel", None) or getattr(ctx, "pdp_panel_id", None)
+
+    if not pdp_established:
+        t.verdict = "not_assessed"
+        t.reason = "Principal Display Panel (PDP) was not affirmatively established; cannot verify placement at top of PDP under Rule 6(4A)(d)."
+        return t
+
+    # 6. Visual Evidence & Placement Extraction (Section 10 & 11)
+    symbol_detected = getattr(ctx, "origin_symbol_detected", None)
+    symbol_panel = getattr(ctx, "origin_symbol_panel", None)
+    symbol_image_id = getattr(ctx, "origin_symbol_image_id", None)
+    symbol_bbox = getattr(ctx, "origin_symbol_bbox", None)
+    symbol_colour = getattr(ctx, "origin_symbol_colour", None)
+    symbol_placement = getattr(ctx, "origin_symbol_placement", None)
+    eng_signal = getattr(ctx, "origin_symbol_engineering_signal", None)
+
+    # Attach evidence provenance
+    t.evidence_provenance = {
+        "source_panel": symbol_panel,
+        "source_image_id": symbol_image_id,
+        "source_bbox": symbol_bbox,
+        "observed_colour": symbol_colour,
+        "placement": symbol_placement,
+        "engineering_signal": eng_signal,
+    }
+
+    # Case A: Symbol confirmed detected with evidence
+    if symbol_detected:
+        # Check PDP panel
+        if established_panel and symbol_panel and symbol_panel != established_panel:
+            t.verdict = "fail"
+            t.observed = f"Origin symbol detected on panel '{symbol_panel}', not on established PDP ('{established_panel}')."
+            t.required = "Origin symbol must be placed on the Principal Display Panel under Rule 6(4A)(d)."
+            t.remediation = "Display the origin symbol on the Principal Display Panel."
+            return t
+
+        # Check top of PDP placement
+        if symbol_placement is not None:
+            if symbol_placement not in ("top_pdp", "top_of_pdp", "top"):
+                t.verdict = "fail"
+                t.observed = f"Origin symbol is placed at '{symbol_placement}', not at the top of the Principal Display Panel."
+                t.required = "Origin symbol must be displayed at the top of the Principal Display Panel under Rule 6(4A)(d)."
+                t.remediation = "Relocate the origin symbol to the top of the Principal Display Panel."
+                return t
+        else:
+            t.verdict = "not_assessed"
+            t.reason = "Origin symbol was detected, but its placement relative to the top of the PDP could not be verified."
+            return t
+
+        # Check colour signal (Section 11)
+        if not symbol_colour or str(symbol_colour).strip().lower() in ("unknown", "uncertain"):
+            t.verdict = "not_assessed"
+            t.reason = "Symbol colour could not be defensibly classified from engineering colour signal without arbitrary thresholding."
+            return t
+
+        col_norm = str(symbol_colour).strip().lower()
+        if is_veg:
+            if col_norm in ("green", "green_dot"):
+                t.verdict = "pass"
+                t.observed = "Green dot origin symbol verified at top of Principal Display Panel for vegetarian product."
+                return t
+            elif col_norm in ("red", "brown", "red_dot", "brown_dot"):
+                t.verdict = "fail"
+                t.observed = f"Vegetarian product displays {col_norm} dot instead of required green dot."
+                t.required = "Products of vegetarian origin must display a green dot at the top of the PDP."
+                t.remediation = "Replace symbol with green dot for vegetarian origin."
+                return t
+            else:
+                t.verdict = "not_assessed"
+                t.reason = f"Observed symbol colour '{symbol_colour}' cannot be defensibly evaluated under vegetarian green-dot requirement."
+                return t
+        else:  # is_non_veg
+            if col_norm in ("red", "brown", "red_dot", "brown_dot"):
+                t.verdict = "pass"
+                t.observed = f"{col_norm.replace('_', ' ').capitalize()} origin symbol verified at top of Principal Display Panel for non-vegetarian product."
+                return t
+            elif col_norm in ("green", "green_dot"):
+                t.verdict = "fail"
+                t.observed = "Non-vegetarian product displays green dot instead of required red or brown dot."
+                t.required = "Products of non-vegetarian origin must display a red or brown dot at the top of the PDP."
+                t.remediation = "Replace symbol with red or brown dot for non-vegetarian origin."
+                return t
+            else:
+                t.verdict = "not_assessed"
+                t.reason = f"Observed symbol colour '{symbol_colour}' cannot be defensibly evaluated under non-vegetarian red/brown dot requirement."
+                return t
+
+    # Case B: Symbol is missing or not detected
+    # Section 3 Critical Legal-Interpretation Requirement:
+    # Under post-2026-09-21 Fourth Amendment (Rule 6(4A)(d)), the requirement is housed under a
+    # permissive non-preclusion clause ("Nothing in these rules shall preclude...").
+    # The statutory consequence of an omitted symbol is ambiguous; NEVER convert to automatic FAIL.
+    if as_at >= FOURTH_AMENDMENT_EFFECTIVE_DATE:
+        t.verdict = "not_assessed"
+        t.limb = None  # No Section 36 offence limb manufactured
+        t.reason = (
+            "Origin symbol (green/red/brown dot) not observed on cosmetics/toiletries package. "
+            "Rule 6(4A)(d) is housed under a permissive non-preclusion provision ('Nothing in these rules shall preclude...'). "
+            "Statutory enforceability under Section 36(1) is legally ambiguous; flagged for MANUAL_REVIEW by Metrology Officer."
+        )
+        t.remediation = (
+            "Review package under G.S.R. 826(E) and Department of Consumer Affairs guidelines. "
+            "Determine whether origin declaration is required or advised for this commodity."
+        )
+        return t
+
+    # For historical dates (< 2026-09-21) governed by former Rule 6(8):
+    # Rule 6(8) had affirmative language ("Every package containing soap... shall bear...").
+    panels = getattr(ctx, "panels_captured", set()) or set()
+    if len(panels) >= 2 and pdp_established:
+        t.verdict = "fail"
+        t.limb = "36(1)"
+        t.observed = f"No origin symbol (green dot / red or brown dot) observed on {raw_cat} package."
+        t.required = "Under former Rule 6(8), packages containing soap, shampoo, toothpaste, cosmetics, or toiletries must bear a green dot (vegetarian) or red/brown dot (non-vegetarian) at the top of PDP."
+        t.remediation = "Display green dot for vegetarian origin or red/brown dot for non-vegetarian origin at the top of the Principal Display Panel."
+        return t
+    else:
+        t.verdict = "not_assessed"
+        t.reason = "Origin symbol was not observed; inspection panel coverage is incomplete."
+        t.remediation = "Capture all package panels to verify presence of origin symbol."
+        return t
+
+
+# ---------------------------------------------------------------------------
 # Master Visual Evaluation Pipeline
 # ---------------------------------------------------------------------------
 
-def evaluate_visual_and_geometry_rules(ctx: CheckContext) -> list[FindingResult]:
-    """Execute all visual and geometry compliance evaluations deterministically (Phase 4C)."""
-    return [
+def evaluate_visual_and_geometry_rules(
+    ctx: CheckContext,
+    include_origin_marking: bool = False,
+) -> list[FindingResult]:
+    """Execute all visual and geometry compliance evaluations deterministically (Phase 4C & GSR 826(E))."""
+    findings = [
         evaluate_character_height(ctx),        # CHK06 (Rule 7 Table-I)
         evaluate_net_quantity_height(ctx),     # CHK06b (Rule 7 Table-II)
         evaluate_character_width(ctx),         # CHK07 (Rule 7(3))
@@ -1365,6 +1612,9 @@ def evaluate_visual_and_geometry_rules(ctx: CheckContext) -> list[FindingResult]
         evaluate_clear_space(ctx),             # CHK09 (Rule 8 clear space)
         evaluate_pdp_placement(ctx),           # CHK22 (Rule 8 PDP placement)
     ]
+    if include_origin_marking:
+        findings.append(evaluate_origin_marking(ctx))
+    return findings
 
 
 # ---------------------------------------------------------------------------
