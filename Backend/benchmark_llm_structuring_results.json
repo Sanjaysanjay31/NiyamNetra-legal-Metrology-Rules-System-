@@ -1,0 +1,653 @@
+{
+  "groq_gpt_oss_20b": {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "scenarios_tested": 11,
+    "latency_ms": {
+      "mean": 14800.32,
+      "p50": 15517.54,
+      "p95": 31120.27,
+      "min": 2204.61,
+      "max": 31120.27
+    },
+    "tokens": {
+      "mean_in": 1555,
+      "mean_out": 1133.6
+    },
+    "rates": {
+      "schema_success_rate": 0.9091,
+      "extraction_accuracy": 1.0,
+      "hallucination_rate": 0.0,
+      "ambiguity_preservation_rate": 1.0,
+      "null_correctness_rate": 1.0
+    },
+    "process_memory_mb": {
+      "before": 53.42,
+      "after": 73.43,
+      "diff": 20.01
+    },
+    "scenarios": [
+      {
+        "scenario": "clean_ocr_full",
+        "duration_ms": 4391.37,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 260.0,
+          "status": "confirmed",
+          "raw": "MRP Rs. 260.00 (INCL. OF ALL TAXES)"
+        },
+        "net_qty": {
+          "val": 5.0,
+          "unit": "kg",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "ocr_typo_mrp",
+        "duration_ms": 2545.95,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "ambiguous",
+          "raw": "MRP Rs. 4O.0O INCL OF TAXES"
+        },
+        "net_qty": {
+          "val": 200.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "fragmented_ocr",
+        "duration_ms": 16414.99,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 85.0,
+          "status": "confirmed",
+          "raw": "M.R.P. Rs. 85.00"
+        },
+        "net_qty": {
+          "val": 500.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "multiple_dates",
+        "duration_ms": 11818.16,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "multiple_numeric_values",
+        "duration_ms": 8812.66,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 60.0,
+          "status": "confirmed",
+          "raw": "MRP Rs. 60.00 (INCL. TAXES)"
+        },
+        "net_qty": {
+          "val": 150.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "dense_text_parties",
+        "duration_ms": 28747.65,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "ambiguous_ocr_mrp",
+        "duration_ms": 15517.54,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "ambiguous",
+          "raw": "MRP Rs SO"
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "missing_declarations_adversarial",
+        "duration_ms": 22673.36,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": 500.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "unreadable_image_ocr",
+        "duration_ms": 31120.27,
+        "status": "FAILED",
+        "schema_valid": false,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "isolated_ambiguous_date",
+        "duration_ms": 2204.61,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "multilingual_ocr",
+        "duration_ms": 18556.92,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 85.0,
+          "status": "confirmed",
+          "raw": "\u0905\u0927\u093f\u0915\u0924\u092e \u0916\u0941\u0926\u0930\u093e \u092e\u0942\u0932\u094d\u092f / MRP: Rs 85.00"
+        },
+        "net_qty": {
+          "val": 1.0,
+          "unit": "kg",
+          "status": "confirmed"
+        }
+      }
+    ]
+  },
+  "groq_gpt_oss_120b": {
+    "provider": "groq",
+    "model": "openai/gpt-oss-120b",
+    "scenarios_tested": 11,
+    "latency_ms": {
+      "mean": 15422.69,
+      "p50": 12312.19,
+      "p95": 36047.19,
+      "min": 2571.81,
+      "max": 36047.19
+    },
+    "tokens": {
+      "mean_in": 1699.2,
+      "mean_out": 1344.5
+    },
+    "rates": {
+      "schema_success_rate": 1.0,
+      "extraction_accuracy": 1.0,
+      "hallucination_rate": 0.0,
+      "ambiguity_preservation_rate": 1.0,
+      "null_correctness_rate": 1.0
+    },
+    "process_memory_mb": {
+      "before": 73.43,
+      "after": 73.98,
+      "diff": 0.55
+    },
+    "scenarios": [
+      {
+        "scenario": "clean_ocr_full",
+        "duration_ms": 6270.67,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 260.0,
+          "status": "confirmed",
+          "raw": "MRP Rs. 260.00 (INCL. OF ALL TAXES)"
+        },
+        "net_qty": {
+          "val": 5.0,
+          "unit": "kg",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "ocr_typo_mrp",
+        "duration_ms": 3675.93,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "ambiguous",
+          "raw": "MRP Rs. 4O.0O INCL OF TAXES"
+        },
+        "net_qty": {
+          "val": 200.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "fragmented_ocr",
+        "duration_ms": 22685.15,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 85.0,
+          "status": "confirmed",
+          "raw": "M.R.P. Rs. 85.00"
+        },
+        "net_qty": {
+          "val": 500.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "multiple_dates",
+        "duration_ms": 12312.19,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "multiple_numeric_values",
+        "duration_ms": 26322.8,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 60.0,
+          "status": "confirmed",
+          "raw": "MRP Rs. 60.00 (INCL. TAXES)"
+        },
+        "net_qty": {
+          "val": 150.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "dense_text_parties",
+        "duration_ms": 5898.1,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "ambiguous_ocr_mrp",
+        "duration_ms": 34382.21,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "ambiguous",
+          "raw": "MRP Rs SO"
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "missing_declarations_adversarial",
+        "duration_ms": 14425.57,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": 500.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "unreadable_image_ocr",
+        "duration_ms": 36047.19,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "isolated_ambiguous_date",
+        "duration_ms": 2571.81,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "multilingual_ocr",
+        "duration_ms": 5057.98,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 85.0,
+          "status": "confirmed",
+          "raw": "\u0905\u0927\u093f\u0915\u0924\u092e \u0916\u0941\u0926\u0930\u093e \u092e\u0942\u0932\u094d\u092f / MRP: Rs 85.00"
+        },
+        "net_qty": {
+          "val": 1.0,
+          "unit": "kg",
+          "status": "confirmed"
+        }
+      }
+    ]
+  },
+  "gemini_2_5_flash_lite": {
+    "provider": "gemini",
+    "model": "gemini-2.5-flash-lite",
+    "scenarios_tested": 11,
+    "latency_ms": {
+      "mean": 3399.58,
+      "p50": 3475.17,
+      "p95": 5275.18,
+      "min": 2056.14,
+      "max": 5275.18
+    },
+    "tokens": {
+      "mean_in": 1754.6,
+      "mean_out": 913.4
+    },
+    "rates": {
+      "schema_success_rate": 1.0,
+      "extraction_accuracy": 0.8182,
+      "hallucination_rate": 0.0,
+      "ambiguity_preservation_rate": 1.0,
+      "null_correctness_rate": 1.0
+    },
+    "process_memory_mb": {
+      "before": 73.98,
+      "after": 74.7,
+      "diff": 0.72
+    },
+    "scenarios": [
+      {
+        "scenario": "clean_ocr_full",
+        "duration_ms": 5275.18,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 260.0,
+          "status": "confirmed",
+          "raw": "MRP Rs. 260.00 (INCL. OF ALL TAXES)"
+        },
+        "net_qty": {
+          "val": 5000.0,
+          "unit": "kg",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "ocr_typo_mrp",
+        "duration_ms": 3349.12,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "ambiguous",
+          "raw": "MRP Rs. 4O.0O INCL OF TAXES"
+        },
+        "net_qty": {
+          "val": 200.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "fragmented_ocr",
+        "duration_ms": 3643.84,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 85.0,
+          "status": "confirmed",
+          "raw": "Rs. 85.00"
+        },
+        "net_qty": {
+          "val": 500.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "multiple_dates",
+        "duration_ms": 3941.03,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "multiple_numeric_values",
+        "duration_ms": 3671.4,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 60.0,
+          "status": "confirmed",
+          "raw": "MRP Rs. 60.00 (INCL. TAXES)"
+        },
+        "net_qty": {
+          "val": 150.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "dense_text_parties",
+        "duration_ms": 3634.96,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "ambiguous_ocr_mrp",
+        "duration_ms": 2589.09,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "ambiguous",
+          "raw": "MRP Rs SO"
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "missing_declarations_adversarial",
+        "duration_ms": 3214.88,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": 500.0,
+          "unit": "g",
+          "status": "confirmed"
+        }
+      },
+      {
+        "scenario": "unreadable_image_ocr",
+        "duration_ms": 2056.14,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "isolated_ambiguous_date",
+        "duration_ms": 2544.54,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": null,
+          "status": "not_observed",
+          "raw": null
+        },
+        "net_qty": {
+          "val": null,
+          "unit": null,
+          "status": "not_observed"
+        }
+      },
+      {
+        "scenario": "multilingual_ocr",
+        "duration_ms": 3475.17,
+        "status": "SUCCESS",
+        "schema_valid": true,
+        "hallucinated": false,
+        "mrp": {
+          "val": 85.0,
+          "status": "confirmed",
+          "raw": "\u0905\u0927\u093f\u0915\u0924\u092e \u0916\u0941\u0926\u0930\u093e \u092e\u0942\u0932\u094d\u092f / MRP: Rs 85.00"
+        },
+        "net_qty": {
+          "val": 1000.0,
+          "unit": "kg",
+          "status": "confirmed"
+        }
+      }
+    ]
+  }
+}

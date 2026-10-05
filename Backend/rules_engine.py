@@ -78,6 +78,7 @@ class CheckContext:
     measured_widths_mm: dict = field(default_factory=dict)
     clear_space_mm: dict = field(default_factory=dict)
     contrast_ratio: float | None = None
+    llm_result: Any = None  # StructuredDeclarationResult (Phase 3)
 
     # --- image quality ---
     image_usable: bool = True

@@ -186,17 +186,23 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"
     GEMINI_TIMEOUT_S: float = 8.0
 
-    # Free Ultra-fast Vision OCR: Groq (console.groq.com/keys) - ~0.4s latency.
-    # NOTE: llama-3.2-*-vision-preview was decommissioned by Groq; llama-4-scout
-    # is the current free vision model (image_url in chat completions).
+    # Free Ultra-fast Vision OCR / Cloud LLM: Groq (console.groq.com/keys)
     GROQ_API_KEY: str | None = None
-    GROQ_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
-    GROQ_TIMEOUT_S: float = 8.0
+    GROQ_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_TIMEOUT_S: float = 12.0
 
     # Azure AI Vision OCR (Read API v4.0 / Analyze features=read)
     AZURE_VISION_KEY: str | None = None
     AZURE_VISION_ENDPOINT: str | None = None
     AZURE_VISION_TIMEOUT_S: float = 15.0
+
+    # --- Phase 3: Cloud LLM Structured Declaration Extraction ---
+    LLM_PROVIDER: str = "groq"              # groq | gemini | auto
+    LLM_MODEL: str = "openai/gpt-oss-20b"   # primary high-speed model
+    LLM_FALLBACK_PROVIDER: str = "gemini"   # fallback provider
+    LLM_FALLBACK_MODEL: str = "gemini-2.5-flash-lite"
+    LLM_TIMEOUT_S: float = 12.0
+    LLM_CACHE_ENABLED: bool = True
 
     # --- rules ---
     RULES_AS_AT: str = "2026-07-01"        # C6; GSR 128(E) in force

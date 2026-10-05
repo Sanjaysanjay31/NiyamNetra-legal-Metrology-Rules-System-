@@ -1206,10 +1206,31 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         ctx.ocr_failure_reason = ocr.failure_reason
     elif _fail_reason and not _all_lines:
         ctx.ocr_failure_reason = _fail_reason
-    else:
-        ctx.ocr_failure_reason = ocr.failure_reason
     ctx.ocr_mean_confidence = ocr.mean_confidence
-    ctx.fields = extract_fields(ocr)
+
+    # Phase 3: Cloud LLM Structured Declaration Extraction
+    # OCR READS. LLM STRUCTURES. RULES DECIDE. (Sections 2, 4, 6, 25)
+    from llm import LLM_STATUS_SUCCESS, structure_inspection_ocr
+    try:
+        _input_panels = _ocr_results if _ocr_results else [ocr]
+        _llm_res = structure_inspection_ocr(
+            _input_panels,
+            evidence_meta={"scan_id": scan.id, "inspection_id": scan.inspection_id},
+        )
+        ctx.llm_result = _llm_res
+        if _llm_res and _llm_res.metadata.get("status") == LLM_STATUS_SUCCESS:
+            ctx.fields = _llm_res.to_extracted_fields()
+            scan.llm_structured_data = _json.dumps(_llm_res.to_dict())
+            scan.llm_provider = _llm_res.metadata.get("llm_provider")
+            scan.llm_model = _llm_res.metadata.get("llm_model")
+            scan.llm_duration_ms = _llm_res.metadata.get("llm_duration_ms")
+            scan.llm_cache_hash = _llm_res.metadata.get("evidence_fingerprint")
+        else:
+            ctx.fields = extract_fields(ocr)
+    except Exception as _llm_err:
+        import logging as _log
+        _log.getLogger("niyamnetra.llm").warning("LLM structuring fallback to regex: %s", _llm_err)
+        ctx.fields = extract_fields(ocr)
     try:
         ctx.ocr_full_text = ocr.full_text  # consumed by assess for scan.ocr_text persistence
     except Exception:

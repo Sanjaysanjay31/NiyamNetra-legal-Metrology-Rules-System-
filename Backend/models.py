@@ -193,6 +193,12 @@ class Scan(Base):
     # rehydrated instead of re-running cloud OCR. None = never cached.
     ocr_cache_hash: Mapped[str | None] = mapped_column(String(64))
     ocr_cache: Mapped[str | None] = mapped_column(Text)
+    # LLM Structured Declaration extraction cache & provenance (Phase 3)
+    llm_structured_data: Mapped[str | None] = mapped_column(Text, default=None)
+    llm_cache_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    llm_provider: Mapped[str | None] = mapped_column(String(32), default=None)
+    llm_model: Mapped[str | None] = mapped_column(String(64), default=None)
+    llm_duration_ms: Mapped[float | None] = mapped_column(Float, default=None)
     # E-commerce listing (CHK15/CHK16): persisted by POST /scans/{id}/listing
     # so build_context can assess Rule 6(10) without re-fetching. Nullable for
     # pre-migration rows (getattr fallback in build_context handles absence).
