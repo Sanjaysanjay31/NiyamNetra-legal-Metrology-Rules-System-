@@ -106,18 +106,28 @@ app.include_router(enforcement.router)
 
 @app.get("/health", tags=["meta"])
 def health():
-    from rules_engine import ALL_CHECK_IDS, catalog_hash
+    import hashlib
     import shutil
+    from rules.loader import load_rule_pack, RULE_PACK_2026_09_FILE
+
+    pack = load_rule_pack(settings.RULE_PACK_VERSION)
+    cat_hash = hashlib.sha256(RULE_PACK_2026_09_FILE.read_bytes()).hexdigest()
+    enabled_rules = [r for r in pack.rules if r.enabled]
+
     try:
         free_gb = shutil.disk_usage(settings.EVIDENCE_DIR).free / (1024 ** 3)
     except Exception:
         free_gb = None
+
     return {
         "status": "ok",
         "engine_version": settings.ENGINE_VERSION,
-        "rules_as_at": settings.RULES_AS_AT,
-        "catalog_hash": catalog_hash(),
-        "checks_registered": len(ALL_CHECK_IDS),
+        "rule_pack_version": pack.rule_pack_version,
+        "active_rule_pack_version": pack.rule_pack_version,
+        "rules_as_at": pack.rules_as_at,
+        "catalog_hash": cat_hash,
+        "checks_registered": len(enabled_rules),
+        "total_rules": len(pack.rules),
         "evidence_free_gb": round(free_gb, 2) if free_gb is not None else None,
         "evidence_low": free_gb is not None and free_gb < settings.EVIDENCE_MIN_FREE_GB,
     }

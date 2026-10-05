@@ -41,9 +41,12 @@ def engine(request):
     else:
         eng = _build(SQLITE_URL)
 
+    from pathlib import Path
     from alembic import command
     from alembic.config import Config
-    cfg = Config("alembic.ini")
+    ini_path = Path(__file__).resolve().parent.parent / "alembic.ini"
+    cfg = Config(str(ini_path))
+    cfg.set_main_option("script_location", str(ini_path.parent / "alembic"))
     cfg.set_main_option("sqlalchemy.url", str(eng.url))
     command.upgrade(cfg, "head")     # NOT create_all — the constraints matter
     yield eng

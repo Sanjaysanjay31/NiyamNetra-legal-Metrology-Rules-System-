@@ -128,7 +128,10 @@ def test_scan_images_row_cannot_be_deleted():
     os.close(_fd)
     eng = create_engine(f"sqlite:///{_dbpath}")
     try:
-        cfg = Config("alembic.ini")
+        from pathlib import Path
+        ini_path = Path(__file__).resolve().parent.parent / "alembic.ini"
+        cfg = Config(str(ini_path))
+        cfg.set_main_option("script_location", str(ini_path.parent / "alembic"))
         cfg.set_main_option("sqlalchemy.url", f"sqlite:///{_dbpath}")
         command.upgrade(cfg, "head")
 

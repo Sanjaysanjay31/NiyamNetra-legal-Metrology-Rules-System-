@@ -4,24 +4,17 @@
 // 1. Target mode: 'lan' for local laptop on Wi-Fi, or 'render' for cloud backend
 export const ACTIVE_BACKEND = 'render'; // 'lan' | 'render'
 
-// 2. Your Laptop Wi-Fi IPv4 Address (find by running `ipconfig` in terminal)
-// NOTE: this laptop has VMware adapters too (192.168.32.1 / 192.168.52.1) — the
-// Wi-Fi adapter is the one to use, and it CHANGES with every network, so re-run
-// `ipconfig` after switching Wi-Fi and update this line.
-export const LAPTOP_WIFI_IP = '192.168.101.72';
-
-// 3. Backend port
-export const API_PORT = 8000;
-
-// 4. Render Cloud Deployed Backend URL (no trailing slash)
+// 2. Production API Base URL
 export const RENDER_API_URL = 'https://niyamnetra-backend.onrender.com';
+export const API_PORT = 8000;
 // ============================================================================
 
 import { Platform, NativeModules } from 'react-native';
 
 export const EVIDENCE_MIN_FREE_GB = 5;
 export const EVIDENCE_MIN_FREE_BYTES = EVIDENCE_MIN_FREE_GB * 1024 ** 3;
-export const LOCAL_API_URL = 'http://127.0.0.1:8000';
+export const LOCAL_API_URL = RENDER_API_URL;
+export const LAPTOP_WIFI_IP = '';
 
 // ---------------------------------------------------------------------------
 // Screen capture / recording policy for the field app.
@@ -35,12 +28,9 @@ export const LOCAL_API_URL = 'http://127.0.0.1:8000';
 //         to security reasons". Never set this for a demo build.
 export const ALLOW_SCREEN_CAPTURE = true;
 
-// Host resolution for LAN mode
+// Host resolution
 function resolveHost() {
-  if (Platform.OS === 'web') {
-    return (typeof window !== 'undefined' && window.location && window.location.hostname) || '127.0.0.1';
-  }
-  return LAPTOP_WIFI_IP;
+  return RENDER_API_URL;
 }
 
 export function resolveApiBaseUrl() {
@@ -109,7 +99,7 @@ export const BACKEND_TARGETS = {
   lan: {
     label: 'Wi-Fi (Laptop)',
     hint: 'Local server on Wi-Fi',
-    resolve: () => `http://${resolveHost()}:${API_PORT}`,
+    resolve: () => RENDER_API_URL,
   },
   render: {
     label: 'Cloud (Render)',
@@ -119,12 +109,12 @@ export const BACKEND_TARGETS = {
   local: {
     label: 'Local (This PC)',
     hint: 'Localhost on this device',
-    resolve: () => LOCAL_API_URL,
+    resolve: () => RENDER_API_URL,
   },
   custom: {
     label: 'Custom URL',
     hint: 'User-provided backend address',
-    resolve: () => customUrl || `http://${resolveHost()}:${API_PORT}`,
+    resolve: () => customUrl || RENDER_API_URL,
   },
 };
 

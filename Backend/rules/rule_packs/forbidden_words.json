@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "purpose": "Prohibited qualifier words for the net-quantity declaration, read by rules_engine.forbidden_qualifiers() and matched case-insensitively with word boundaries against the OCR-read net-quantity line (CHK05, ledger L-01). The net quantity must be stated in the prescribed unit as a plain figure, without any word that qualifies, hedges, or averages it.",
+    "matching": "Each word is tested as re.search(r'\\b<word>\\b', line.lower()); keep entries lowercase. Symbols without word boundaries (e.g. plus-minus) are not listed because \\b cannot anchor them."
+  },
+  "words": [
+    "minimum",
+    "min",
+    "maximum",
+    "max",
+    "average",
+    "avg",
+    "mean",
+    "approx",
+    "approximately",
+    "about",
+    "around",
+    "nearly",
+    "roughly",
+    "gross",
+    "when packed",
+    "at time of packing",
+    "at the time of packing",
+    "not less than",
+    "no less than",
+    "upto",
+    "up to",
+    "and above",
+    "or more",
+    "or less",
+    "and below",
+    "guaranteed"
+  ]
+}

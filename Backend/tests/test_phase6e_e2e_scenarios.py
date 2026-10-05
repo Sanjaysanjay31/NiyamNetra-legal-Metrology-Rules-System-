@@ -605,3 +605,19 @@ def test_latency_telemetry_benchmark():
     assert mean < 3000, f"Mean latency {mean}ms exceeds 3000ms threshold"
     assert p50 < 3000, f"p50 latency {p50}ms exceeds 3000ms threshold"
     assert p95 < 3500, f"p95 latency {p95}ms exceeds 3500ms threshold"
+
+
+def test_health_active_rule_pack_metadata():
+    """Verify /health dynamically reports active rule pack 2026.09.v1 and Fourth Amendment baseline."""
+    env = _setup_e2e_db()
+    client = env["client"]
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["rule_pack_version"] == "2026.09.v1"
+    assert data["active_rule_pack_version"] == "2026.09.v1"
+    assert data["rules_as_at"] == "2026-09-21"
+    assert data["checks_registered"] == 26
+    assert data["total_rules"] == 26
+    assert len(data["catalog_hash"]) == 64

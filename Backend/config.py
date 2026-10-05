@@ -205,9 +205,10 @@ class Settings(BaseSettings):
     LLM_CACHE_ENABLED: bool = True
 
     # --- rules ---
-    RULES_AS_AT: str = "2026-07-01"        # C6; GSR 128(E) in force
-    RULES_CATALOG: Path = BASE_DIR / "rules" / "catalog_2026_07_01.json"
-    ENGINE_VERSION: str = "2.0.0"
+    RULE_PACK_VERSION: str = "2026.09.v1"
+    RULES_AS_AT: str = "2026-09-21"        # Fourth Amendment (GSR 826(E)) in force
+    RULES_CATALOG: Path = BASE_DIR / "rules" / "rule_packs" / "lmpc_2026_09_v1.json"
+    ENGINE_VERSION: str = "2.4.0"
 
     # --- supabase storage (optional mirror; local remains primary) ---
     SUPABASE_URL: str | None = None
