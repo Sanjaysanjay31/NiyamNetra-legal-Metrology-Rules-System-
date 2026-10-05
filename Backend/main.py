@@ -114,10 +114,18 @@ def health():
     cat_hash = hashlib.sha256(RULE_PACK_2026_09_FILE.read_bytes()).hexdigest()
     enabled_rules = [r for r in pack.rules if r.enabled]
 
+    db_status = "ok"
+    db_engine = "unknown"
+    db_error = None
     try:
-        free_gb = shutil.disk_usage(settings.EVIDENCE_DIR).free / (1024 ** 3)
-    except Exception:
-        free_gb = None
+        from database import SessionLocal, engine as db_eng
+        from sqlalchemy import text
+        db_engine = str(db_eng.url).split("://")[0]
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = "error"
+        db_error = str(e)
 
     return {
         "status": "ok",
@@ -128,6 +136,9 @@ def health():
         "catalog_hash": cat_hash,
         "checks_registered": len(enabled_rules),
         "total_rules": len(pack.rules),
+        "db_status": db_status,
+        "db_engine": db_engine,
+        "db_error": db_error,
         "evidence_free_gb": round(free_gb, 2) if free_gb is not None else None,
         "evidence_low": free_gb is not None and free_gb < settings.EVIDENCE_MIN_FREE_GB,
     }
