@@ -39,6 +39,17 @@ class FindingResult:
     remediation: str | None = None
     evidence_provenance: dict[str, Any] | None = None
     evaluation_timestamp: str | None = None
+    # --- visual finding attributes (Phase 4C) ---
+    measured_value: float | None = None
+    measured_unit: str | None = None
+    threshold_value: float | None = None
+    measurement_uncertainty: float | None = None
+    calibration_source: str | None = None
+    engineering_signal: dict[str, Any] | None = None
+    artifact_type: str | None = None
+    target_bbox: tuple[int, int, int, int] | None = None
+    image_id: str | None = None
+    panel: str | None = None
 
 
 @dataclass(slots=True)
@@ -96,6 +107,19 @@ class CheckContext:
     platform_has_origin_filter: bool | None = None
 
     rules_as_at: date = field(default_factory=lambda: date.fromisoformat(settings.RULES_AS_AT))
+
+    # --- Phase 4C visual, geometry & calibration extensions ---
+    calibration_spec: Any = None
+    rectified_image: Any = None
+    analysis_image: Any = None
+    declaration_bboxes: dict = field(default_factory=dict)
+    clear_space_image_verified: bool | None = None
+    verify_clear_space_image: bool = False
+    engineering_contrast_signal: dict = field(default_factory=dict)
+    use_visual_evaluator: bool = False
+    declaration_outside_pdp: bool = False
+    pdp_detected: bool = False
+    coverage_sufficient: bool | None = None
 
     # --- set by the runner, read by later checks ---
     halted: str | None = None          # the check_id that halted the run
@@ -904,6 +928,17 @@ def _phase3_gate(t: FindingResult, ctx: CheckContext) -> FindingResult | None:
 @check("CHK06")
 def chk06_character_height(ctx: CheckContext) -> FindingResult:
     """Rule 7(2) with Table-I. Ledger L-11."""
+    if (
+        getattr(ctx, "use_visual_evaluator", False)
+        or getattr(ctx, "calibration_spec", None) is not None
+        or ctx.scale_source in {"validated_reference", "id1_card", "coin_5inr", "optical_target", "calibrated_ruler"}
+    ):
+        try:
+            from rules.visual_evaluator import evaluate_character_height
+            return evaluate_character_height(ctx)
+        except Exception:
+            pass
+
     t = FindingResult(
         "CHK06", "Character height meets Table-I for the panel area", "pass", "major",
         citation=cite("R7-2", "Rule 7(2) read with Table-I as substituted w.e.f 01.01.2018"),
@@ -954,12 +989,18 @@ def chk06_character_height(ctx: CheckContext) -> FindingResult:
 def chk06b_net_quantity_height(ctx: CheckContext) -> FindingResult:
     """Rule 7 prescribes a separate, larger minimum height for the net quantity
     declaration specifically, keyed to the quantity itself.
-
-    Ledger L-04: that table has NOT been transcribed. This check therefore
-    always returns not_assessed with the reason stated, and will begin
-    returning verdicts the moment the table is added to the catalog. It is a
-    row in every report so that the gap is visible rather than invisible.
     """
+    if (
+        getattr(ctx, "use_visual_evaluator", False)
+        or getattr(ctx, "calibration_spec", None) is not None
+        or ctx.scale_source in {"validated_reference", "id1_card", "coin_5inr", "optical_target", "calibrated_ruler"}
+    ):
+        try:
+            from rules.visual_evaluator import evaluate_net_quantity_height
+            return evaluate_net_quantity_height(ctx)
+        except Exception:
+            pass
+
     t = FindingResult(
         "CHK06b", "Net-quantity declaration meets its own minimum height",
         "not_assessed", "major",
@@ -1030,6 +1071,13 @@ WIDTH_RATIO = 1 / 3
 
 @check("CHK07")
 def chk07_character_width(ctx: CheckContext) -> FindingResult:
+    if getattr(ctx, "use_visual_evaluator", False):
+        try:
+            from rules.visual_evaluator import evaluate_character_width
+            return evaluate_character_width(ctx)
+        except Exception:
+            pass
+
     t = FindingResult(
         "CHK07", "Character width at least one-third of height", "pass", "minor",
         citation=cite("R7-3", "Rule 7(3), character width"),
@@ -1065,6 +1113,17 @@ def chk07_character_width(ctx: CheckContext) -> FindingResult:
 @check("CHK09")
 def chk09_clear_space(ctx: CheckContext) -> FindingResult:
     """Rule 8. Ledger L-09 — the multipliers are UNVERIFIED."""
+    if (
+        getattr(ctx, "use_visual_evaluator", False)
+        or getattr(ctx, "clear_space_image_verified", None) is not None
+        or getattr(ctx, "verify_clear_space_image", False)
+    ):
+        try:
+            from rules.visual_evaluator import evaluate_clear_space
+            return evaluate_clear_space(ctx)
+        except Exception:
+            pass
+
     t = FindingResult(
         "CHK09", "Clear space around the net-quantity declaration", "pass", "minor",
         citation=cite("R8", "Rule 8, clear space around the net-quantity declaration"),
@@ -1124,6 +1183,13 @@ def chk08_contrast(ctx: CheckContext) -> FindingResult:
     exists. The engine therefore reports the measured ratio and returns an
     INDICATIVE observation — it never invents a statutory threshold.
     """
+    if getattr(ctx, "use_visual_evaluator", False) or getattr(ctx, "engineering_contrast_signal", None):
+        try:
+            from rules.visual_evaluator import evaluate_conspicuous_contrast
+            return evaluate_conspicuous_contrast(ctx)
+        except Exception:
+            pass
+
     t = FindingResult(
         "CHK08", "Declarations contrast conspicuously with the background",
         "pass", "minor",

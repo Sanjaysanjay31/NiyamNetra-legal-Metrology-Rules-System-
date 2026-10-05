@@ -296,17 +296,55 @@
       "enabled": true
     },
     {
-      "rule_id": "RULE_LMPC_07_CLEAR_SPACE",
+      "rule_id": "RULE_LMPC_07_CHARACTER_WIDTH",
       "code": "CHK07",
       "rule_pack_version": "2026.07.v1",
-      "title": "Surrounding clear space around mandatory declarations under Rule 9(3)",
+      "title": "Character width at least one-third of height under Rule 7(3)",
       "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
-      "source_rule": "Rule 9(3)",
+      "source_rule": "Rule 7(3)",
       "amendment_reference": null,
       "effective_from": "2011-03-07",
       "effective_to": null,
       "severity": "minor",
-      "statutory_limb": null,
+      "statutory_limb": "36(1)",
+      "ledger_ref": "L-07",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Width must be at least one-third of height, exempting narrow glyphs 1, i, I, l"
+      },
+      "required_evidence": ["ocr_bounding_box", "calibration_scale"],
+      "required_fields": ["measured_widths_mm", "measured_heights_mm"],
+      "evaluation_method": {
+        "method": "character_width_check",
+        "parameters": {
+          "min_width_ratio": 0.3333,
+          "exempt_glyphs": ["1", "i", "I", "l"]
+        }
+      },
+      "remediation": "Ensure character width is at least one-third of character height, except for narrow glyphs (1, i, I, l).",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_08_CONSPICUOUS_CONTRAST",
+      "code": "CHK08",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Conspicuous contrast of declarations with background under Rule 9(1)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 9(1)",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "minor",
+      "statutory_limb": "36(1)",
       "ledger_ref": "L-10",
       "applicability": {
         "inspection_sources": ["physical_package"],
@@ -319,29 +357,32 @@
         "has_sticker": null,
         "max_weight_kg": null,
         "max_volume_l": null,
-        "notes": "Clear space must equal letter height vertically and half letter height horizontally"
+        "notes": "Declarations must be conspicuous and distinct; proviso exempts blown/moulded/embossed information"
       },
-      "required_evidence": ["ocr_bounding_box", "calibration_scale"],
-      "required_fields": ["clear_space_mm"],
+      "required_evidence": ["image_pixels"],
+      "required_fields": ["contrast_ratio"],
       "evaluation_method": {
-        "method": "clear_space_check",
-        "parameters": {}
+        "method": "contrast_conspicuous_check",
+        "parameters": {
+          "statutory_threshold": null,
+          "proviso_exemptions": ["blown", "formed", "moulded", "embossed", "debossed"]
+        }
       },
-      "remediation": "Maintain free clear space around mandatory declarations free of conflicting artwork, graphics, or text.",
+      "remediation": "Print mandatory declarations in a colour that contrasts conspicuously with the package background, unless blown/moulded on glass or plastic.",
       "enabled": true
     },
     {
-      "rule_id": "RULE_LMPC_08_CONTRAST_RATIO",
-      "code": "CHK08",
+      "rule_id": "RULE_LMPC_09_CLEAR_SPACE",
+      "code": "CHK09",
       "rule_pack_version": "2026.07.v1",
-      "title": "Visual contrast ratio between declaration text and background under Rule 9(1)",
+      "title": "Clear surrounding space around net-quantity declaration under Rule 8",
       "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
-      "source_rule": "Rule 9(1)",
+      "source_rule": "Rule 8",
       "amendment_reference": null,
       "effective_from": "2011-03-07",
       "effective_to": null,
       "severity": "minor",
-      "statutory_limb": null,
+      "statutory_limb": "36(2)",
       "ledger_ref": "L-09",
       "applicability": {
         "inspection_sources": ["physical_package"],
@@ -354,26 +395,27 @@
         "has_sticker": null,
         "max_weight_kg": null,
         "max_volume_l": null,
-        "notes": "Declarations must be conspicuous, legible, and distinctly contrasted"
+        "notes": "Quantity declaration must be surrounded by clear space (1x numeral height vertically, 2x horizontally)"
       },
-      "required_evidence": ["image_pixels"],
-      "required_fields": ["contrast_ratio"],
+      "required_evidence": ["geometry_pdp", "calibration_scale", "ocr_bounding_box"],
+      "required_fields": ["clear_space_mm", "measured_heights_mm"],
       "evaluation_method": {
-        "method": "contrast_ratio_check",
+        "method": "clear_space_check",
         "parameters": {
-          "min_contrast_ratio": 2.5
+          "vertical_multiple": 1.0,
+          "horizontal_multiple": 2.0
         }
       },
-      "remediation": "Print mandatory declarations with prominent contrast against package background to guarantee effortless consumer legibility.",
+      "remediation": "Maintain clear space surrounding the net quantity declaration (at least equal to numeral height vertically and twice numeral height horizontally) free of conflicting graphics, artwork, or text.",
       "enabled": true
     },
     {
-      "rule_id": "RULE_LMPC_09_PDP_PLACEMENT",
-      "code": "CHK09",
+      "rule_id": "RULE_LMPC_22_PDP_PLACEMENT",
+      "code": "CHK22",
       "rule_pack_version": "2026.07.v1",
-      "title": "Placement of mandatory declarations on Principal Display Panel under Rule 6(1) & Rule 7",
+      "title": "Placement of mandatory declarations on Principal Display Panel under Rule 8",
       "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
-      "source_rule": "Rule 6(1) & Rule 7",
+      "source_rule": "Rule 8",
       "amendment_reference": null,
       "effective_from": "2011-03-07",
       "effective_to": null,
@@ -391,7 +433,7 @@
         "has_sticker": null,
         "max_weight_kg": null,
         "max_volume_l": null,
-        "notes": "Net quantity and retail price must be placed on the principal display panel"
+        "notes": "Net quantity and retail sale price must appear on the principal display panel"
       },
       "required_evidence": ["geometry_pdp", "ocr_provenance"],
       "required_fields": ["panel"],
