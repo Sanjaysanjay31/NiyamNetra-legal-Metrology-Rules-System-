@@ -7,7 +7,8 @@
     "start:clear": "expo start -c",
     "web": "expo start --web",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "test": "node run_all_tests.js"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
