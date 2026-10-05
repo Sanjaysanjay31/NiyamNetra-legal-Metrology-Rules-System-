@@ -140,21 +140,21 @@
       "enabled": true
     },
     {
-      "rule_id": "RULE_LMPC_04_PRESCRIBED_PACKAGE_SIZES",
+      "rule_id": "RULE_LMPC_04_MRP_FORM",
       "code": "CHK04",
       "rule_pack_version": "2026.07.v1",
-      "title": "Standard prescribed packaging quantities under Rule 5 and Second Schedule",
+      "title": "Retail sale price correctly expressed under Rule 6(1)(e) read with Rule 2(m)",
       "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
-      "source_rule": "Rule 5 & Second Schedule",
-      "amendment_reference": "GSR 629(E) dated 23.06.2017",
+      "source_rule": "Rule 6(1)(e) & Rule 2(m)",
+      "amendment_reference": null,
       "effective_from": "2011-03-07",
       "effective_to": null,
       "severity": "major",
       "statutory_limb": "36(1)",
-      "ledger_ref": "L-05",
+      "ledger_ref": "L-02",
       "applicability": {
         "inspection_sources": ["physical_package"],
-        "target_commodities": ["tea", "biscuits", "baby_food", "edible_oil", "rice", "wheat_flour"],
+        "target_commodities": ["all"],
         "excluded_commodities": [],
         "transaction_types": ["retail"],
         "is_imported": null,
@@ -163,17 +163,15 @@
         "has_sticker": null,
         "max_weight_kg": 25.0,
         "max_volume_l": 25.0,
-        "notes": "Applies only to commodities listed in the Second Schedule"
+        "notes": "MRP must be clearly expressed as Maximum Retail Price inclusive of all taxes"
       },
-      "required_evidence": ["ocr_evidence", "catalog_schedule"],
-      "required_fields": ["commodity_category", "net_quantity_value"],
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": ["mrp"],
       "evaluation_method": {
-        "method": "schedule_lookup",
-        "parameters": {
-          "schedule_table": "second_schedule"
-        }
+        "method": "mrp_expression_check",
+        "parameters": {}
       },
-      "remediation": "Package sizes for specified scheduled commodities must conform to the standard rationalized pack sizes prescribed in the Second Schedule.",
+      "remediation": "Express retail sale price clearly in Indian Rupees (Rs. or ₹) qualified with 'inclusive of all taxes' or 'incl. of all taxes'.",
       "enabled": true
     },
     {
@@ -407,38 +405,40 @@
       "enabled": true
     },
     {
-      "rule_id": "RULE_LMPC_10_MRP_ALTERATION_DUAL",
+      "rule_id": "RULE_LMPC_10_PRESCRIBED_PACKAGE_SIZES",
       "code": "CHK10",
       "rule_pack_version": "2026.07.v1",
-      "title": "Prohibition on dual pricing, smudging, or overwriting MRP under Rule 18(2)",
+      "title": "Standard prescribed packaging quantities under Rule 5 and Second Schedule",
       "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
-      "source_rule": "Rule 18(2)",
-      "amendment_reference": null,
+      "source_rule": "Rule 5 read with the Second Schedule",
+      "amendment_reference": "GSR 629(E) dated 23.06.2017",
       "effective_from": "2011-03-07",
       "effective_to": null,
-      "severity": "critical",
+      "severity": "minor",
       "statutory_limb": "36(1)",
-      "ledger_ref": null,
+      "ledger_ref": "L-05",
       "applicability": {
         "inspection_sources": ["physical_package"],
-        "target_commodities": ["all"],
+        "target_commodities": ["tea", "biscuits", "baby_food", "edible_oil", "rice", "wheat_flour"],
         "excluded_commodities": [],
         "transaction_types": ["retail"],
         "is_imported": null,
         "is_perishable": null,
         "is_medical_device": null,
         "has_sticker": null,
-        "max_weight_kg": null,
-        "max_volume_l": null,
-        "notes": "Prohibits any person from altering, obliterating, or smudging the retail sale price"
+        "max_weight_kg": 25.0,
+        "max_volume_l": 25.0,
+        "notes": "Applies only to commodities listed in the Second Schedule"
       },
-      "required_evidence": ["ocr_evidence"],
-      "required_fields": ["mrp"],
+      "required_evidence": ["ocr_evidence", "catalog_schedule"],
+      "required_fields": ["commodity_category", "net_quantity_value"],
       "evaluation_method": {
-        "method": "dual_pricing_check",
-        "parameters": {}
+        "method": "schedule_lookup",
+        "parameters": {
+          "schedule_table": "second_schedule"
+        }
       },
-      "remediation": "Do not overwrite, smudge, obliterate, or affix conflicting higher price stickers over the original MRP.",
+      "remediation": "Package sizes for specified scheduled commodities must conform to the standard rationalized pack sizes prescribed in the Second Schedule.",
       "enabled": true
     },
     {

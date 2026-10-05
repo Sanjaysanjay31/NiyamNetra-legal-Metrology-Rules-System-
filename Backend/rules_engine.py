@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 from cachetools import TTLCache, cached
 
@@ -34,6 +34,11 @@ class FindingResult:
     ledger_ref: str | None = None
     confidence: float | None = None
     limb: str | None = None            # "36(1)" | "36(2)" — set only on fail
+    rule_id: str | None = None
+    rule_pack_version: str | None = None
+    remediation: str | None = None
+    evidence_provenance: dict[str, Any] | None = None
+    evaluation_timestamp: str | None = None
 
 
 @dataclass(slots=True)
@@ -414,6 +419,14 @@ RULE_6_DECLARATIONS = (
 
 @check("CHK01")
 def chk01_declarations_present(ctx: CheckContext) -> FindingResult:
+    if getattr(ctx, "llm_result", None) is not None:
+        try:
+            from llm.schema import StructuredDeclarationResult
+            if isinstance(ctx.llm_result, StructuredDeclarationResult):
+                from rules.evaluator import evaluate_mandatory_declarations
+                return evaluate_mandatory_declarations(ctx.llm_result, ctx)
+        except Exception:
+            pass
     t = FindingResult(
         "CHK01", "All mandatory Rule 6 declarations present", "pass", "critical",
         citation=cite("R6", "Rule 6(1) and 6(2), mandatory declarations"),
@@ -460,6 +473,14 @@ def chk01_declarations_present(ctx: CheckContext) -> FindingResult:
 @check("CHK04")
 def chk04_mrp_form(ctx: CheckContext) -> FindingResult:
     """Rule 6(1)(e) with Rule 2(m); dual MRP prohibited by Rule 6(2A)."""
+    if getattr(ctx, "llm_result", None) is not None:
+        try:
+            from llm.schema import StructuredDeclarationResult
+            if isinstance(ctx.llm_result, StructuredDeclarationResult):
+                from rules.evaluator import evaluate_mrp_expression
+                return evaluate_mrp_expression(ctx.llm_result, ctx)
+        except Exception:
+            pass
     t = FindingResult(
         "CHK04", "Retail sale price correctly expressed", "pass", "major",
         citation=cite("R6-1-e", "Rule 6(1)(e) read with Rule 2(m)"),
@@ -570,6 +591,14 @@ COUNT_UNITS = {"n", "u"}     # numbers/units — permissible for count, not SI
 
 @check("CHK05")
 def chk05_net_quantity_expression(ctx: CheckContext) -> FindingResult:
+    if getattr(ctx, "llm_result", None) is not None:
+        try:
+            from llm.schema import StructuredDeclarationResult
+            if isinstance(ctx.llm_result, StructuredDeclarationResult):
+                from rules.evaluator import evaluate_net_quantity_expression
+                return evaluate_net_quantity_expression(ctx.llm_result, ctx)
+        except Exception:
+            pass
     t = FindingResult(
         "CHK05", "Net quantity free of qualifiers and in permitted units",
         "pass", "major",
@@ -673,6 +702,14 @@ def chk11_sticker(ctx: CheckContext) -> FindingResult:
 @check("CHK12")
 def chk12_country_of_origin(ctx: CheckContext) -> FindingResult:
     """Rule 6(1)(aa), inserted by GSR 629(E) w.e.f 01.01.2018."""
+    if getattr(ctx, "llm_result", None) is not None:
+        try:
+            from llm.schema import StructuredDeclarationResult
+            if isinstance(ctx.llm_result, StructuredDeclarationResult):
+                from rules.evaluator import evaluate_country_of_origin_declaration
+                return evaluate_country_of_origin_declaration(ctx.llm_result, ctx)
+        except Exception:
+            pass
     t = FindingResult(
         "CHK12", "Country of origin declared on imported goods", "pass", "major",
         citation=cite("R6-1-aa", "Rule 6(1)(aa), country of origin"),
@@ -718,6 +755,14 @@ def chk12_country_of_origin(ctx: CheckContext) -> FindingResult:
 @check("CHK13")
 def chk13_best_before(ctx: CheckContext) -> FindingResult:
     """Rule 6(1)(da), inserted by GSR 629(E) w.e.f 01.01.2018."""
+    if getattr(ctx, "llm_result", None) is not None:
+        try:
+            from llm.schema import StructuredDeclarationResult
+            if isinstance(ctx.llm_result, StructuredDeclarationResult):
+                from rules.evaluator import evaluate_perishable_expiry_declaration
+                return evaluate_perishable_expiry_declaration(ctx.llm_result, ctx)
+        except Exception:
+            pass
     t = FindingResult(
         "CHK13", "Best-before or use-by declared where the commodity is perishable",
         "pass", "major",
@@ -1131,6 +1176,14 @@ def chk15_ecommerce_listing(ctx: CheckContext) -> FindingResult:
     there is no listing to look at. That is not_assessed with a reason, not a
     silent omission and not a pass.
     """
+    if getattr(ctx, "llm_result", None) is not None:
+        try:
+            from llm.schema import StructuredDeclarationResult
+            if isinstance(ctx.llm_result, StructuredDeclarationResult):
+                from rules.evaluator import evaluate_ecommerce_listing_declarations
+                return evaluate_ecommerce_listing_declarations(ctx.llm_result, ctx)
+        except Exception:
+            pass
     t = FindingResult(
         "CHK15", "E-commerce listing displays the required declarations",
         "pass", "major",
