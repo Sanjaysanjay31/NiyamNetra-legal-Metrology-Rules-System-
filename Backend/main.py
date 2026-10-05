@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import settings
-from routers import admin, auth, inspections, reports, scans
+from routers import admin, auth, inspections, reports, review, scans
 
 logger = logging.getLogger("niyamnetra.startup")
 
@@ -99,6 +99,7 @@ app.include_router(inspections.router)
 app.include_router(scans.router)
 app.include_router(reports.router)
 app.include_router(admin.router)
+app.include_router(review.router)
 
 
 @app.get("/health", tags=["meta"])
