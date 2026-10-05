@@ -72,15 +72,6 @@ def _create_engine_with_fallback():
 engine, _is_using_sqlite = _create_engine_with_fallback()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
-if _is_using_sqlite:
-    try:
-        from seed import seed_users, seed_stores
-        with SessionLocal() as s_db:
-            seed_users(s_db)
-            seed_stores(s_db)
-    except Exception as seed_exc:
-        logger.warning("Fallback database seed notice: %s", seed_exc)
-
 
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()

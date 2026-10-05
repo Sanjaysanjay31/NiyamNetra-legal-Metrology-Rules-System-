@@ -43,6 +43,20 @@ app = FastAPI(
 )
 
 
+@app.on_event("startup")
+def on_startup():
+    from database import _is_using_sqlite, SessionLocal
+    if _is_using_sqlite:
+        try:
+            from seed import seed_users, seed_stores
+            with SessionLocal() as db:
+                seed_users(db)
+                seed_stores(db)
+        except Exception as seed_err:
+            import logging
+            logging.getLogger("niyamnetra").warning("Startup seed notice: %s", seed_err)
+
+
 # A regex. Starlette matches allow_origins by exact string equality, so an
 # entry like "exp://*" or "http://192.168.*.*:5173" never matches anything —
 # which is why v1.x's Expo client could not reach the API from a phone.
@@ -126,6 +140,10 @@ def health():
     except Exception as e:
         db_status = "error"
         db_error = str(e)
+    try:
+        free_gb = shutil.disk_usage(settings.EVIDENCE_DIR).free / (1024 ** 3)
+    except Exception:
+        free_gb = None
 
     return {
         "status": "ok",
