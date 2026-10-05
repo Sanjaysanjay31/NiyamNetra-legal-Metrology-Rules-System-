@@ -26,7 +26,7 @@ import {
   enqueueConflictResolution,
 } from '../../offline/queue';
 
-export default function ReviewDetailScreen({ inspectionId, onBack, onAdjudicated }) {
+export default function ReviewDetailScreen({ inspectionId, onBack, onAdjudicated, onOpenRecapture }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -298,6 +298,12 @@ export default function ReviewDetailScreen({ inspectionId, onBack, onAdjudicated
         {/* Action Bar for Inspection-Level Adjudication */}
         <View style={styles.actionBar}>
           <Pressable
+            style={[styles.actionButton, { backgroundColor: colors.netraTeal }]}
+            onPress={() => onOpenRecapture && onOpenRecapture(inspectionId, scanReviews[0]?.scan_id)}
+          >
+            <Text style={styles.actionBtnText}>📷 Recapture</Text>
+          </Pressable>
+          <Pressable
             style={[styles.actionButton, { backgroundColor: colors.pass.text }]}
             onPress={() => {
               setGeneralAction('resolve');
@@ -306,7 +312,7 @@ export default function ReviewDetailScreen({ inspectionId, onBack, onAdjudicated
               setActiveModal('general');
             }}
           >
-            <Text style={styles.actionBtnText}>✓ Resolve Review</Text>
+            <Text style={styles.actionBtnText}>✓ Resolve</Text>
           </Pressable>
           <Pressable
             style={[styles.actionButton, { backgroundColor: colors.warning }]}
@@ -412,6 +418,13 @@ export default function ReviewDetailScreen({ inspectionId, onBack, onAdjudicated
                       disabled={submitting}
                     >
                       <Text style={[styles.smallBtnText, { color: colors.info.text }]}>✎ Override</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.smallBtn, { backgroundColor: '#F0FDFA', borderColor: colors.netraTeal }]}
+                      onPress={() => onOpenRecapture && onOpenRecapture(inspectionId, sr.scan_id)}
+                      disabled={submitting}
+                    >
+                      <Text style={[styles.smallBtnText, { color: colors.netraTeal }]}>📷 Recapture</Text>
                     </Pressable>
                   </View>
                 </Card>

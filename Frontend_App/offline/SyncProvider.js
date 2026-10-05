@@ -328,6 +328,23 @@ export function SyncProvider({ children }) {
               await markSynced(item.id);
               anySuccess = true;
               done = true;
+            } else if (item.type === 'recapture_fulfillment') {
+              const taskId = item.taskId;
+              const inspId = item.inspectionId || item.body?.inspection_id;
+              await api.post(`/recapture/inspections/${inspId}/tasks/${taskId}/fulfill`, item.body, {
+                headers: { 'Idempotency-Key': item.id },
+              });
+              await markSynced(item.id);
+              anySuccess = true;
+              done = true;
+            } else if (item.type === 'reassessment_trigger') {
+              const inspId = item.inspectionId || item.body?.inspection_id;
+              await api.post(`/recapture/inspections/${inspId}/reassess`, item.body, {
+                headers: { 'Idempotency-Key': item.id },
+              });
+              await markSynced(item.id);
+              anySuccess = true;
+              done = true;
             } else {
               done = true; // unknown type — leave queued, do not spin
             }

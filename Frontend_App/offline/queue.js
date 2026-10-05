@@ -418,3 +418,84 @@ export async function loadCachedReviewQueue() {
     return [];
   }
 }
+
+export async function enqueueRecaptureTaskFulfillment({
+  taskId,
+  inspectionId,
+  scanImageId,
+  notes,
+  skipReason,
+}) {
+  const q = await loadQueue();
+  const id = newId('recapture_fulfill');
+  q.push({
+    id,
+    type: 'recapture_fulfillment',
+    taskId,
+    inspectionId,
+    body: {
+      inspection_id: inspectionId,
+      scan_image_id: scanImageId || null,
+      notes: notes || null,
+      skip_reason: skipReason || null,
+    },
+    createdAt: new Date().toISOString(),
+    is_synced: false,
+  });
+  await saveQueue(q);
+  return id;
+}
+
+export async function enqueueReassessmentTrigger({
+  inspectionId,
+  scanIds,
+}) {
+  const q = await loadQueue();
+  const id = newId('reassess');
+  q.push({
+    id,
+    type: 'reassessment_trigger',
+    inspectionId,
+    body: {
+      inspection_id: inspectionId,
+      scan_ids: scanIds,
+    },
+    createdAt: new Date().toISOString(),
+    is_synced: false,
+  });
+  await saveQueue(q);
+  return id;
+}
+
+const RECAPTURE_CACHE_PREFIX = 'nn_recapture_tasks_';
+
+export async function cacheRecaptureTasks(inspectionId, tasks) {
+  try {
+    const key = `${RECAPTURE_CACHE_PREFIX}${inspectionId}`;
+    if (isWeb) {
+      globalThis.localStorage?.setItem(key, JSON.stringify(tasks || []));
+      return;
+    }
+    await ensureDir();
+    const cachePath = pendingDir() + `recapture_tasks_${inspectionId}.json`;
+    await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(tasks || []));
+  } catch {}
+}
+
+export async function loadCachedRecaptureTasks(inspectionId) {
+  try {
+    const key = `${RECAPTURE_CACHE_PREFIX}${inspectionId}`;
+    if (isWeb) {
+      const raw = globalThis.localStorage?.getItem(key);
+      return raw ? JSON.parse(raw) : [];
+    }
+    await ensureDir();
+    const cachePath = pendingDir() + `recapture_tasks_${inspectionId}.json`;
+    const info = await FileSystem.getInfoAsync(cachePath);
+    if (!info.exists) return [];
+    const raw = await FileSystem.readAsStringAsync(cachePath);
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}

@@ -50,6 +50,7 @@ class CaptureTaskOut(BaseModel):
 
 class FulfillCaptureRequest(BaseModel):
     """Mark a capture request as fulfilled after the inspector takes a photo."""
+    inspection_id: int | None = None
     scan_image_id: int | None = None
     notes: str | None = Field(default=None, max_length=2000)
     skip_reason: str | None = Field(default=None, max_length=1000)
@@ -57,6 +58,7 @@ class FulfillCaptureRequest(BaseModel):
 
 class RecaptureAssessRequest(BaseModel):
     """Request re-assessment after recapture evidence is attached."""
+    inspection_id: int | None = None
     scan_ids: list[int] = Field(min_length=1, max_length=50)
 
 
@@ -244,6 +246,31 @@ def get_capture_tasks(
     }
 
 
+@router.get("/tasks/{inspection_id}")
+def get_capture_tasks_alias(
+    inspection_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Direct alias for GET /recapture/tasks/{inspection_id}."""
+    return get_capture_tasks(inspection_id=inspection_id, user=user, db=db)
+
+
+@router.post("/tasks/{request_id}/fulfill")
+def fulfill_capture_task_alias(
+    request_id: str,
+    body: FulfillCaptureRequest,
+    inspection_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Direct alias for POST /recapture/tasks/{request_id}/fulfill with inspection_id in body or query."""
+    target_insp_id = body.inspection_id or inspection_id
+    if target_insp_id is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="inspection_id required in body or query")
+    return fulfill_capture_task(inspection_id=target_insp_id, request_id=request_id, body=body, user=user, db=db)
+
+
 @router.post("/inspections/{inspection_id}/tasks/{request_id}/fulfill")
 def fulfill_capture_task(
     inspection_id: int,
@@ -365,6 +392,20 @@ def trigger_reassessment(
         "failed": sum(1 for r in results if not r["ok"]),
         "results": results,
     }
+
+
+@router.post("/reassess")
+def trigger_reassessment_alias(
+    body: RecaptureAssessRequest,
+    inspection_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Direct alias for POST /recapture/reassess with inspection_id in body or query."""
+    target_insp_id = body.inspection_id or inspection_id
+    if target_insp_id is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="inspection_id required in body or query")
+    return trigger_reassessment(inspection_id=target_insp_id, body=body, user=user, db=db)
 
 
 # ---------------------------------------------------------------------------

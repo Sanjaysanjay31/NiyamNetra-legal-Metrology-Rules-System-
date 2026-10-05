@@ -7,11 +7,12 @@ import FindingsScreen from './FindingsScreen';
 import InspectionSummaryScreen from './InspectionSummaryScreen';
 import ReviewQueueScreen from './ReviewQueueScreen';
 import ReviewDetailScreen from './ReviewDetailScreen';
+import RecaptureTaskScreen from './RecaptureTaskScreen';
 import { colors } from '../../theme';
 
 export default function InspectorFlow({ navigation }) {
   // Navigation mode within inspector workflow:
-  // 'home' | 'new_inspection' | 'session' | 'findings' | 'summary' | 'review_queue' | 'review_detail'
+  // 'home' | 'new_inspection' | 'session' | 'findings' | 'summary' | 'review_queue' | 'review_detail' | 'recapture_task'
   const [mode, setMode] = useState('home');
 
   // Active store inspection session state
@@ -22,6 +23,7 @@ export default function InspectorFlow({ navigation }) {
 
   // Selected inspection for review & adjudication
   const [reviewInspectionId, setReviewInspectionId] = useState(null);
+  const [recaptureScanId, setRecaptureScanId] = useState(null);
 
   // --- Handlers ---
   const handleStartInspection = () => {
@@ -48,6 +50,16 @@ export default function InspectorFlow({ navigation }) {
 
   const handleBackFromReviewDetail = () => {
     setMode('review_queue');
+  };
+
+  const handleOpenRecapture = (inspectionId, scanId) => {
+    setReviewInspectionId(inspectionId);
+    setRecaptureScanId(scanId || null);
+    setMode('recapture_task');
+  };
+
+  const handleBackFromRecapture = () => {
+    setMode('review_detail');
   };
 
   const handleInspectionSessionStarted = (sessionData) => {
@@ -169,6 +181,16 @@ export default function InspectorFlow({ navigation }) {
           inspectionId={reviewInspectionId}
           onBack={handleBackFromReviewDetail}
           onAdjudicated={() => {}}
+          onOpenRecapture={handleOpenRecapture}
+        />
+      )}
+
+      {mode === 'recapture_task' && (
+        <RecaptureTaskScreen
+          inspectionId={reviewInspectionId}
+          scanId={recaptureScanId}
+          onBack={handleBackFromRecapture}
+          onComplete={handleBackFromRecapture}
         />
       )}
     </View>
