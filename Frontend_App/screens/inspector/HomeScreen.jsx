@@ -17,10 +17,12 @@ import EmptyState from '../../components/EmptyState';
 import { useSync } from '../../offline/SyncProvider';
 import { fetchTodayStats, fetchInspectionsList, fetchPendingScans, assessScan } from '../../api/inspections';
 import { fetchMe } from '../../api/admin';
+import { fetchReviewSummary } from '../../api/review';
 
-export default function HomeScreen({ navigation, onStartInspection, onResumeInspection, activeInspection }) {
+export default function HomeScreen({ navigation, onStartInspection, onResumeInspection, onOpenReviewQueue, activeInspection }) {
   const [officer, setOfficer] = useState(null);
   const [todayStats, setTodayStats] = useState(null);
+  const [reviewSummary, setReviewSummary] = useState(null);
   const [recentInspections, setRecentInspections] = useState([]);
   const [pendingScans, setPendingScans] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,11 +36,12 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
     else setLoading(true);
 
     try {
-      const [userRes, statsRes, inspRes, pendingRes] = await Promise.allSettled([
+      const [userRes, statsRes, inspRes, pendingRes, reviewRes] = await Promise.allSettled([
         fetchMe(),
         fetchTodayStats(),
         fetchInspectionsList(),
         fetchPendingScans(),
+        fetchReviewSummary(),
       ]);
 
       if (userRes.status === 'fulfilled' && userRes.value) {
@@ -53,6 +56,9 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
       }
       if (pendingRes.status === 'fulfilled' && pendingRes.value) {
         setPendingScans(Array.isArray(pendingRes.value) ? pendingRes.value : []);
+      }
+      if (reviewRes.status === 'fulfilled' && reviewRes.value) {
+        setReviewSummary(reviewRes.value);
       }
     } catch (e) {
       // offline fallback
@@ -242,6 +248,43 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
             <Text style={styles.statSub}>{isSyncing ? 'Syncing now…' : 'Queued offline'}</Text>
           </Card>
         </View>
+
+        {/* Officer Review Queue Card */}
+        <Pressable onPress={onOpenReviewQueue} hitSlop={4}>
+          <Card
+            padding="md"
+            style={{
+              marginBottom: spacing.md,
+              borderColor: colors.saffron,
+              borderWidth: 1.5,
+              backgroundColor: '#FFFDF5',
+            }}
+          >
+            <View style={styles.rowBetween}>
+              <View style={{ flex: 1, marginRight: spacing.md }}>
+                <View style={styles.rowAlign}>
+                  <Text style={{ fontSize: 16, marginRight: 6 }}>⚖️</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '800', color: colors.niyamBlue }}>
+                    Officer Review Queue
+                  </Text>
+                  {(reviewSummary?.total ?? 0) > 0 && (
+                    <View style={{ backgroundColor: '#FEE2E2', borderColor: '#FCA5A5', borderWidth: 1, marginLeft: 6, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#B91C1C' }}>
+                        {reviewSummary.total} PENDING
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>
+                  Adjudicate incomplete evidence, low confidence, and unconfirmed violations.
+                </Text>
+              </View>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.netraTeal }}>
+                Open →
+              </Text>
+            </View>
+          </Card>
+        </Pressable>
 
         {/* Run Server Assessment Card */}
         {pendingScans.length > 0 && (

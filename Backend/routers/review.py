@@ -61,7 +61,8 @@ class ReviewQueueFilters(BaseModel):
 
 class AdjudicateRequest(BaseModel):
     """Officer adjudication on a review item."""
-    action: Literal["resolve", "escalate", "reassign", "dismiss"]
+    inspection_id: int | None = None
+    action: Literal["resolve", "escalate", "reassign", "dismiss", "accept", "override"]
     reason: str = Field(min_length=10, max_length=2000)
     resolution_notes: str | None = Field(default=None, max_length=4000)
     # For finding-level adjudication
@@ -78,6 +79,7 @@ class BulkAdjudicateRequest(BaseModel):
 
 class ConflictResolutionRequest(BaseModel):
     """Resolve a specific cross-panel conflict."""
+    inspection_id: int | None = None
     conflict_id: str
     resolution: Literal["accept_panel_a", "accept_panel_b", "manual_value", "dismiss"]
     resolved_value: str | None = None
@@ -646,6 +648,8 @@ def adjudicate_review(
         "escalate": "review_escalated",
         "dismiss": "review_dismissed",
         "reassign": "review_reassigned",
+        "accept": "review_accepted",
+        "override": "review_overridden",
     }
     audit_action = action_map.get(body.action, "review_action")
 
@@ -674,6 +678,18 @@ def adjudicate_review(
         "adjudicated_by": user.id,
         "adjudicated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.post("/adjudicate")
+def adjudicate_review_root(
+    body: AdjudicateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Direct alias endpoint for /review/adjudicate with inspection_id in body."""
+    if body.inspection_id is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="inspection_id required in request body")
+    return adjudicate_review(inspection_id=body.inspection_id, body=body, user=user, db=db)
 
 
 @router.post("/inspections/{inspection_id}/conflicts/{conflict_id}/resolve")
@@ -710,6 +726,18 @@ def resolve_conflict(
         "resolved_by": user.id,
         "resolved_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.post("/resolve-conflict")
+def resolve_conflict_root(
+    body: ConflictResolutionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Direct alias endpoint for /review/resolve-conflict with inspection_id in body."""
+    if body.inspection_id is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="inspection_id required in request body")
+    return resolve_conflict(inspection_id=body.inspection_id, conflict_id=body.conflict_id, body=body, user=user, db=db)
 
 
 # ---------------------------------------------------------------------------

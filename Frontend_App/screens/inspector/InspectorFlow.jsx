@@ -5,11 +5,13 @@ import NewInspectionScreen from './NewInspectionScreen';
 import InspectionSessionScreen from './InspectionSessionScreen';
 import FindingsScreen from './FindingsScreen';
 import InspectionSummaryScreen from './InspectionSummaryScreen';
+import ReviewQueueScreen from './ReviewQueueScreen';
+import ReviewDetailScreen from './ReviewDetailScreen';
 import { colors } from '../../theme';
 
 export default function InspectorFlow({ navigation }) {
   // Navigation mode within inspector workflow:
-  // 'home' | 'new_inspection' | 'session' | 'findings' | 'summary'
+  // 'home' | 'new_inspection' | 'session' | 'findings' | 'summary' | 'review_queue' | 'review_detail'
   const [mode, setMode] = useState('home');
 
   // Active store inspection session state
@@ -17,6 +19,9 @@ export default function InspectorFlow({ navigation }) {
 
   // Selected package for findings drill-down
   const [selectedScan, setSelectedScan] = useState(null);
+
+  // Selected inspection for review & adjudication
+  const [reviewInspectionId, setReviewInspectionId] = useState(null);
 
   // --- Handlers ---
   const handleStartInspection = () => {
@@ -26,6 +31,23 @@ export default function InspectorFlow({ navigation }) {
   const handleResumeInspection = () => {
     if (activeSession) setMode('session');
     else setMode('new_inspection');
+  };
+
+  const handleOpenReviewQueue = () => {
+    setMode('review_queue');
+  };
+
+  const handleSelectReviewInspection = (inspectionId) => {
+    setReviewInspectionId(inspectionId);
+    setMode('review_detail');
+  };
+
+  const handleBackFromReviewQueue = () => {
+    setMode('home');
+  };
+
+  const handleBackFromReviewDetail = () => {
+    setMode('review_queue');
   };
 
   const handleInspectionSessionStarted = (sessionData) => {
@@ -52,10 +74,6 @@ export default function InspectorFlow({ navigation }) {
 
   const handleSaveFindings = (updatedFindings) => {
     if (!selectedScan || !activeSession) return;
-    // Honest rollup — same rule as FindingsScreen and the server (C3/C4):
-    // any fail -> violation; ALL pass -> compliant; any not_assessed left
-    // -> not_assessed. Claiming 'compliant' while checks were never
-    // assessed would invent a verdict the evidence does not carry.
     const failCount = updatedFindings.filter((f) => f.effective_verdict === 'fail' || f.effective_verdict === 'violation').length;
     const notAssessed = updatedFindings.filter((f) => f.effective_verdict === 'not_assessed').length;
     const rollup = failCount > 0 ? 'violation' : (notAssessed === 0 ? 'compliant' : 'not_assessed');
@@ -101,6 +119,7 @@ export default function InspectorFlow({ navigation }) {
           activeInspection={activeSession}
           onStartInspection={handleStartInspection}
           onResumeInspection={handleResumeInspection}
+          onOpenReviewQueue={handleOpenReviewQueue}
         />
       )}
 
@@ -135,6 +154,21 @@ export default function InspectorFlow({ navigation }) {
           inspectionSession={activeSession}
           onInspectionFinalized={handleInspectionFinalized}
           onBackToSession={handleBackToSession}
+        />
+      )}
+
+      {mode === 'review_queue' && (
+        <ReviewQueueScreen
+          onSelectInspection={handleSelectReviewInspection}
+          onBack={handleBackFromReviewQueue}
+        />
+      )}
+
+      {mode === 'review_detail' && (
+        <ReviewDetailScreen
+          inspectionId={reviewInspectionId}
+          onBack={handleBackFromReviewDetail}
+          onAdjudicated={() => {}}
         />
       )}
     </View>

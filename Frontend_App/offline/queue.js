@@ -331,3 +331,90 @@ export async function retryFailed(id) {
   }
   await saveQueue(q);
 }
+
+export async function enqueueAdjudication({
+  inspection_id,
+  action,
+  reason,
+  resolution_notes,
+  finding_id,
+  human_verdict,
+}) {
+  const q = await loadQueue();
+  const id = newId('adjudication');
+  q.push({
+    id,
+    type: 'adjudication',
+    inspectionId: inspection_id,
+    body: {
+      inspection_id,
+      action,
+      reason,
+      resolution_notes,
+      finding_id,
+      human_verdict,
+    },
+    createdAt: new Date().toISOString(),
+    is_synced: false,
+  });
+  await saveQueue(q);
+  return id;
+}
+
+export async function enqueueConflictResolution({
+  inspection_id,
+  conflict_id,
+  resolution,
+  resolved_value,
+  reason,
+}) {
+  const q = await loadQueue();
+  const id = newId('conflict');
+  q.push({
+    id,
+    type: 'conflict_resolution',
+    inspectionId: inspection_id,
+    body: {
+      inspection_id,
+      conflict_id,
+      resolution,
+      resolved_value,
+      reason,
+    },
+    createdAt: new Date().toISOString(),
+    is_synced: false,
+  });
+  await saveQueue(q);
+  return id;
+}
+
+const REVIEW_CACHE_KEY = 'nn_review_queue_cache';
+
+export async function cacheReviewQueue(items) {
+  try {
+    if (isWeb) {
+      globalThis.localStorage?.setItem(REVIEW_CACHE_KEY, JSON.stringify(items || []));
+      return;
+    }
+    await ensureDir();
+    const cachePath = pendingDir() + 'review_queue_cache.json';
+    await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(items || []));
+  } catch {}
+}
+
+export async function loadCachedReviewQueue() {
+  try {
+    if (isWeb) {
+      const raw = globalThis.localStorage?.getItem(REVIEW_CACHE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    }
+    await ensureDir();
+    const cachePath = pendingDir() + 'review_queue_cache.json';
+    const info = await FileSystem.getInfoAsync(cachePath);
+    if (!info.exists) return [];
+    const raw = await FileSystem.readAsStringAsync(cachePath);
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}

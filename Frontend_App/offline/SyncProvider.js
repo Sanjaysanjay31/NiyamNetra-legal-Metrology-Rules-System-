@@ -311,6 +311,23 @@ export function SyncProvider({ children }) {
               await markSynced(item.id);
               anySuccess = true;
               done = true;
+            } else if (item.type === 'adjudication') {
+              const inspId = item.inspectionId || item.body?.inspection_id;
+              await api.post(`/review/inspections/${inspId}/adjudicate`, item.body, {
+                headers: { 'Idempotency-Key': item.id },
+              });
+              await markSynced(item.id);
+              anySuccess = true;
+              done = true;
+            } else if (item.type === 'conflict_resolution') {
+              const inspId = item.inspectionId || item.body?.inspection_id;
+              const conflictId = item.body?.conflict_id;
+              await api.post(`/review/inspections/${inspId}/conflicts/${conflictId}/resolve`, item.body, {
+                headers: { 'Idempotency-Key': item.id },
+              });
+              await markSynced(item.id);
+              anySuccess = true;
+              done = true;
             } else {
               done = true; // unknown type — leave queued, do not spin
             }
