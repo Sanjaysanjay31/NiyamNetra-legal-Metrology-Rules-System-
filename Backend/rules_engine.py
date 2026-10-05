@@ -1383,5 +1383,12 @@ def assess(ctx: CheckContext) -> tuple[list[FindingResult], ScanVerdict, dict]:
         "rules_as_at": ctx.rules_as_at.isoformat(),
         "catalog_hash": catalog_hash(),
         "engine_version": settings.ENGINE_VERSION,
+        "rule_pack_version": "2026.07.v1",
     }
+    try:
+        from rules import load_rule_pack
+        _rp = load_rule_pack()
+        provenance["rule_pack_version"] = _rp.rule_pack_version
+    except Exception:
+        pass
     return findings, verdict, provenance

@@ -223,6 +223,7 @@ class ScanOut(ORMModel):
     rules_as_at: date
     catalog_hash: str
     engine_version: str
+    rule_pack_version: str | None = None
     duplicate_of: int | None = None
     created_at: datetime
     # Set by the router after model_validate (the ORM row has no `counts`

@@ -532,6 +532,7 @@ def _assess_inner(scan: Scan, user: User, db: Session, force: bool = False):
     scan.rules_as_at = ctx.rules_as_at
     scan.catalog_hash = provenance["catalog_hash"]
     scan.engine_version = provenance["engine_version"]
+    scan.rule_pack_version = provenance.get("rule_pack_version", "2026.07.v1")
     scan.mm_per_pixel = ctx.mm_per_pixel
     scan.scale_source = ctx.scale_source
 

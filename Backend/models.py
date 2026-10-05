@@ -181,6 +181,7 @@ class Scan(Base):
     rules_as_at: Mapped[date] = mapped_column(Date)
     catalog_hash: Mapped[str] = mapped_column(String(64))
     engine_version: Mapped[str] = mapped_column(String(16))
+    rule_pack_version: Mapped[str | None] = mapped_column(String(32), default=None)
 
     # --- deduplication ---
     duplicate_of: Mapped[int | None] = mapped_column(ForeignKey("scans.id"), index=True)

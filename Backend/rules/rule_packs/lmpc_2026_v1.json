@@ -1,0 +1,838 @@
+{
+  "rule_pack_version": "2026.07.v1",
+  "title": "Legal Metrology (Packaged Commodities) Rules, 2011 (As Amended up to 2026)",
+  "description": "Authoritative rule catalogue for pre-packaged commodities and e-commerce listings incorporating GSR 629(E), GSR 779(E), GSR 128(E) dated 13.02.2026, and Jan Vishwas Act amendments.",
+  "authority": "Department of Consumer Affairs, Ministry of Consumer Affairs, Food and Public Distribution, Government of India",
+  "rules_as_at": "2026-07-01",
+  "metadata": {
+    "engine_target": "2.1.0",
+    "primary_statute": "Legal Metrology Act, 2009 (Act 1 of 2010)",
+    "rules_statute": "Legal Metrology (Packaged Commodities) Rules, 2011",
+    "gazette_baseline": "GSR 128(E) in force from 01.07.2026; Jan Vishwas enforcement tiers active from 01.05.2026"
+  },
+  "rules": [
+    {
+      "rule_id": "RULE_LMPC_01_MANDATORY_DECLARATIONS",
+      "code": "CHK01",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Mandatory declarations on retail pre-packaged commodity under Rule 6(1)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 6(1)",
+      "amendment_reference": "GSR 629(E) dated 23.06.2017 w.e.f 01.01.2018",
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "critical",
+      "statutory_limb": "36(1)",
+      "ledger_ref": "L-03",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": 25.0,
+        "max_volume_l": 25.0,
+        "notes": "Applies to all retail packages within Chapter II scope"
+      },
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": [
+        "commodity_name",
+        "manufacturer",
+        "net_quantity",
+        "mrp",
+        "date_of_manufacture",
+        "consumer_care"
+      ],
+      "evaluation_method": {
+        "method": "presence",
+        "parameters": {
+          "required_declarations": [
+            "commodity_name",
+            "manufacturer",
+            "net_quantity",
+            "mrp",
+            "date_of_manufacture",
+            "consumer_care"
+          ]
+        }
+      },
+      "remediation": "Ensure every pre-packaged retail commodity visibly displays the name/address of manufacturer or packer, commodity name, net quantity, month/year of manufacture or packing, retail sale price (MRP), and consumer care contact details.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_02_TOBACCO_CARVEOUT",
+      "code": "CHK02",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Exemption carve-out for tobacco and tobacco products under Rule 26(a)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 26(a)",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "advisory",
+      "statutory_limb": null,
+      "ledger_ref": "L-15",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["tobacco", "cigarettes", "cigars", "beedis", "gutkha"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Rule 26(a) carves out packages of bidi and cigarettes from certain LMPC labelling requirements"
+      },
+      "required_evidence": ["operator_declaration"],
+      "required_fields": ["is_tobacco"],
+      "evaluation_method": {
+        "method": "scope_gate",
+        "parameters": {
+          "scope_halt": true
+        }
+      },
+      "remediation": "Tobacco products are exempt under Rule 26(a); refer to Cigarettes and Other Tobacco Products Act (COTPA) 2003 for applicable statutory health warnings.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_03_CHAPTER_II_APPLICABILITY",
+      "code": "CHK03",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Chapter II scope and retail quantity thresholds under Rule 3",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 3",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "critical",
+      "statutory_limb": null,
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["wholesale", "institutional", "industrial", "export", "retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Rule 3 establishes thresholds: retail weight > 25 kg / 25 L (or 50 kg for cement/fertiliser/agri) are outside Chapter II"
+      },
+      "required_evidence": ["operator_declaration", "ocr_evidence"],
+      "required_fields": ["transaction_type", "net_quantity_value", "net_quantity_unit"],
+      "evaluation_method": {
+        "method": "threshold_comparison",
+        "parameters": {
+          "retail_weight_ceiling_kg": 25.0,
+          "retail_volume_ceiling_l": 25.0,
+          "agri_ceiling_kg": 50.0,
+          "agri_categories": ["cement", "fertiliser", "fertilizer", "agricultural_produce"]
+        }
+      },
+      "remediation": "Packages exceeding 25 kg/L (or 50 kg for agricultural produce/cement/fertiliser) or meant exclusively for institutional/industrial/export buyers are exempt from Chapter II retail packaging provisions.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_04_PRESCRIBED_PACKAGE_SIZES",
+      "code": "CHK04",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Standard prescribed packaging quantities under Rule 5 and Second Schedule",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 5 & Second Schedule",
+      "amendment_reference": "GSR 629(E) dated 23.06.2017",
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "major",
+      "statutory_limb": "36(1)",
+      "ledger_ref": "L-05",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["tea", "biscuits", "baby_food", "edible_oil", "rice", "wheat_flour"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": 25.0,
+        "max_volume_l": 25.0,
+        "notes": "Applies only to commodities listed in the Second Schedule"
+      },
+      "required_evidence": ["ocr_evidence", "catalog_schedule"],
+      "required_fields": ["commodity_category", "net_quantity_value"],
+      "evaluation_method": {
+        "method": "schedule_lookup",
+        "parameters": {
+          "schedule_table": "second_schedule"
+        }
+      },
+      "remediation": "Package sizes for specified scheduled commodities must conform to the standard rationalized pack sizes prescribed in the Second Schedule.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_05_NET_QUANTITY_UNITS",
+      "code": "CHK05",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Prescribed standard units of weight, volume, or length without prohibited qualifiers",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 12 & Rule 13",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "critical",
+      "statutory_limb": "36(2)",
+      "ledger_ref": "L-01",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": 25.0,
+        "max_volume_l": 25.0,
+        "notes": "Applies to all retail net quantity statements"
+      },
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": ["net_quantity"],
+      "evaluation_method": {
+        "method": "forbidden_words",
+        "parameters": {
+          "forbidden_catalog_path": "rules/forbidden_words.json",
+          "allowed_weight_units": ["g", "kg", "mg", "gm", "gram", "grams", "kilogram", "kilograms"],
+          "allowed_volume_units": ["ml", "l", "kl", "litre", "litres", "liter", "liters", "millilitre", "millilitres"],
+          "allowed_length_units": ["m", "cm", "mm", "metre", "metres", "meter", "meters"],
+          "allowed_count_units": ["u", "n", "number", "numbers", "piece", "pieces", "count"]
+        }
+      },
+      "remediation": "State net quantity in standard metric units (g, kg, ml, l, m) without non-standard units (such as lbs or oz) and without qualifiers like 'approx', 'when packed', or 'minimum'.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_06_FONT_HEIGHT_PDP",
+      "code": "CHK06",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Minimum height of letters on Principal Display Panel under Rule 7 Table-I",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 7(1) & Table-I",
+      "amendment_reference": "GSR 629(E) w.e.f 01.01.2018",
+      "effective_from": "2018-01-01",
+      "effective_to": null,
+      "severity": "major",
+      "statutory_limb": "36(1)",
+      "ledger_ref": "L-11",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": 25.0,
+        "max_volume_l": 25.0,
+        "notes": "Physical font measurement requires defensible scale reference"
+      },
+      "required_evidence": ["geometry_pdp", "calibration_scale"],
+      "required_fields": ["pdp_area_cm2", "mm_per_pixel"],
+      "evaluation_method": {
+        "method": "table_lookup_height",
+        "parameters": {
+          "table_i": [
+            [50.0, 1.0, 1.5],
+            [100.0, 1.5, 3.0],
+            [500.0, 2.5, 4.0],
+            [2500.0, 4.0, 6.0],
+            [999999.0, 6.0, 6.0]
+          ]
+        }
+      },
+      "remediation": "Ensure declaration letter height meets or exceeds the minimum height prescribed in Rule 7 Table-I based on the total area of the Principal Display Panel.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT",
+      "code": "CHK06b",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Minimum height of net quantity numerals under Rule 7 Table-II",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 7(1) & Table-II",
+      "amendment_reference": "GSR 629(E) w.e.f 01.01.2018",
+      "effective_from": "2018-01-01",
+      "effective_to": null,
+      "severity": "major",
+      "statutory_limb": "36(1)",
+      "ledger_ref": "L-04",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": 25.0,
+        "max_volume_l": 25.0,
+        "notes": "Measurement rule requiring calibrated physical scale"
+      },
+      "required_evidence": ["geometry_pdp", "calibration_scale"],
+      "required_fields": ["net_quantity_value", "mm_per_pixel"],
+      "evaluation_method": {
+        "method": "table_lookup_height",
+        "parameters": {
+          "schedule_table": "net_quantity_heights"
+        }
+      },
+      "remediation": "Numeral height for net quantity must comply with the minimum millimeter height corresponding to package weight/volume bands.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_07_CLEAR_SPACE",
+      "code": "CHK07",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Surrounding clear space around mandatory declarations under Rule 9(3)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 9(3)",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "minor",
+      "statutory_limb": null,
+      "ledger_ref": "L-10",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Clear space must equal letter height vertically and half letter height horizontally"
+      },
+      "required_evidence": ["ocr_bounding_box", "calibration_scale"],
+      "required_fields": ["clear_space_mm"],
+      "evaluation_method": {
+        "method": "clear_space_check",
+        "parameters": {}
+      },
+      "remediation": "Maintain free clear space around mandatory declarations free of conflicting artwork, graphics, or text.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_08_CONTRAST_RATIO",
+      "code": "CHK08",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Visual contrast ratio between declaration text and background under Rule 9(1)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 9(1)",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "minor",
+      "statutory_limb": null,
+      "ledger_ref": "L-09",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Declarations must be conspicuous, legible, and distinctly contrasted"
+      },
+      "required_evidence": ["image_pixels"],
+      "required_fields": ["contrast_ratio"],
+      "evaluation_method": {
+        "method": "contrast_ratio_check",
+        "parameters": {
+          "min_contrast_ratio": 2.5
+        }
+      },
+      "remediation": "Print mandatory declarations with prominent contrast against package background to guarantee effortless consumer legibility.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_09_PDP_PLACEMENT",
+      "code": "CHK09",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Placement of mandatory declarations on Principal Display Panel under Rule 6(1) & Rule 7",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 6(1) & Rule 7",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "major",
+      "statutory_limb": "36(1)",
+      "ledger_ref": "L-08",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Net quantity and retail price must be placed on the principal display panel"
+      },
+      "required_evidence": ["geometry_pdp", "ocr_provenance"],
+      "required_fields": ["panel"],
+      "evaluation_method": {
+        "method": "placement_pdp",
+        "parameters": {
+          "mandatory_pdp_fields": ["net_quantity", "mrp"]
+        }
+      },
+      "remediation": "Position statutory declarations (specifically net quantity and MRP) prominently on the Principal Display Panel of the package.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_10_MRP_ALTERATION_DUAL",
+      "code": "CHK10",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Prohibition on dual pricing, smudging, or overwriting MRP under Rule 18(2)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 18(2)",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "critical",
+      "statutory_limb": "36(1)",
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Prohibits any person from altering, obliterating, or smudging the retail sale price"
+      },
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": ["mrp"],
+      "evaluation_method": {
+        "method": "dual_pricing_check",
+        "parameters": {}
+      },
+      "remediation": "Do not overwrite, smudge, obliterate, or affix conflicting higher price stickers over the original MRP.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_11_STICKER_PRICE_ALTERATION",
+      "code": "CHK11",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Permissible conditions for price alteration stickers under Rule 6(3)-6(4A)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 6(3), 6(4), 6(4A)",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "critical",
+      "statutory_limb": "36(1)",
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": true,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Sticker permitted only to lower price or in explicitly notified government transition periods"
+      },
+      "required_evidence": ["operator_declaration"],
+      "required_fields": ["has_sticker", "sticker_reduces_price", "sticker_covers_original"],
+      "evaluation_method": {
+        "method": "sticker_rules_check",
+        "parameters": {}
+      },
+      "remediation": "Affixing stickers to alter price is strictly prohibited unless specifically reducing the price for consumer benefit or authorized by central government notification.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_12_COUNTRY_OF_ORIGIN_IMPORT",
+      "code": "CHK12",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Country of origin declaration on imported pre-packaged commodities under Rule 6(1)(aa)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 6(1)(aa)",
+      "amendment_reference": "GSR 629(E) dated 23.06.2017 w.e.f 01.01.2018",
+      "effective_from": "2018-01-01",
+      "effective_to": null,
+      "severity": "critical",
+      "statutory_limb": "36(1)",
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package", "ecommerce_listing"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": true,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Mandatory on every imported commodity package"
+      },
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": ["country_of_origin"],
+      "evaluation_method": {
+        "method": "presence",
+        "parameters": {
+          "field_name": "country_of_origin"
+        }
+      },
+      "remediation": "For imported commodities, clearly declare the Country of Origin and the complete name and address of the importer.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_13_EXPIRY_PERISHABLE",
+      "code": "CHK13",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Best before or use by date for perishable commodities under Rule 6(1)(da)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 6(1)(da)",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "critical",
+      "statutory_limb": "36(1)",
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["food", "bread", "milk", "dairy", "perishables"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": true,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Mandatory on all perishable items where quality deteriorates over time"
+      },
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": ["best_before"],
+      "evaluation_method": {
+        "method": "presence",
+        "parameters": {
+          "field_name": "best_before"
+        }
+      },
+      "remediation": "Perishable commodity packages must clearly declare 'Best Before' or 'Use By' with month and year or specific duration from packaging.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_14_MEDICAL_DEVICES_PROVISO",
+      "code": "CHK14",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Applicability proviso for medical devices under Rule 2(h)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 2(h) Proviso",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "advisory",
+      "statutory_limb": null,
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["medical_device"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": true,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Medical devices governed by Medical Devices Rules, 2017 subject to proviso"
+      },
+      "required_evidence": ["operator_declaration"],
+      "required_fields": ["is_medical_device"],
+      "evaluation_method": {
+        "method": "scope_gate",
+        "parameters": {}
+      },
+      "remediation": "Medical device packaging must harmonize with statutory provisions under the Medical Devices Rules, 2017 and Drugs and Cosmetics Act.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_15_ECOMMERCE_LISTING_DECLARATIONS",
+      "code": "CHK15",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Mandatory declarations on e-commerce marketplace product listings under Rule 6(10)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 6(10)",
+      "amendment_reference": "GSR 629(E) dated 23.06.2017 w.e.f 01.01.2018",
+      "effective_from": "2018-01-01",
+      "effective_to": null,
+      "severity": "major",
+      "statutory_limb": "36(1)",
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["ecommerce_listing"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Applies exclusively to online digital marketplace listings"
+      },
+      "required_evidence": ["listing_metadata"],
+      "required_fields": ["commodity_name", "manufacturer", "net_quantity", "mrp", "consumer_care"],
+      "evaluation_method": {
+        "method": "listing_presence",
+        "parameters": {
+          "except_fields": ["date_of_manufacture"]
+        }
+      },
+      "remediation": "E-commerce marketplace listings must display all Rule 6(1) declarations (name, manufacturer/importer, net qty, MRP, consumer care) prior to purchase.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_16_PLATFORM_ORIGIN_FILTER",
+      "code": "CHK16",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Marketplace search filter for country of origin under Rule 6(10A)",
+      "source_document": "Department of Consumer Affairs, Gazette Notification GSR 128(E)",
+      "source_rule": "Rule 6(10A)",
+      "amendment_reference": "GSR 128(E) dated 13.02.2026 w.e.f 01.07.2026",
+      "effective_from": "2026-07-01",
+      "effective_to": null,
+      "severity": "major",
+      "statutory_limb": "36(1)",
+      "ledger_ref": "L-13",
+      "applicability": {
+        "inspection_sources": ["ecommerce_listing"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Commences 01.07.2026; requires platform search mechanism"
+      },
+      "required_evidence": ["platform_inspection"],
+      "required_fields": ["platform_has_origin_filter"],
+      "evaluation_method": {
+        "method": "platform_feature",
+        "parameters": {
+          "feature_name": "searchable_origin_filter"
+        }
+      },
+      "remediation": "Digital e-commerce platforms must provide consumers with a searchable filter to query products by Country of Origin.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_17_FSSAI_ADVISORY_ALIGNMENT",
+      "code": "CHK17",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Alignment with FSSAI statutory packaging and labeling advisories",
+      "source_document": "Official Government Publications & Advisories",
+      "source_rule": "FSSAI Packaging Regulations & LM Alignment",
+      "amendment_reference": "FSSAI Advisory 2022 on dual licensing & LM declarations",
+      "effective_from": "2022-01-01",
+      "effective_to": null,
+      "severity": "advisory",
+      "statutory_limb": null,
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["food", "edible_oil", "milk", "tea", "packaged_food"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Advisory coordination between LM and FSSAI requirements"
+      },
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": ["commodity_category"],
+      "evaluation_method": {
+        "method": "advisory_check",
+        "parameters": {}
+      },
+      "remediation": "Pre-packaged food commodities must harmonize FSSAI license/logo declarations alongside Legal Metrology mandatory declarations.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_18_GRADUATED_SANCTIONS_S36",
+      "code": "CHK18",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Graduated enforcement response and Section 36 violation tier under Jan Vishwas Act",
+      "source_document": "Legal Metrology Act, 2009",
+      "source_rule": "Section 36",
+      "amendment_reference": "Jan Vishwas (Amendment of Provisions) Act, 2023 / 2026 enforcement tier w.e.f 01.05.2026",
+      "effective_from": "2026-05-01",
+      "effective_to": null,
+      "severity": "critical",
+      "statutory_limb": "both",
+      "ledger_ref": "L-12",
+      "applicability": {
+        "inspection_sources": ["physical_package", "ecommerce_listing"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Derived composite finding reflecting overall violation tier"
+      },
+      "required_evidence": ["aggregated_findings"],
+      "required_fields": [],
+      "evaluation_method": {
+        "method": "composite_derived",
+        "parameters": {}
+      },
+      "remediation": "Rectify non-compliances engaged under Section 36(1) (declarations) or Section 36(2) (net quantity) in accordance with the statutory compounding schedule.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_19_UNIT_SALE_PRICE",
+      "code": "CHK19",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Unit Sale Price (USP) declaration on pre-packaged retail commodities under Rule 6(1)(g)",
+      "source_document": "Legal Metrology (Packaged Commodities) Amendment Rules, 2021",
+      "source_rule": "Rule 6(1)(g)",
+      "amendment_reference": "GSR 779(E) dated 02.11.2021 w.e.f 01.12.2022",
+      "effective_from": "2022-12-01",
+      "effective_to": null,
+      "severity": "major",
+      "statutory_limb": "36(1)",
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package", "ecommerce_listing"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": 25.0,
+        "max_volume_l": 25.0,
+        "notes": "Unit sale price mandatory where package contains more than 1 unit, 1 kg, or 1 litre"
+      },
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": ["unit_sale_price"],
+      "evaluation_method": {
+        "method": "unit_sale_price_check",
+        "parameters": {}
+      },
+      "remediation": "Declare Unit Sale Price (per gram/kg or per ml/litre or per number) rounded to nearest two decimal places alongside retail sale price.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_20_DIMENSIONS",
+      "code": "CHK20",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Dimensions declaration on retail commodities where size is relevant under Rule 6(1)(m)",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 6(1)(m)",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": null,
+      "severity": "minor",
+      "statutory_limb": null,
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["garments", "textiles", "apparel", "bedsheet", "paper"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Mandatory where dimensions of the commodity are material to consumer selection"
+      },
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": ["dimensions"],
+      "evaluation_method": {
+        "method": "dimensions_check",
+        "parameters": {}
+      },
+      "remediation": "State metric dimensions (length, width, thickness in m, cm, mm) clearly on the package.",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_21_GARMENTS_HOSIERY_STANDARDS",
+      "code": "CHK21",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Special declaration standards for garments and hosiery goods",
+      "source_document": "Legal Metrology (Packaged Commodities) Amendment Rules",
+      "source_rule": "Rule 6(1)(b) Proviso & Second Schedule Exemption",
+      "amendment_reference": "GSR 549(E) dated 14.07.2022",
+      "effective_from": "2022-07-15",
+      "effective_to": null,
+      "severity": "major",
+      "statutory_limb": "36(1)",
+      "ledger_ref": null,
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["garments", "hosiery", "apparel", "clothing"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": null,
+        "max_volume_l": null,
+        "notes": "Garments and hosiery sold in loose/open form or specific packaging have standardized size requirements"
+      },
+      "required_evidence": ["ocr_evidence"],
+      "required_fields": ["commodity_category"],
+      "evaluation_method": {
+        "method": "garment_size_check",
+        "parameters": {}
+      },
+      "remediation": "For garments and hosiery, declare size in metric terms (cm/m) alongside standard letter size designations (S, M, L, XL).",
+      "enabled": true
+    }
+  ]
+}
