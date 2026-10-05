@@ -19,7 +19,7 @@ import { fetchTodayStats, fetchInspectionsList, fetchPendingScans, assessScan } 
 import { fetchMe } from '../../api/admin';
 import { fetchReviewSummary } from '../../api/review';
 
-export default function HomeScreen({ navigation, onStartInspection, onResumeInspection, onOpenReviewQueue, activeInspection }) {
+export default function HomeScreen({ navigation, onStartInspection, onResumeInspection, onOpenReviewQueue, onOpenReport, activeInspection }) {
   const [officer, setOfficer] = useState(null);
   const [todayStats, setTodayStats] = useState(null);
   const [reviewSummary, setReviewSummary] = useState(null);
@@ -379,22 +379,27 @@ export default function HomeScreen({ navigation, onStartInspection, onResumeInsp
             const isRefusal = item.signature_status === 'refused' || item.result === 'refused' || item.overall_result === 'refused';
             const verdict = isRefusal ? 'refused' : (item.overall_result || item.result || 'not_assessed');
             return (
-              <Card key={item.id || item.client_uuid} padding="md" style={styles.inspectionCard}>
-                <View style={styles.rowBetween}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 2 }}>
-                      {item.store_name || item.store?.name || 'Retail Establishment'}
-                    </Text>
-                    <Text style={{ fontSize: 11, color: colors.textMuted }}>
-                      {dateStr ? String(dateStr).slice(0, 10) : 'Today'} • {isRefusal ? 'Inspection Refused' : (item.transaction_type || 'Retail Sale')}
-                    </Text>
+              <Pressable
+                key={item.id || item.client_uuid}
+                onPress={() => item.id && onOpenReport && onOpenReport(item.id)}
+              >
+                <Card padding="md" style={styles.inspectionCard}>
+                  <View style={styles.rowBetween}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 2 }}>
+                        {item.store_name || item.store?.name || 'Retail Establishment'}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: colors.textMuted }}>
+                        {dateStr ? String(dateStr).slice(0, 10) : 'Today'} • {isRefusal ? 'Inspection Refused' : (item.transaction_type || 'Retail Sale')}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                      <VerdictBadge status={item.status === 'submitted' ? 'submitted' : 'in_progress'} size="sm" />
+                      <VerdictBadge result={verdict} size="sm" />
+                    </View>
                   </View>
-                  <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                    <VerdictBadge status={item.status === 'submitted' ? 'submitted' : 'in_progress'} size="sm" />
-                    <VerdictBadge result={verdict} size="sm" />
-                  </View>
-                </View>
-              </Card>
+                </Card>
+              </Pressable>
             );
           })
         )}

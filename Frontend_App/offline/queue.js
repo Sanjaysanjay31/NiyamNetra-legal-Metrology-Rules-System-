@@ -499,3 +499,69 @@ export async function loadCachedRecaptureTasks(inspectionId) {
     return [];
   }
 }
+
+const REPORT_CACHE_PREFIX = 'nn_report_summary_';
+const DOSSIER_CACHE_PREFIX = 'nn_violation_dossier_';
+
+export async function cacheReportSummary(inspectionId, summary) {
+  try {
+    const key = `${REPORT_CACHE_PREFIX}${inspectionId}`;
+    if (isWeb) {
+      globalThis.localStorage?.setItem(key, JSON.stringify(summary || null));
+      return;
+    }
+    await ensureDir();
+    const cachePath = pendingDir() + `report_summary_${inspectionId}.json`;
+    await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(summary || null));
+  } catch {}
+}
+
+export async function loadCachedReportSummary(inspectionId) {
+  try {
+    const key = `${REPORT_CACHE_PREFIX}${inspectionId}`;
+    if (isWeb) {
+      const raw = globalThis.localStorage?.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    }
+    await ensureDir();
+    const cachePath = pendingDir() + `report_summary_${inspectionId}.json`;
+    const info = await FileSystem.getInfoAsync(cachePath);
+    if (!info.exists) return null;
+    const raw = await FileSystem.readAsStringAsync(cachePath);
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function cacheViolationDossier(identifier, dossier) {
+  try {
+    const key = `${DOSSIER_CACHE_PREFIX}${identifier}`;
+    if (isWeb) {
+      globalThis.localStorage?.setItem(key, JSON.stringify(dossier || null));
+      return;
+    }
+    await ensureDir();
+    const cachePath = pendingDir() + `dossier_${identifier}.json`;
+    await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(dossier || null));
+  } catch {}
+}
+
+export async function loadCachedViolationDossier(identifier) {
+  try {
+    const key = `${DOSSIER_CACHE_PREFIX}${identifier}`;
+    if (isWeb) {
+      const raw = globalThis.localStorage?.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    }
+    await ensureDir();
+    const cachePath = pendingDir() + `dossier_${identifier}.json`;
+    const info = await FileSystem.getInfoAsync(cachePath);
+    if (!info.exists) return null;
+    const raw = await FileSystem.readAsStringAsync(cachePath);
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+

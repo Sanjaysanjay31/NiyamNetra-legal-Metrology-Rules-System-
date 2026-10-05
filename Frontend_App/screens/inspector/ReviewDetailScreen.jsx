@@ -26,7 +26,7 @@ import {
   enqueueConflictResolution,
 } from '../../offline/queue';
 
-export default function ReviewDetailScreen({ inspectionId, onBack, onAdjudicated, onOpenRecapture }) {
+export default function ReviewDetailScreen({ inspectionId, onBack, onAdjudicated, onOpenRecapture, onOpenReport }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -336,6 +336,14 @@ export default function ReviewDetailScreen({ inspectionId, onBack, onAdjudicated
           >
             <Text style={styles.actionBtnText}>✕ Dismiss</Text>
           </Pressable>
+          {onOpenReport && (
+            <Pressable
+              style={[styles.actionButton, { backgroundColor: colors.surfaceVariant, borderWidth: 1, borderColor: colors.borderLight }]}
+              onPress={() => onOpenReport(inspectionId)}
+            >
+              <Text style={[styles.actionBtnText, { color: colors.niyamBlue }]}>📄 Dossier</Text>
+            </Pressable>
+          )}
         </View>
 
         {/* Scan Reviews Loop */}

@@ -199,6 +199,7 @@ def _violation_dossier_data(
 # ---------------------------------------------------------------------------
 
 @router.get("/inspections/{inspection_id}/summary")
+@router.get("/summary/{inspection_id}")
 def get_compliance_summary(
     inspection_id: int,
     user: User = Depends(get_current_user),
@@ -424,6 +425,70 @@ def get_violation_dossier(
     }
 
 
+@router.get("/dossier/{identifier}")
+def get_dossier_by_identifier(
+    identifier: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve violation dossier by inspection_id or scan_id."""
+    insp = db.query(Inspection).filter(Inspection.id == identifier).first()
+    if insp:
+        return get_violation_dossier(identifier, user, db)
+
+    scan = (
+        db.query(Scan)
+        .options(
+            joinedload(Scan.inspection).joinedload(Inspection.store),
+            joinedload(Scan.inspection).joinedload(Inspection.inspector),
+            selectinload(Scan.findings),
+            selectinload(Scan.images),
+        )
+        .filter(Scan.id == identifier)
+        .first()
+    )
+    if not scan:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Inspection or scan not found")
+
+    insp = scan.inspection
+    if user.role != "admin" and insp.user_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not permitted")
+
+    findings = list(scan.findings or [])
+    fail_findings = [f for f in findings if (f.human_verdict or f.engine_verdict) == "fail"]
+    package_data = _violation_dossier_data(insp, scan, findings)
+    s36 = _section_36_guidance(fail_findings)
+
+    return {
+        "inspection_id": insp.id,
+        "scan_id": scan.id,
+        "dossier_id": f"DOSSIER-SCAN-{scan.id}",
+        "has_violations": len(fail_findings) > 0,
+        "commodity": scan.commodity_generic,
+        "brand": scan.brand_name,
+        "batch_number": scan.batch_number,
+        "section_36_guidance": s36,
+        "packages": [package_data],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "legal_disclaimer": (
+            "This dossier is advisory and does not constitute a legal charge. "
+            "Enforcement decisions must be made by the authorized officer."
+        ),
+    }
+
+
+@router.get("/inspections/{inspection_id}/pdf")
+@router.get("/pdf/{inspection_id}")
+def get_enforcement_pdf(
+    inspection_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate or retrieve official PDF for an inspection."""
+    from routers.reports import inspection_pdf
+    return inspection_pdf(inspection_id, user, db)
+
+
 # ---------------------------------------------------------------------------
 # 4. Enforcement Statistics (Office-level)
 # ---------------------------------------------------------------------------
@@ -555,6 +620,7 @@ def enforcement_stats(
 # ---------------------------------------------------------------------------
 
 @router.get("/legal-reference/{check_id}")
+@router.get("/reference/{check_id}")
 def get_legal_reference(
     check_id: str,
     user: User = Depends(get_current_user),

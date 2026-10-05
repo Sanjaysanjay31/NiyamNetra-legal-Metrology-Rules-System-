@@ -8,11 +8,12 @@ import InspectionSummaryScreen from './InspectionSummaryScreen';
 import ReviewQueueScreen from './ReviewQueueScreen';
 import ReviewDetailScreen from './ReviewDetailScreen';
 import RecaptureTaskScreen from './RecaptureTaskScreen';
+import InspectionReportScreen from './InspectionReportScreen';
 import { colors } from '../../theme';
 
 export default function InspectorFlow({ navigation }) {
   // Navigation mode within inspector workflow:
-  // 'home' | 'new_inspection' | 'session' | 'findings' | 'summary' | 'review_queue' | 'review_detail' | 'recapture_task'
+  // 'home' | 'new_inspection' | 'session' | 'findings' | 'summary' | 'review_queue' | 'review_detail' | 'recapture_task' | 'report_dossier'
   const [mode, setMode] = useState('home');
 
   // Active store inspection session state
@@ -21,9 +22,10 @@ export default function InspectorFlow({ navigation }) {
   // Selected package for findings drill-down
   const [selectedScan, setSelectedScan] = useState(null);
 
-  // Selected inspection for review & adjudication
+  // Selected inspection for review & adjudication & reports
   const [reviewInspectionId, setReviewInspectionId] = useState(null);
   const [recaptureScanId, setRecaptureScanId] = useState(null);
+  const [reportInspectionId, setReportInspectionId] = useState(null);
 
   // --- Handlers ---
   const handleStartInspection = () => {
@@ -60,6 +62,15 @@ export default function InspectorFlow({ navigation }) {
 
   const handleBackFromRecapture = () => {
     setMode('review_detail');
+  };
+
+  const handleOpenInspectionReport = (inspectionId) => {
+    setReportInspectionId(inspectionId);
+    setMode('report_dossier');
+  };
+
+  const handleBackFromReport = () => {
+    setMode('home');
   };
 
   const handleInspectionSessionStarted = (sessionData) => {
@@ -132,6 +143,7 @@ export default function InspectorFlow({ navigation }) {
           onStartInspection={handleStartInspection}
           onResumeInspection={handleResumeInspection}
           onOpenReviewQueue={handleOpenReviewQueue}
+          onOpenReport={handleOpenInspectionReport}
         />
       )}
 
@@ -166,6 +178,7 @@ export default function InspectorFlow({ navigation }) {
           inspectionSession={activeSession}
           onInspectionFinalized={handleInspectionFinalized}
           onBackToSession={handleBackToSession}
+          onViewReport={handleOpenInspectionReport}
         />
       )}
 
@@ -182,6 +195,7 @@ export default function InspectorFlow({ navigation }) {
           onBack={handleBackFromReviewDetail}
           onAdjudicated={() => {}}
           onOpenRecapture={handleOpenRecapture}
+          onOpenReport={handleOpenInspectionReport}
         />
       )}
 
@@ -191,6 +205,15 @@ export default function InspectorFlow({ navigation }) {
           scanId={recaptureScanId}
           onBack={handleBackFromRecapture}
           onComplete={handleBackFromRecapture}
+        />
+      )}
+
+      {mode === 'report_dossier' && (
+        <InspectionReportScreen
+          inspectionId={reportInspectionId}
+          onBack={handleBackFromReport}
+          onOpenReviewDetail={handleSelectReviewInspection}
+          onOpenRecapture={handleOpenRecapture}
         />
       )}
     </View>
