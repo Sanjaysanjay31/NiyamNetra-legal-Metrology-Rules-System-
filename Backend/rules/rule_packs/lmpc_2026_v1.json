@@ -262,14 +262,14 @@
       "rule_id": "RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT",
       "code": "CHK06b",
       "rule_pack_version": "2026.07.v1",
-      "title": "Minimum height of net quantity numerals under Rule 7 Table-II",
+      "title": "Minimum height of net quantity numerals under Rule 7(2) Table-I (as substituted by GSR 629(E))",
       "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
-      "source_rule": "Rule 7(1) & Table-II",
-      "amendment_reference": "GSR 629(E) w.e.f 01.01.2018",
+      "source_rule": "Rule 7(2) read with Table-I",
+      "amendment_reference": "GSR 629(E) dated 23 June 2017 w.e.f 01.01.2018 (Table-II omitted)",
       "effective_from": "2018-01-01",
       "effective_to": null,
       "severity": "major",
-      "statutory_limb": "36(1)",
+      "statutory_limb": "36(2)",
       "ledger_ref": "L-04",
       "applicability": {
         "inspection_sources": ["physical_package"],
@@ -282,17 +282,74 @@
         "has_sticker": null,
         "max_weight_kg": 25.0,
         "max_volume_l": 25.0,
-        "notes": "Measurement rule requiring calibrated physical scale"
+        "notes": "Measurement rule: Table-I governs all numerals and letters w.e.f 01.01.2018; Table-II is omitted"
       },
       "required_evidence": ["geometry_pdp", "calibration_scale"],
-      "required_fields": ["net_quantity_value", "mm_per_pixel"],
+      "required_fields": ["pdp_area_cm2", "mm_per_pixel"],
       "evaluation_method": {
         "method": "table_lookup_height",
         "parameters": {
-          "schedule_table": "net_quantity_heights"
+          "table_reference": "table_i",
+          "table_i": [
+            [50.0, 1.0, 1.5],
+            [100.0, 1.5, 3.0],
+            [500.0, 2.5, 4.0],
+            [2500.0, 4.0, 6.0],
+            [999999.0, 6.0, 6.0]
+          ]
         }
       },
-      "remediation": "Numeral height for net quantity must comply with the minimum millimeter height corresponding to package weight/volume bands.",
+      "remediation": "Ensure net quantity numeral height meets the Table-I minimum height prescribed for the Principal Display Panel area under substituted Rule 7(2).",
+      "enabled": true
+    },
+    {
+      "rule_id": "RULE_LMPC_06B_HISTORICAL_TABLE_II",
+      "code": "CHK06b",
+      "rule_pack_version": "2026.07.v1",
+      "title": "Historical minimum height of net quantity numerals under pre-2018 Table-II",
+      "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
+      "source_rule": "Rule 7 & Table-II (pre-2018, omitted w.e.f 01.01.2018)",
+      "amendment_reference": null,
+      "effective_from": "2011-03-07",
+      "effective_to": "2017-12-31",
+      "severity": "major",
+      "statutory_limb": "36(2)",
+      "ledger_ref": "L-04",
+      "applicability": {
+        "inspection_sources": ["physical_package"],
+        "target_commodities": ["all"],
+        "excluded_commodities": [],
+        "transaction_types": ["retail"],
+        "is_imported": null,
+        "is_perishable": null,
+        "is_medical_device": null,
+        "has_sticker": null,
+        "max_weight_kg": 25.0,
+        "max_volume_l": 25.0,
+        "notes": "Historical rule: pre-2018 Table-II for length/area/number and Table-I for weight/volume"
+      },
+      "required_evidence": ["geometry_pdp", "calibration_scale"],
+      "required_fields": ["net_quantity_value", "pdp_area_cm2", "mm_per_pixel"],
+      "evaluation_method": {
+        "method": "table_lookup_height",
+        "parameters": {
+          "table_reference": "table_ii",
+          "table_ii_count_length": [
+            [100.0, 1.0, 2.0],
+            [500.0, 2.0, 4.0],
+            [2500.0, 4.0, 6.0],
+            [999999.0, 6.0, 6.0]
+          ],
+          "table_i": [
+            [50.0, 1.0, 1.5],
+            [100.0, 1.5, 3.0],
+            [500.0, 2.5, 4.0],
+            [2500.0, 4.0, 6.0],
+            [999999.0, 6.0, 6.0]
+          ]
+        }
+      },
+      "remediation": "Net quantity numeral height must comply with the historical Table-II height requirements in force prior to 01.01.2018.",
       "enabled": true
     },
     {

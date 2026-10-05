@@ -94,6 +94,8 @@ def make_valid_visual_context(**kwargs) -> CheckContext:
         "contrast_ratio": 9.5,
         "panels_captured": {"front"},
         "pdp_detected": True,
+        "pdp_surface_established": True,
+        "established_pdp_panel": "front",
         "clear_space_image_verified": True,
         "use_visual_evaluator": True,
     }
@@ -192,34 +194,132 @@ class TestRule7CharacterHeight:
 # ---------------------------------------------------------------------------
 
 class TestRule7NetQuantityHeight:
-    def test_net_quantity_table_i_mass_volume_pass(self):
+    def test_post_2018_mass_volume_uses_table_i(self):
         """Mass/volume unit (500 g on 120 cm2 PDP) selects Table-I threshold (2.5 mm)."""
         ctx = make_valid_visual_context(
             net_quantity_value=500.0,
             net_quantity_unit="g",
             measured_heights_mm={"net_quantity": 3.0},
+            rules_as_at=date(2026, 7, 1),
         )
         res = evaluate_net_quantity_height(ctx)
 
         assert res.verdict == "pass"
         assert res.check_id == "CHK06b"
         assert res.rule_id == "RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT"
+        assert res.rule_pack_version == "2026.07.v1"
         assert "3.0 mm" in res.observed
         assert "2.5 mm" in res.required
+        assert res.evidence_provenance["table_selected"] == "table_i"
+        assert res.evidence_provenance["rule_id"] == "RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT"
+        assert res.evidence_provenance["rule_pack_version"] == "2026.07.v1"
 
-    def test_net_quantity_table_ii_count_and_length(self):
-        """Sale by count (10 u on 80 cm2 PDP <= 100 cm2) selects Table-II 1.0 mm minimum."""
-        ctx = make_valid_visual_context(
+    def test_post_2018_length_area_number_uses_table_i(self):
+        """Post-2018: Length/area/number must use Table-I under Rule 7(2) as substituted by GSR 629(E).
+        For 80 cm2 PDP (50-100 cm2 band), Table-I requires 1.5 mm (not pre-2018 Table-II 1.0 mm).
+        """
+        # 1.6 mm >= 1.5 mm Table-I minimum -> PASS
+        ctx_pass = make_valid_visual_context(
             panel_height_mm=100.0,
             panel_width_mm=80.0,  # 80 cm2 PDP
             net_quantity_value=10.0,
-            net_quantity_unit="u",
-            measured_heights_mm={"net_quantity": 1.5},
+            net_quantity_unit="u",  # count / number
+            measured_heights_mm={"net_quantity": 1.6},
+            rules_as_at=date(2026, 7, 1),
         )
+        res_pass = evaluate_net_quantity_height(ctx_pass)
+        assert res_pass.verdict == "pass"
+        assert "1.5 mm" in res_pass.required
+        assert "Table-I" in res_pass.required
+        assert res_pass.evidence_provenance["table_selected"] == "table_i"
+
+        # 1.2 mm < 1.5 mm Table-I minimum -> FAIL under Section 36(2)
+        # Note: 1.2 mm would have passed under pre-2018 Table-II (1.0 mm), proving Table-II is not used.
+        ctx_fail = make_valid_visual_context(
+            panel_height_mm=100.0,
+            panel_width_mm=80.0,
+            net_quantity_value=10.0,
+            net_quantity_unit="u",
+            measured_heights_mm={"net_quantity": 1.2},
+            rules_as_at=date(2026, 7, 1),
+        )
+        res_fail = evaluate_net_quantity_height(ctx_fail)
+        assert res_fail.verdict == "fail"
+        assert res_fail.limb == "36(2)"
+        assert "1.5 mm" in res_fail.required
+        assert "Table-I" in res_fail.required
+        assert res_fail.evidence_provenance["table_selected"] == "table_i"
+
+    def test_table_ii_not_selected_for_post_2018_inspections(self):
+        """Table-II is never selected for post-2018 inspections regardless of unit."""
+        for unit, val in [("pcs", 5.0), ("m", 10.0), ("sq m", 2.0), ("g", 250.0)]:
+            ctx = make_valid_visual_context(
+                panel_height_mm=100.0,
+                panel_width_mm=80.0,
+                net_quantity_value=val,
+                net_quantity_unit=unit,
+                measured_heights_mm={"net_quantity": 2.0},
+                rules_as_at=date(2026, 7, 1),
+            )
+            res = evaluate_net_quantity_height(ctx)
+            assert res.evidence_provenance["table_selected"] == "table_i", f"Unit {unit} must select table_i"
+
+    def test_historical_pre_2018_inspection_resolves_to_historical_table_ii(self):
+        """Historical inspection dates (pre-2018) resolve to historical rule pack entry where Table-II applies to count/length."""
+        pack = load_rule_pack()
+        rule = pack.get_rule_by_id("CHK06b", as_at=date(2015, 6, 1))
+        assert rule is not None
+        assert rule.rule_id == "RULE_LMPC_06B_HISTORICAL_TABLE_II"
+
+        # Count on pre-2018 date: 80 cm2 PDP selects Table-II threshold (1.0 mm)
+        ctx_hist_count = make_valid_visual_context(
+            panel_height_mm=100.0,
+            panel_width_mm=80.0,
+            net_quantity_value=10.0,
+            net_quantity_unit="u",
+            measured_heights_mm={"net_quantity": 1.2},
+            rules_as_at=date(2015, 6, 1),
+        )
+        res_hist = evaluate_net_quantity_height(ctx_hist_count)
+        assert res_hist.verdict == "pass"
+        assert res_hist.rule_id == "RULE_LMPC_06B_HISTORICAL_TABLE_II"
+        assert res_hist.evidence_provenance["table_selected"] == "table_ii"
+        assert "1.0 mm" in res_hist.required
+
+        # Mass on pre-2018 date: 120 cm2 PDP selects Table-I threshold (2.5 mm)
+        ctx_hist_mass = make_valid_visual_context(
+            net_quantity_value=500.0,
+            net_quantity_unit="g",
+            measured_heights_mm={"net_quantity": 3.0},
+            rules_as_at=date(2015, 6, 1),
+        )
+        res_mass = evaluate_net_quantity_height(ctx_hist_mass)
+        assert res_mass.verdict == "pass"
+        assert res_mass.rule_id == "RULE_LMPC_06B_HISTORICAL_TABLE_II"
+        assert res_mass.evidence_provenance["table_selected"] == "table_i"
+        assert "2.5 mm" in res_mass.required
+
+    def test_future_rules_not_applied_early(self):
+        """Future rules are not applied before their statutory effective date."""
+        pack = load_rule_pack()
+        # Verify resolution for current date selects 2018+ rule, not a future rule
+        current_rule = pack.get_rule_by_id("CHK06b", as_at=date(2026, 7, 1))
+        assert current_rule.rule_id == "RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT"
+
+        # Inspection date before Commencement (e.g. 2005) returns not_assessed
+        ctx_ancient = make_valid_visual_context(rules_as_at=date(2005, 1, 1))
+        res = evaluate_net_quantity_height(ctx_ancient)
+        assert res.verdict == "not_assessed"
+
+    def test_selected_rule_version_present_in_finding(self):
+        """The selected rule_id and rule_pack_version are preserved directly on FindingResult and evidence_provenance."""
+        ctx = make_valid_visual_context(rules_as_at=date(2026, 7, 1))
         res = evaluate_net_quantity_height(ctx)
 
-        assert res.verdict == "pass"
-        assert "1.0 mm" in res.required
+        assert res.rule_id == "RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT"
+        assert res.rule_pack_version == "2026.07.v1"
+        assert res.evidence_provenance["rule_id"] == "RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT"
+        assert res.evidence_provenance["rule_pack_version"] == "2026.07.v1"
 
     def test_net_quantity_height_shortfall_fail(self):
         """Net quantity numeral 1.5 mm on 120 cm2 panel (req 2.5 mm) fails under Section 36(2)."""
@@ -275,7 +375,7 @@ class TestRule7CharacterWidth:
 
 class TestRule8PdpPlacement:
     def test_declarations_on_pdp_pass(self):
-        """Net quantity and MRP confirmed on PDP ('front') pass Rule 8 placement."""
+        """Net quantity and MRP confirmed on verified PDP ('front') pass Rule 8 placement."""
         llm_res = StructuredDeclarationResult(
             net_quantity=NetQuantityDeclaration(
                 value=500.0,
@@ -287,15 +387,22 @@ class TestRule8PdpPlacement:
                 provenance=FieldProvenance(source_panel="front", source_text="Rs. 99.00"),
             ),
         )
-        ctx = make_valid_visual_context(llm_result=llm_res, panels_captured={"front"})
+        ctx = make_valid_visual_context(
+            llm_result=llm_res,
+            panels_captured={"front"},
+            pdp_surface_established=True,
+            established_pdp_panel="front",
+        )
         res = evaluate_pdp_placement(ctx)
 
         assert res.verdict == "pass"
         assert res.check_id == "CHK22"
         assert "Principal Display Panel" in res.observed
+        assert res.evidence_provenance["established_pdp"] == "front"
+        assert res.evidence_provenance["pdp_verified"] is True
 
     def test_net_quantity_on_side_panel_fail(self):
-        """Net quantity placed on 'side' panel instead of PDP fails Rule 8."""
+        """Net quantity placed on 'side' panel when verified PDP is 'front' fails Rule 8."""
         llm_res = StructuredDeclarationResult(
             net_quantity=NetQuantityDeclaration(
                 value=500.0,
@@ -303,12 +410,79 @@ class TestRule8PdpPlacement:
                 provenance=FieldProvenance(source_panel="side", source_text="500 g"),
             ),
         )
-        ctx = make_valid_visual_context(llm_result=llm_res, panels_captured={"front", "side"})
+        ctx = make_valid_visual_context(
+            llm_result=llm_res,
+            panels_captured={"front", "side"},
+            pdp_surface_established=True,
+            established_pdp_panel="front",
+        )
         res = evaluate_pdp_placement(ctx)
 
         assert res.verdict == "fail"
         assert res.limb == "36(1)"
         assert "Net quantity was placed on 'side' panel instead of PDP" in res.observed
+
+    def test_panel_front_label_alone_does_not_establish_pdp(self):
+        """Audit safeguard: A panel label string 'front' alone does not establish PDP without geometry/evidence."""
+        llm_res = StructuredDeclarationResult(
+            net_quantity=NetQuantityDeclaration(
+                value=500.0,
+                unit="g",
+                provenance=FieldProvenance(source_panel="front", source_text="500 g"),
+            ),
+        )
+        ctx = make_valid_visual_context(
+            llm_result=llm_res,
+            panels_captured={"front"},
+            pdp_detected=False,
+            pdp_surface_established=False,
+            established_pdp_panel=None,
+        )
+        res = evaluate_pdp_placement(ctx)
+
+        assert res.verdict == "not_assessed"
+        assert "Principal display panel could not be established" in res.reason
+
+    def test_back_or_side_panel_not_automatically_failed_when_unassessed(self):
+        """Do not automatically fail a back/side panel merely because its panel label is 'back' or 'side'."""
+        llm_res = StructuredDeclarationResult(
+            net_quantity=NetQuantityDeclaration(
+                value=500.0,
+                unit="g",
+                provenance=FieldProvenance(source_panel="back", source_text="500 g"),
+            ),
+        )
+        ctx = make_valid_visual_context(
+            llm_result=llm_res,
+            panels_captured={"back"},
+            pdp_detected=False,
+            pdp_surface_established=False,
+            established_pdp_panel=None,
+        )
+        res = evaluate_pdp_placement(ctx)
+
+        assert res.verdict == "not_assessed"
+        assert res.verdict != "fail"
+
+    def test_back_panel_passes_when_established_as_pdp(self):
+        """When back panel is affirmatively established as the PDP, declarations on it PASS."""
+        llm_res = StructuredDeclarationResult(
+            net_quantity=NetQuantityDeclaration(
+                value=500.0,
+                unit="g",
+                provenance=FieldProvenance(source_panel="back", source_text="500 g"),
+            ),
+        )
+        ctx = make_valid_visual_context(
+            llm_result=llm_res,
+            panels_captured={"back"},
+            pdp_surface_established=True,
+            established_pdp_panel="back",
+        )
+        res = evaluate_pdp_placement(ctx)
+
+        assert res.verdict == "pass"
+        assert "Principal Display Panel ('back')" in res.observed
 
     def test_declaration_outside_pdp_bounds_fail(self):
         """Declaration coordinates extending outside verified PDP boundaries fail placement."""
@@ -322,6 +496,8 @@ class TestRule8PdpPlacement:
         ctx = make_valid_visual_context(
             llm_result=llm_res,
             panels_captured={"front"},
+            pdp_surface_established=True,
+            established_pdp_panel="front",
             declaration_outside_pdp=True,
         )
         res = evaluate_pdp_placement(ctx)
@@ -331,7 +507,12 @@ class TestRule8PdpPlacement:
 
     def test_pdp_unavailable_returns_not_assessed(self):
         """When PDP cannot be established from package geometry, returns NOT_ASSESSED."""
-        ctx = make_valid_visual_context(panels_captured=set(), pdp_detected=False)
+        ctx = make_valid_visual_context(
+            panels_captured=set(),
+            pdp_detected=False,
+            pdp_surface_established=False,
+            established_pdp_panel=None,
+        )
         res = evaluate_pdp_placement(ctx)
 
         assert res.verdict == "not_assessed"
@@ -401,14 +582,37 @@ class TestRule8ClearSpace:
 
 class TestRule9ConspicuousContrast:
     def test_blown_moulded_surface_exception_pass(self):
-        """Section 17: Information blown/formed/moulded on container surface is exempt under Rule 9(1) proviso."""
-        ctx = make_valid_visual_context(is_blown_moulded=True)
+        """Section 17: Information blown/formed/moulded on container surface is exempt under Rule 9(1) proviso when verified."""
+        ctx = make_valid_visual_context(
+            is_blown_moulded=True,
+            blown_moulded_inscribed_verified=True,
+            declaration_medium="blown",
+            surface_material="glass",
+        )
         res = evaluate_conspicuous_contrast(ctx)
 
         assert res.verdict == "pass"
         assert res.check_id == "CHK08"
         assert "Rule 9(1) proviso" in res.observed
         assert "blown, formed or moulded" in res.observed
+        assert res.evidence_provenance["surface_exception_established"] is True
+
+    def test_moulded_container_metadata_alone_does_not_pass(self):
+        """Audit safeguard: Do not return PASS merely because metadata says object is moulded.
+        PASS only when applicable exception is sufficiently established by inspection evidence.
+        Otherwise NOT_ASSESSED.
+        """
+        ctx = make_valid_visual_context(
+            is_blown_moulded=True,
+            blown_moulded_inscribed_verified=False,
+            declaration_medium=None,
+            contrast_ratio=None,
+            engineering_contrast_signal={},
+        )
+        res = evaluate_conspicuous_contrast(ctx)
+
+        assert res.verdict == "not_assessed"
+        assert "Rule 9(1) proviso exemption cannot be certified without verified declaration medium" in res.reason
 
     def test_no_statutory_threshold_returns_not_assessed(self):
         """Section 16: When law prescribes no universal numeric ratio, returns NOT_ASSESSED without inventing WCAG 4.5:1."""
@@ -444,7 +648,7 @@ class TestRule9ConspicuousContrast:
 
     def test_insufficient_pixel_quality_returns_not_assessed(self):
         """When contrast cannot be computed from image pixels, returns NOT_ASSESSED."""
-        ctx = make_valid_visual_context(contrast_ratio=None, engineering_contrast_signal={})
+        ctx = make_valid_visual_context(contrast_ratio=None, engineering_contrast_signal={}, is_blown_moulded=False)
         res = evaluate_conspicuous_contrast(ctx)
 
         assert res.verdict == "not_assessed"
@@ -547,14 +751,15 @@ class TestPhase4cSafetyInvariants:
     def test_effective_date_gating(self):
         """Rules are not evaluated before their statutory effective date."""
         pack = load_rule_pack()
-        rule = pack.get_rule_by_id("CHK06b")
+        rule = pack.get_rule_by_id("RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT")
         assert rule is not None
+        # RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT effective_from is 2018-01-01
+        assert not rule.is_effective_on(date(2015, 6, 1))
 
-        # CHK06b effective_from is 2018-01-01
-        ctx_past = make_valid_visual_context(rules_as_at=date(2015, 6, 1))
+        ctx_past = make_valid_visual_context(rules_as_at=date(2005, 1, 1))
         res = evaluate_net_quantity_height(ctx_past)
         assert res.verdict == "not_assessed"
-        assert "not effective on inspection date" in res.reason
+        assert "not effective on inspection date" in res.reason or "No applicable rule found" in res.reason
 
 
 # ---------------------------------------------------------------------------

@@ -119,6 +119,12 @@ class CheckContext:
     use_visual_evaluator: bool = False
     declaration_outside_pdp: bool = False
     pdp_detected: bool = False
+    pdp_panel_id: str | None = None
+    established_pdp_panel: str | None = None
+    pdp_surface_established: bool = False
+    blown_moulded_inscribed_verified: bool | None = None
+    surface_material: str | None = None
+    declaration_medium: str | None = None
     coverage_sufficient: bool | None = None
 
     # --- set by the runner, read by later checks ---

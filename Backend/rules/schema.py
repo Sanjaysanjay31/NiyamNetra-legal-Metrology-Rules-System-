@@ -185,31 +185,52 @@ class RulePack:
     rules: list[LegalRuleDefinition] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def get_rule_by_id(self, rule_id: str) -> LegalRuleDefinition | None:
-        for r in self.rules:
-            if r.rule_id == rule_id or r.code == rule_id:
+    def get_rule_by_id(self, rule_id: str, as_at: date | None = None) -> LegalRuleDefinition | None:
+        candidates = [r for r in self.rules if r.rule_id == rule_id or r.code == rule_id]
+        if not candidates:
+            return None
+        if as_at is not None:
+            for r in candidates:
+                if r.is_effective_on(as_at):
+                    return r
+            return candidates[0]
+        for r in candidates:
+            if r.effective_to is None and r.enabled:
                 return r
-        return None
+        return candidates[0]
 
     def get_effective_rules(self, as_at: date) -> list[LegalRuleDefinition]:
         return [r for r in self.rules if r.is_effective_on(as_at)]
 
     def validate(self) -> list[str]:
-        """Validate every rule in the rule pack and enforce uniqueness."""
+        """Validate every rule in the rule pack and enforce uniqueness and non-overlapping code periods."""
         all_errors: list[str] = []
         seen_ids: set[str] = set()
-        seen_codes: set[str] = set()
+        seen_codes: dict[str, list[LegalRuleDefinition]] = {}
 
         for rule in self.rules:
             if rule.rule_id in seen_ids:
                 all_errors.append(f"Duplicate rule_id detected: {rule.rule_id}")
             seen_ids.add(rule.rule_id)
 
-            if rule.code in seen_codes:
-                all_errors.append(f"Duplicate check code detected: {rule.code}")
-            seen_codes.add(rule.code)
-
+            seen_codes.setdefault(rule.code, []).append(rule)
             all_errors.extend(rule.validate_metadata())
+
+        # Enforce that multiple rules sharing a check code do not have overlapping active periods
+        for code, rules in seen_codes.items():
+            if len(rules) > 1:
+                for i in range(len(rules)):
+                    for j in range(i + 1, len(rules)):
+                        r1, r2 = rules[i], rules[j]
+                        r1_start = r1.effective_from_date
+                        r1_end = r1.effective_to_date or date.max
+                        r2_start = r2.effective_from_date
+                        r2_end = r2.effective_to_date or date.max
+                        if max(r1_start, r2_start) <= min(r1_end, r2_end):
+                            all_errors.append(
+                                f"Overlapping active periods for check code '{code}': "
+                                f"{r1.rule_id} and {r2.rule_id}"
+                            )
 
         return all_errors
 

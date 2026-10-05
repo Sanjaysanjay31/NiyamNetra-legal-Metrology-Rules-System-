@@ -21,7 +21,7 @@ import math
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -575,7 +575,8 @@ def measure_conspicuous_contrast_signal(
 def evaluate_character_height(ctx: CheckContext) -> FindingResult:
     """Deterministic evaluation of character height under Rule 7(2) Table-I (CHK06)."""
     pack = load_rule_pack()
-    rule = pack.get_rule_by_id("CHK06")
+    as_at = getattr(ctx, "rules_as_at", None)
+    rule = pack.get_rule_by_id("CHK06", as_at=as_at)
     rule_id = rule.rule_id if rule else "RULE_LMPC_06_CHARACTER_HEIGHT"
     pack_ver = pack.rule_pack_version
 
@@ -591,8 +592,12 @@ def evaluate_character_height(ctx: CheckContext) -> FindingResult:
         evaluation_timestamp=_now_iso(),
     )
 
-    as_at = getattr(ctx, "rules_as_at", None)
-    if rule and as_at and not rule.is_effective_on(as_at):
+    if rule is None:
+        t.verdict = "not_assessed"
+        t.reason = f"No applicable rule found for CHK06 on inspection date {as_at.isoformat() if as_at else 'current'}."
+        return t
+
+    if as_at and not rule.is_effective_on(as_at):
         t.verdict = "not_assessed"
         t.reason = f"Rule CHK06 ({rule.rule_id}) is not effective on inspection date {as_at.isoformat()}."
         return t
@@ -694,25 +699,42 @@ def evaluate_character_height(ctx: CheckContext) -> FindingResult:
 # ---------------------------------------------------------------------------
 
 def evaluate_net_quantity_height(ctx: CheckContext) -> FindingResult:
-    """Deterministic evaluation of net quantity numeral height under Rule 7 Table-II / Table-I (CHK06b)."""
+    """Deterministic evaluation of net quantity numeral height under Rule 7(2) Table-I (post-2018)
+    or historical Table-II (pre-2018) (CHK06b).
+
+    G.S.R. 629(E), w.e.f 01.01.2018, substituted Rule 7(2) with:
+    'The height of any numeral and letter in the declaration required under these rules shall be as per Table-I.'
+    The same amendment omitted Table-II.
+    """
     pack = load_rule_pack()
-    rule = pack.get_rule_by_id("CHK06b")
+    as_at = getattr(ctx, "rules_as_at", None)
+    rule = pack.get_rule_by_id("CHK06b", as_at=as_at)
     rule_id = rule.rule_id if rule else "RULE_LMPC_06B_NET_QUANTITY_NUMERAL_HEIGHT"
     pack_ver = pack.rule_pack_version
 
+    citation_desc = (
+        "Rule 7(2) read with Table-I as substituted by GSR 629(E) w.e.f 01.01.2018"
+        if (as_at is None or as_at >= date(2018, 1, 1))
+        else "Rule 7 read with Table-II (pre-2018 historical rule)"
+    )
+
     t = FindingResult(
         "CHK06b",
-        "Net-quantity declaration meets its own minimum height",
+        "Net-quantity numeral meets minimum height under Rule 7",
         "pass",
         "major",
-        citation=cite("R7-nq", "the net-quantity-specific minimum height in Rule 7"),
+        citation=cite("R7-nq", citation_desc),
         ledger_ref="L-04",
         rule_id=rule_id,
         rule_pack_version=pack_ver,
         evaluation_timestamp=_now_iso(),
     )
 
-    as_at = getattr(ctx, "rules_as_at", None)
+    if rule is None:
+        t.verdict = "not_assessed"
+        t.reason = f"No applicable rule found for CHK06b on inspection date {as_at.isoformat() if as_at else 'current'}."
+        return t
+
     if rule and as_at and not rule.is_effective_on(as_at):
         t.verdict = "not_assessed"
         t.reason = f"Rule CHK06b ({rule.rule_id}) is not effective on inspection date {as_at.isoformat()}."
@@ -756,23 +778,49 @@ def evaluate_net_quantity_height(ctx: CheckContext) -> FindingResult:
         t.evidence_provenance = _format_visual_provenance(ctx, target_field="net_quantity")
         return t
 
-    # Select statutory threshold under Rule 7 Table-I / Table-II
-    unit = (ctx.net_quantity_unit or "").lower()
     is_blown = ctx.is_blown_moulded
+    params = rule.evaluation_method.parameters if rule and rule.evaluation_method else {}
+    table_ref = params.get("table_reference", "table_i")
 
-    if unit in {"pcs", "pc", "u", "n", "m", "cm", "mm"}:
-        # Table-II
-        if area <= 100.0:
-            required = 2.0 if is_blown else 1.0
-        elif area <= 500.0:
-            required = 4.0 if is_blown else 2.0
-        elif area <= 2500.0:
-            required = 6.0 if is_blown else 4.0
-        else:
+    # Select statutory threshold from versioned rule pack parameters
+    if table_ref == "table_ii" and as_at and as_at < date(2018, 1, 1):
+        # Pre-2018 historical rule: Table-II for count/length/area; Table-I for mass/volume
+        unit = (ctx.net_quantity_unit or "").lower()
+        if unit in {"pcs", "pc", "u", "n", "m", "cm", "mm"}:
+            table_ii = params.get("table_ii_count_length", [
+                [100.0, 1.0, 2.0], [500.0, 2.0, 4.0], [2500.0, 4.0, 6.0], [999999.0, 6.0, 6.0]
+            ])
             required = 6.0
+            for upper, normal, blown_h in table_ii:
+                if area <= upper:
+                    required = blown_h if is_blown else normal
+                    break
+            rule_source_desc = "pre-2018 Rule 7 Table-II"
+            table_used = "table_ii"
+        else:
+            table_i = params.get("table_i", [
+                [50.0, 1.0, 1.5], [100.0, 1.5, 3.0], [500.0, 2.5, 4.0], [2500.0, 4.0, 6.0], [999999.0, 6.0, 6.0]
+            ])
+            required = 6.0
+            for upper, normal, blown_h in table_i:
+                if area <= upper:
+                    required = blown_h if is_blown else normal
+                    break
+            rule_source_desc = "pre-2018 Rule 7 Table-I"
+            table_used = "table_i"
     else:
-        # Table-I based on PDP area
-        required = min_height_mm(area, is_blown)
+        # Post-2018: Rule 7(2) substituted w.e.f 01.01.2018 (GSR 629(E)). Table-II is omitted.
+        # Table-I governs ALL numerals and letters in declarations, including length/area/number.
+        table_i = params.get("table_i", [
+            [50.0, 1.0, 1.5], [100.0, 1.5, 3.0], [500.0, 2.5, 4.0], [2500.0, 4.0, 6.0], [999999.0, 6.0, 6.0]
+        ])
+        required = 6.0
+        for upper, normal, blown_h in table_i:
+            if area <= upper:
+                required = blown_h if is_blown else normal
+                break
+        rule_source_desc = "Rule 7(2) Table-I (GSR 629(E))"
+        table_used = "table_i"
 
     u = (ctx.mm_per_pixel_uncertainty or 0.0) * 2.0
     verdict, note = compare_with_uncertainty(measured, required, u)
@@ -781,7 +829,7 @@ def evaluate_net_quantity_height(ctx: CheckContext) -> FindingResult:
         f"Minimum {required:.1f} mm for the net-quantity numeral on a PDP of "
         f"{area:.0f} cm2"
         + (" (blown-moulded container)" if is_blown else "")
-        + " under Rule 7."
+        + f" under {rule_source_desc}."
     )
     t.evidence_provenance = _format_visual_provenance(
         ctx,
@@ -791,6 +839,9 @@ def evaluate_net_quantity_height(ctx: CheckContext) -> FindingResult:
             "measured_value_mm": measured,
             "required_min_mm": required,
             "uncertainty_mm": u,
+            "rule_id": rule_id,
+            "rule_pack_version": pack_ver,
+            "table_selected": table_used,
         },
     )
 
@@ -817,7 +868,8 @@ def evaluate_net_quantity_height(ctx: CheckContext) -> FindingResult:
 def evaluate_character_width(ctx: CheckContext) -> FindingResult:
     """Deterministic evaluation of character width ratio under Rule 7(3) (CHK07)."""
     pack = load_rule_pack()
-    rule = pack.get_rule_by_id("CHK07")
+    as_at = getattr(ctx, "rules_as_at", None)
+    rule = pack.get_rule_by_id("CHK07", as_at=as_at)
     rule_id = rule.rule_id if rule else "RULE_LMPC_07_CHARACTER_WIDTH"
     pack_ver = pack.rule_pack_version
 
@@ -833,7 +885,11 @@ def evaluate_character_width(ctx: CheckContext) -> FindingResult:
         evaluation_timestamp=_now_iso(),
     )
 
-    as_at = getattr(ctx, "rules_as_at", None)
+    if rule is None:
+        t.verdict = "not_assessed"
+        t.reason = f"No applicable rule found for CHK07 on inspection date {as_at.isoformat() if as_at else 'current'}."
+        return t
+
     if rule and as_at and not rule.is_effective_on(as_at):
         t.verdict = "not_assessed"
         t.reason = f"Rule CHK07 ({rule.rule_id}) is not effective on inspection date {as_at.isoformat()}."
@@ -889,9 +945,14 @@ def evaluate_character_width(ctx: CheckContext) -> FindingResult:
 # ---------------------------------------------------------------------------
 
 def evaluate_pdp_placement(ctx: CheckContext) -> FindingResult:
-    """Deterministic evaluation of declaration placement on PDP under Rule 8 (CHK22)."""
+    """Deterministic evaluation of declaration placement on PDP under Rule 8 (CHK22).
+
+    Audit safeguard: Does NOT equate panel == 'front' with PDP.
+    Requires affirmative evidence/geometry establishing the PDP surface.
+    """
     pack = load_rule_pack()
-    rule = pack.get_rule_by_id("CHK22")
+    as_at = getattr(ctx, "rules_as_at", None)
+    rule = pack.get_rule_by_id("CHK22", as_at=as_at)
     rule_id = rule.rule_id if rule else "RULE_LMPC_22_PDP_PLACEMENT"
     pack_ver = pack.rule_pack_version
 
@@ -907,8 +968,12 @@ def evaluate_pdp_placement(ctx: CheckContext) -> FindingResult:
         evaluation_timestamp=_now_iso(),
     )
 
-    as_at = getattr(ctx, "rules_as_at", None)
-    if rule and as_at and not rule.is_effective_on(as_at):
+    if rule is None:
+        t.verdict = "not_assessed"
+        t.reason = f"No applicable rule found for CHK22 on inspection date {as_at.isoformat() if as_at else 'current'}."
+        return t
+
+    if as_at and not rule.is_effective_on(as_at):
         t.verdict = "not_assessed"
         t.reason = f"Rule CHK22 ({rule.rule_id}) is not effective on inspection date {as_at.isoformat()}."
         return t
@@ -918,13 +983,39 @@ def evaluate_pdp_placement(ctx: CheckContext) -> FindingResult:
         t.reason = getattr(ctx, "halt_reason", "Assessment halted")
         return t
 
-    # 1. PDP determination
+    # 1. Affirmative PDP determination from geometry/evidence
+    # Do NOT equate panel == 'front' with principal_display_panel == true.
+    # A declaration should pass placement only when the system has evidence establishing
+    # that the relevant surface is the applicable principal display panel.
+    # A front-camera capture may be evidence of the PDP, but the label string alone must not establish that fact.
+    established_pdp = getattr(ctx, "pdp_panel_id", None) or getattr(ctx, "established_pdp_panel", None)
+    pdp_verified = getattr(ctx, "pdp_surface_established", False) or getattr(ctx, "pdp_detected", False)
     panels = getattr(ctx, "panels_captured", set()) or set()
-    pdp_established = "front" in panels or "principal" in panels or getattr(ctx, "pdp_detected", False)
-    if not pdp_established:
+
+    # If PDP panel is not explicitly identified by name, verify if affirmative geometry/evidence established a unique surface
+    if not established_pdp and pdp_verified:
+        if "principal" in panels:
+            established_pdp = "principal"
+        elif len(panels) == 1 and getattr(ctx, "pdp_surface_established", False):
+            established_pdp = next(iter(panels))
+
+    # If PDP cannot be established from evidence and geometry: NOT_ASSESSED
+    if not pdp_verified or not established_pdp:
         t.verdict = "not_assessed"
-        t.reason = "Principal display panel could not be established from available geometry."
-        t.evidence_provenance = _format_visual_provenance(ctx)
+        t.reason = (
+            "Principal display panel could not be established from available evidence and geometry. "
+            "A panel label string alone (such as 'front') does not establish the Principal Display Panel."
+        )
+        t.evidence_provenance = _format_visual_provenance(
+            ctx,
+            extra={
+                "pdp_verified": pdp_verified,
+                "established_pdp": established_pdp,
+                "panel_identity": list(panels) if panels else [],
+                "pdp_determination": getattr(ctx, "pdp_determination_method", None),
+                "coordinate_mapping": getattr(ctx, "coordinate_mapping_verified", None),
+            },
+        )
         return t
 
     # 2. Check placement of PDP-mandatory declarations (Net Quantity and MRP)
@@ -932,7 +1023,14 @@ def evaluate_pdp_placement(ctx: CheckContext) -> FindingResult:
     if not llm_res:
         t.verdict = "not_assessed"
         t.reason = "Declaration provenance is unavailable to verify panel placement coordinates."
-        t.evidence_provenance = _format_visual_provenance(ctx)
+        t.evidence_provenance = _format_visual_provenance(
+            ctx,
+            extra={
+                "established_pdp": established_pdp,
+                "pdp_verified": pdp_verified,
+                "panel_identity": list(panels) if panels else [],
+            },
+        )
         return t
 
     nq_prov = getattr(llm_res.net_quantity, "provenance", None)
@@ -941,8 +1039,10 @@ def evaluate_pdp_placement(ctx: CheckContext) -> FindingResult:
     offenders = []
     # Net quantity must appear on the principal display panel under Rule 8 & Rule 6(1)
     if nq_prov and nq_prov.source_panel:
-        if nq_prov.source_panel not in ("front", "principal"):
-            offenders.append(f"Net quantity was placed on '{nq_prov.source_panel}' panel instead of PDP")
+        if nq_prov.source_panel != established_pdp and nq_prov.source_panel not in ("principal", established_pdp):
+            offenders.append(
+                f"Net quantity was placed on '{nq_prov.source_panel}' panel instead of PDP (verified PDP is '{established_pdp}')"
+            )
 
     # If coordinates are available, check placement inside panel bounds
     if getattr(ctx, "declaration_outside_pdp", False):
@@ -951,6 +1051,11 @@ def evaluate_pdp_placement(ctx: CheckContext) -> FindingResult:
     t.evidence_provenance = _format_visual_provenance(
         ctx,
         extra={
+            "established_pdp": established_pdp,
+            "pdp_verified": pdp_verified,
+            "panel_identity": list(panels) if panels else [],
+            "pdp_determination": getattr(ctx, "pdp_determination_method", "geometric_surface_affirmation"),
+            "coordinate_mapping": getattr(ctx, "coordinate_mapping_verified", True),
             "net_quantity_panel": nq_prov.source_panel if nq_prov else None,
             "mrp_panel": mrp_prov.source_panel if mrp_prov else None,
         },
@@ -965,7 +1070,7 @@ def evaluate_pdp_placement(ctx: CheckContext) -> FindingResult:
         return t
 
     t.verdict = "pass"
-    t.observed = "Mandatory declarations are correctly positioned on the Principal Display Panel under Rule 8."
+    t.observed = f"Mandatory declarations are correctly positioned on the established Principal Display Panel ('{established_pdp}') under Rule 8."
     return t
 
 
@@ -976,7 +1081,8 @@ def evaluate_pdp_placement(ctx: CheckContext) -> FindingResult:
 def evaluate_clear_space(ctx: CheckContext) -> FindingResult:
     """Deterministic evaluation of clear space around net quantity declaration under Rule 8 (CHK09)."""
     pack = load_rule_pack()
-    rule = pack.get_rule_by_id("CHK09")
+    as_at = getattr(ctx, "rules_as_at", None)
+    rule = pack.get_rule_by_id("CHK09", as_at=as_at)
     rule_id = rule.rule_id if rule else "RULE_LMPC_09_CLEAR_SPACE"
     pack_ver = pack.rule_pack_version
 
@@ -992,7 +1098,11 @@ def evaluate_clear_space(ctx: CheckContext) -> FindingResult:
         evaluation_timestamp=_now_iso(),
     )
 
-    as_at = getattr(ctx, "rules_as_at", None)
+    if rule is None:
+        t.verdict = "not_assessed"
+        t.reason = f"No applicable rule found for CHK09 on inspection date {as_at.isoformat() if as_at else 'current'}."
+        return t
+
     if rule and as_at and not rule.is_effective_on(as_at):
         t.verdict = "not_assessed"
         t.reason = f"Rule CHK09 ({rule.rule_id}) is not effective on inspection date {as_at.isoformat()}."
@@ -1108,9 +1218,14 @@ def evaluate_clear_space(ctx: CheckContext) -> FindingResult:
 # ---------------------------------------------------------------------------
 
 def evaluate_conspicuous_contrast(ctx: CheckContext) -> FindingResult:
-    """Deterministic evaluation of conspicuous contrast under Rule 9(1) (CHK08)."""
+    """Deterministic evaluation of conspicuous contrast under Rule 9(1) (CHK08).
+
+    Audit safeguard: Does NOT return PASS merely because metadata flags container as moulded.
+    PASS requires affirmative verification that declaration itself is blown/formed/moulded on glass/plastic surface.
+    """
     pack = load_rule_pack()
-    rule = pack.get_rule_by_id("CHK08")
+    as_at = getattr(ctx, "rules_as_at", None)
+    rule = pack.get_rule_by_id("CHK08", as_at=as_at)
     rule_id = rule.rule_id if rule else "RULE_LMPC_08_CONSPICUOUS_CONTRAST"
     pack_ver = pack.rule_pack_version
 
@@ -1126,7 +1241,11 @@ def evaluate_conspicuous_contrast(ctx: CheckContext) -> FindingResult:
         evaluation_timestamp=_now_iso(),
     )
 
-    as_at = getattr(ctx, "rules_as_at", None)
+    if rule is None:
+        t.verdict = "not_assessed"
+        t.reason = f"No applicable rule found for CHK08 on inspection date {as_at.isoformat() if as_at else 'current'}."
+        return t
+
     if rule and as_at and not rule.is_effective_on(as_at):
         t.verdict = "not_assessed"
         t.reason = f"Rule CHK08 ({rule.rule_id}) is not effective on inspection date {as_at.isoformat()}."
@@ -1143,17 +1262,47 @@ def evaluate_conspicuous_contrast(ctx: CheckContext) -> FindingResult:
         return t
 
     # Proviso Exception Check (Section 17): Blown, formed, or moulded surface
-    if getattr(ctx, "is_blown_moulded", False):
+    # DO NOT return PASS merely because container might be moulded.
+    # PASS only when the applicable exception is sufficiently established by inspection evidence/context.
+    is_blown_container = getattr(ctx, "is_blown_moulded", False)
+    blown_verified = getattr(ctx, "blown_moulded_inscribed_verified", False)
+    medium = getattr(ctx, "declaration_medium", None)
+    mat = getattr(ctx, "surface_material", None)
+    surface_exception_established = (
+        blown_verified
+        or (is_blown_container and medium in {"blown", "formed", "moulded", "embossed", "debossed"})
+        or (mat in {"glass", "plastic"} and medium in {"blown", "formed", "moulded", "embossed", "debossed"})
+    )
+
+    if surface_exception_established:
         t.verdict = "pass"
         t.observed = (
-            "Information is blown, formed or moulded on container surface; "
+            "Information is verified as blown, formed or moulded on container surface; "
             "colour contrast requirement is exempted under Rule 9(1) proviso."
+        )
+        t.evidence_provenance = _format_visual_provenance(
+            ctx,
+            extra={
+                "surface_exception_established": True,
+                "surface_material": mat,
+                "declaration_medium": medium,
+            },
+        )
+        return t
+
+    # If container is moulded but declaration medium is unverified and contrast is not measurable
+    contrast_ratio = getattr(ctx, "contrast_ratio", None)
+    eng_signal = getattr(ctx, "engineering_contrast_signal", {}) or {}
+
+    if is_blown_container and not surface_exception_established and contrast_ratio is None and not eng_signal:
+        t.verdict = "not_assessed"
+        t.reason = (
+            "Container is recorded as blown/moulded, but inspection evidence does not establish "
+            "whether the declaration itself is directly inscribed on the surface or printed on a label. "
+            "Rule 9(1) proviso exemption cannot be certified without verified declaration medium."
         )
         t.evidence_provenance = _format_visual_provenance(ctx, extra={"is_blown_moulded": True})
         return t
-
-    contrast_ratio = getattr(ctx, "contrast_ratio", None)
-    eng_signal = getattr(ctx, "engineering_contrast_signal", {}) or {}
 
     t.evidence_provenance = _format_visual_provenance(
         ctx,
@@ -1173,13 +1322,11 @@ def evaluate_conspicuous_contrast(ctx: CheckContext) -> FindingResult:
 
     # Critical Legal Contrast Requirement (Section 16):
     # Rule 9 requires declarations to "contrast conspicuously" without prescribing a universal numeric ratio.
-    # Check if active rule definition contains a validated statutory numeric threshold:
     statutory_threshold = None
     if rule and rule.evaluation_method and isinstance(rule.evaluation_method.parameters, dict):
         statutory_threshold = rule.evaluation_method.parameters.get("statutory_threshold")
 
     if statutory_threshold is not None and contrast_ratio is not None:
-        # Evaluated against an explicitly configured statutory standard
         if contrast_ratio >= float(statutory_threshold):
             t.verdict = "pass"
             t.observed = f"Measured contrast ratio {contrast_ratio:.2f}:1 meets the statutory threshold of {statutory_threshold}:1."
