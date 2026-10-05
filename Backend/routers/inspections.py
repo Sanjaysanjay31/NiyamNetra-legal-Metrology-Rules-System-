@@ -607,6 +607,52 @@ def get_inspection(insp: Inspection = Depends(owned_inspection),
     return d
 
 
+@router.get("/inspections/{inspection_id}/assessment")
+def get_inspection_assessment(
+    insp: Inspection = Depends(owned_inspection),
+    db: Session = Depends(get_db),
+):
+    """Aggregate multi-panel inspection assessment with Phase 4D dossier & capture guidance."""
+    from models import Finding
+    from rules.aggregation import aggregate_inspection_assessment
+    from rules_engine import FindingResult
+
+    live = [s for s in (insp.scans or []) if getattr(s, "duplicate_of", None) is None]
+    all_findings: list[FindingResult] = []
+    all_images = []
+    captured_panels: set[str] = set()
+
+    for s in live:
+        for img in getattr(s, "images", []) or []:
+            all_images.append(img)
+            if getattr(img, "panel", None):
+                captured_panels.add(img.panel)
+        findings_rows = db.query(Finding).filter(Finding.scan_id == s.id).all()
+        for f in findings_rows:
+            all_findings.append(FindingResult(
+                check_id=f.check_id,
+                title=f.title,
+                verdict=f.effective_verdict or f.engine_verdict,
+                severity=f.severity,
+                reason=f.reason,
+                observed=f.observed,
+                required=f.required,
+                citation=f.citation,
+                ledger_ref=f.ledger_ref,
+                confidence=f.confidence,
+                limb=f.limb,
+            ))
+
+    assessment = aggregate_inspection_assessment(
+        inspection_id=insp.id,
+        findings=all_findings,
+        rules_as_at=insp.inspection_date,
+        captured_panels=captured_panels,
+        images=all_images,
+    )
+    return assessment.to_dict()
+
+
 @router.post("/inspections/{inspection_id}/findings/{finding_id}/remark")
 def add_finding_remark(
     finding_id: int,

@@ -136,6 +136,18 @@ class LegalRuleDefinition:
                 date.fromisoformat(self.effective_to)
             except ValueError:
                 errors.append(f"{self.rule_id}: effective_to '{self.effective_to}' must be ISO YYYY-MM-DD")
+        if self.effective_from and self.effective_to:
+            try:
+                from_d = date.fromisoformat(self.effective_from)
+                to_d = date.fromisoformat(self.effective_to)
+                if from_d > to_d:
+                    errors.append(
+                        f"{self.rule_id}: impossible date window (effective_from {self.effective_from} > effective_to {self.effective_to})"
+                    )
+            except ValueError:
+                pass
+        if not self.applicability or not self.applicability.inspection_sources:
+            errors.append(f"{self.rule_id}: applicability with inspection_sources is mandatory")
         if not self.rule_pack_version:
             errors.append(f"{self.rule_id}: rule_pack_version is mandatory")
         if not self.evaluation_method or not self.evaluation_method.method:

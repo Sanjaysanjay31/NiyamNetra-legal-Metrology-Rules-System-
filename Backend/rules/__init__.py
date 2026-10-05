@@ -26,6 +26,7 @@ from rules.aggregation import (
     normalize_date_semantic,
     normalize_party_text,
 )
+from rules.benchmark import benchmark_phase4_end_to_end
 from rules.loader import generate_rule_pack_report, load_rule_pack
 from rules.schema import (
     ApplicabilitySpec,
@@ -56,6 +57,7 @@ __all__ = [
     "ViolationDossier",
     "ViolationItem",
     "aggregate_inspection_assessment",
+    "benchmark_phase4_end_to_end",
     "deduplicate_findings",
     "detect_cross_panel_conflicts",
     "determine_assessment_completeness",
