@@ -1,0 +1,133 @@
+# Security, Privacy & Integrity Architecture
+
+**Document Code:** `DOC-08`  
+**Security Standard:** Integrity-Verifiable, Tamper-Evident Evidence Architecture  
+**Regulatory Position:** Digital Personal Data Protection Act, 2023 (DPDP Act) Compliant  
+
+---
+
+## 1. Security Philosophy & Legal Realism
+
+NiyamNetra is an inspection decision-support system whose outputs may be used by enforcement officers to initiate compounding proceedings or formal criminal complaints under Chapter V of the **Legal Metrology Act, 2009**.
+
+Because these records face rigorous scrutiny in judicial forums, NiyamNetra rejects superficial claims:
+- **Integrity-Verifiable, NOT "Tamper-Proof":** No software system is immune to physical device tampering. NiyamNetra implements **tamper-evident cryptographic chains (SHA-256)** such that any alteration of stored evidence or findings is immediately detectable and provable.
+- **Decision-Support, NOT Automatic Evidence Admission:** NiyamNetra does not claim pre-ordained court admissibility. Admissibility remains subject to statutory certificates under Section 65B of the Indian Evidence Act, 1872 / Section 63 of the Bharatiya Sakshya Adhiniyam, 2023.
+
+---
+
+## 2. Threat Model & Control Matrix (T1 – T15)
+
+The platform evaluates and mitigates 15 core threat vectors:
+
+| ID | Threat Vector | Attack Scenario | Mitigation Control | Residual Risk |
+|---|---|---|---|---|
+| **T1** | Inspector Impersonation | Shared or stolen credentials | Passlib bcrypt hashing (cost 12), device-bound `install_id`, token epoch invalidation. | Coerced login on bound device. |
+| **T2** | Evidence Substitution | Modifying image files after upload | RAW camera bytes stored untouched; SHA-256 digest recorded in database; verified on every assess. | Staged physical mock packaging prior to camera capture. |
+| **T3** | Database Record Tampering | Direct SQL UPDATE on findings or verdicts | Append-only hash-chained audit ledger (`audit_logs`); database-level update triggers. | Complete database compromise (detectable via broken hash chain). |
+| **T4** | Location Falsification | Spoofed GPS mock provider on Android | Server-side haversine geofencing against registered store coordinates. | Mock location with physical store proximity; GPS treated as corroborating. |
+| **T5** | Image Re-use Across Visits | Same photo submitted for multiple stores | Perceptual DCT hashing (`phash_bands`) and duplicate resolution query. | Visually identical standard product labels in legitimate consecutive inspections. |
+| **T6** | Offline Queue Manipulation | Modifying queued records prior to sync | Single-use client capture UUIDs, immutable local SQLite rows, server timestamp anchoring. | Rooted device with memory modification. |
+| **T7** | Report Forgery | Fabricating or editing downloaded PDFs | SHA-256 docket digest embedded in verification QR code linking to live HTTPS backend. | Offline recipient unable to access verification URL. |
+| **T8** | Privilege Escalation | Inspector accessing admin routes | Server-side FastAPI dependency injection (`require_admin`, `require_inspector`). | Route misconfiguration (guarded by automated route inventory tests). |
+| **T9** | Token Interception | Network sniffing on shared Wi-Fi | HTTPS transport encryption, Bearer JWT in memory only (never written to browser LocalStorage). | Compromised client operating system. |
+| **T10** | Storage Data Loss | Server filesystem failure | Managed PostgreSQL database backups and mirrored object storage buckets. | Catastrophic cloud outage. |
+| **T11** | Server-Side Request Forgery | Operator enters internal IP for listing check | DNS-resolve sandbox: scheme allowlist (HTTPS only), domain allowlist, private IP blocking. | Allowlisted domain serving malicious content. |
+| **T12** | Cross-Site Scripting (XSS) | Malicious OCR text injected into UI | React automatic JSX escaping, strict CSP, no `dangerouslySetInnerHTML`. | Injection into non-React output (mitigated by sanitized PDF templates). |
+| **T13** | Insecure Direct Object Ref (IDOR) | Guessing another inspector's inspection ID | Query-level tenant scoping (`Inspection.user_id == current_user.id` for inspectors). | Admin role visibility by design. |
+| **T14** | Sync Queue Poisoning | Replaying captured batch requests | Cryptographic `Idempotency-Key` tracking with 24-hour cache deduplication. | None. Duplicate requests return cached response. |
+| **T15** | Image Decompression DoS | Uploading decompression bombs | Strict `Content-Length` header check, 25MB file size cap, Pillow `MAX_IMAGE_PIXELS` guard. | Distributed bandwidth exhaustion. |
+
+---
+
+## 3. Cryptographic Evidence Integrity Chain
+
+To guarantee tamper-evident integrity from camera shutter to final PDF docket:
+
+```text
+┌─────────────────────────────────┐
+│      Camera Shutter Event       │
+└────────────────┬────────────────┘
+                 │ (Raw Byte Stream)
+                 ▼
+┌─────────────────────────────────┐
+│   Compute Client SHA-256 Digest │
+└────────────────┬────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────┐
+│ Persist Local original_uuid.jpg │
+└────────────────┬────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────┐
+│ HTTPS Multipart Ingest to Cloud │
+└────────────────┬────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────┐
+│ Recompute Server SHA-256 Digest │
+└────────────────┬────────────────┘
+                 │
+                 ▼
+        ┌─────────────────┐
+        │  Hashes Match?  │
+        └───┬─────────┬───┘
+ (Mismatch) │         │ (Confirmed Match)
+            ▼         ▼
+┌───────────────────┐ ┌─────────────────────────────────────────┐
+│ 422 HTTP Abort    │ │ Store RAW Bytes in Supabase S3          │
+│ Upload Integrity  │ └────────────────────┬────────────────────┘
+│ Error Recorded    │                      │
+└───────────────────┘                      ▼
+                      ┌─────────────────────────────────────────┐
+                      │ Insert scan_images DB Row with SHA-256  │
+                      └────────────────────┬────────────────────┘
+                                           │
+                                           ▼
+                      ┌─────────────────────────────────────────┐
+                      │ Append Cryptographic Audit Ledger Entry │
+                      │ hash_self = SHA256(hash_prev + action)  │
+                      └────────────────────┬────────────────────┘
+                                           │
+                                           ▼
+                      ┌─────────────────────────────────────────┐
+                      │ Generate Section 36 PDF Docket with QR  │
+                      │ Embedded Verification Link (/reports)   │
+                      └─────────────────────────────────────────┘
+```
+
+1. **Byte-Exact Immutability:** Stored original images are never re-encoded or stripped of EXIF data.
+2. **Re-Verification on Demand (`GET /scans/{id}/verify`):** Re-reads all stored evidence files from disk, recomputes SHA-256 digests in real time, and compares them with the database record.
+3. **Cryptographic Hash-Chained Audit Ledger:**
+   - Every state transition generates an `audit_logs` record.
+   - The ledger entry calculates:
+     $$\text{hash\_self} = \text{SHA256}(\text{hash\_prev} \parallel \text{user\_id} \parallel \text{action} \parallel \text{timestamp} \parallel \text{payload})$$
+   - Any retro-active alteration of previous entries invalidates all subsequent links in the chain.
+
+---
+
+## 4. Secret Management & Zero-Client-Key Mandate
+
+To prevent credential leaks in decompiled mobile packages:
+
+1. **Client Zero-Secret Verification:**
+   - The production APK (`NiyamNetra-v1.0.4-release.apk`) contains **zero** Google Cloud Vision keys, Groq tokens, Gemini credentials, Supabase service keys, or JWT signing secrets.
+   - All external AI and database operations execute exclusively within the server-side FastAPI environment.
+2. **Server-Side Configuration Enforcement:**
+   - Backend `config.py` uses `pydantic-settings` configured with `extra="forbid"`.
+   - `JWT_SECRET` has no default value and enforces a minimum length of 32 characters, failing fast at startup if missing or weak.
+   - Environment files (`.env`) are strictly excluded from version control via `.gitignore`.
+
+---
+
+## 5. Privacy & DPDP Act 2023 Compliance Position
+
+NiyamNetra complies with the principles of the **Digital Personal Data Protection Act, 2023 (DPDP Act)**:
+
+1. **Purpose Limitation:** The system is exclusively utilized for statutory packaged commodity compliance under the Legal Metrology Act, 2009.
+2. **Data Minimization:**
+   - No consumer personal data, facial imagery, biometric data, or payment credentials are ever captured or processed.
+   - Field camera interfaces restrict capture to packaging labels and calibration standards.
+   - Trader contact information captured is strictly limited to publicly displayed business signage and statutory consumer care addresses mandated by law.
+3. **Storage Limitation:** Inspection archives and evidence records are subject to statutory retention schedules under the Legal Metrology Rules, with automated archiving after statutory limitation periods.
