@@ -10,15 +10,40 @@
 [![Backend Tests](https://img.shields.io/badge/Backend_Regression-428_Passed-brightgreen)](documents/10_TESTING_AND_QUALITY.md)
 [![Frontend Tests](https://img.shields.io/badge/Frontend_Regression-69_Passed-brightgreen)](documents/10_TESTING_AND_QUALITY.md)
 
-> **Core System Invariant:**  
+> [!IMPORTANT]
+> **The Core System Invariant:**  
 > **OCR READS → LLM STRUCTURES → RULES DECIDE → AGGREGATION ASSESSES → OFFICER ADJUDICATES**  
-> NiyamNetra assists Legal Metrology enforcement officers by replacing manual calipers and paper checklists with sub-2-second optical scanning, cloud OCR, structured entity normalization, and a strictly deterministic 26-rule statutory engine.
+> NiyamNetra assists Legal Metrology enforcement officers by replacing manual calipers and paper checklists with sub-2-second optical scanning, cloud OCR, structured entity normalization, and a strictly deterministic 26-rule statutory engine. The AI never decides the law—it prepares evidence for human officer adjudication.
+
+---
+
+## 1. Problem Statement & The Solution (SIH26034)
+
+### 1.1 The Real-World Challenge (Problem Statement)
+Under Chapter II of the **Legal Metrology (Packaged Commodities) Rules, 2011**, all pre-packaged goods sold in India must display mandatory consumer declarations: manufacturer/packer identity, net quantity, Maximum Retail Price (MRP), Unit Sale Price (USP), packing date, consumer care info, and minimum numeral font heights under Rule 7 Table-I.
+
+In the field, Legal Metrology enforcement officers face four critical operational challenges:
+
+1. **Manual Measurement Infeasibility:** Measuring 1.0 mm to 6.0 mm font heights on flexible chips pouches, cylindrical bottles, or crinkled labels using physical vernier calipers takes **15 to 20 minutes per package** and produces high subjective measurement error.
+2. **Forensic Evidence Contestation in Court:** When traders are prosecuted under **Section 36 of the Legal Metrology Act, 2009**, defense counsels routinely challenge phone photo authenticity, image compression artifacts, and missing chain-of-custody proof.
+3. **Pervasive Evasion Practices:** Deceptive trade practices—such as dual pricing across retail vs e-commerce (Rule 6(2A)), non-compliant stickers pasted over manufacturer MRPs (Rule 6(1)(da)), missing consumer care email addresses, and non-standard quantity units (e.g. `gm` instead of `g`)—frequently go undetected during manual raids.
+4. **Harsh Offline Godown Realities:** Field raids often take place in basement storage warehouses, rural weekly mandis, and wholesale market godowns where cellular connectivity is intermittent or completely absent.
+
+### 1.2 The Solution: NiyamNetra Platform
+**NiyamNetra** provides an end-to-end, offline-resilient inspection decision-support platform designed specifically for state Legal Metrology departments:
+
+- **Sub-2-Second Automated Turnaround:** End-to-end evaluation completes in a mean latency of **1,598 ms** (p50: 1,547 ms, p95: 1,973 ms), reducing inspection time per package by over 85%.
+- **100% Deterministic Legal Rule Engine (Rule Pack `2026.09.v1`):** Completely eliminates LLM legal hallucination. Cloud OCR transcribes text; Cloud LLMs (Groq Llama-3.3-70B) structure noisy text into typed JSON; a deterministic Python engine evaluates **26 statutory rules** incorporating the Fourth Amendment Rules, 2026 (G.S.R. 826(E)) and the Jan Vishwas Act.
+- **Dual-Artifact Forensic Chain of Custody:** High-resolution camera original RAW bytes are preserved untouched with an immutable **SHA-256 digest** and recorded in an append-only cryptographic audit ledger, satisfying strict digital forensic standards.
+- **Edge Quality Gate (~38 ms):** Real-time client-side heuristic validation checks Laplacian sharpness (threshold $\ge 60$), specular glare ($\le 15\%$), and edge clipping before transmission, preventing blurred or unreadable uploads.
+- **Smart Evidence Recapture Loop:** When side or back panels are missing, the system dynamically generates targeted recapture tasks for the inspector instead of failing open or giving false passes.
+- **Section 36 Enforcement Dossiers & PDF Dockets:** Generates official violation dossiers categorizing findings under **Section 36(1)** (labeling defects) vs **Section 36(2)** (short quantity), complete with high-resolution annotated crops, officer notes, and a cryptographic QR verification link.
 
 ---
 
 ## Table of Contents
 
-1. [Overview](#1-overview)
+1. [Problem Statement & The Solution](#1-problem-statement--the-solution-sih26034)
 2. [Key Capabilities](#2-key-capabilities)
 3. [System Architecture](#3-system-architecture)
 4. [How It Works](#4-how-it-works)
@@ -34,18 +59,6 @@
 
 ---
 
-## 1. Overview
-
-Under Chapter II of the **Legal Metrology (Packaged Commodities) Rules, 2011**, all pre-packaged goods sold in India must display mandatory consumer declarations: manufacturer details, net quantity, Maximum Retail Price (MRP), Unit Sale Price (USP), packing date, consumer care info, and minimum numeral font heights under Rule 7 Table-I.
-
-Manual field enforcement is time-consuming, subjective, and prone to legal challenges regarding evidence authenticity. **NiyamNetra** automates label evaluation while upholding strict evidentiary integrity:
-- **Zero LLM Legal Rulings:** Cloud LLMs strictly structure raw OCR text into typed JSON; 100% deterministic code evaluates the law.
-- **Honest Denominators:** Denominators are always stated explicitly (e.g. `26 registered checks`). Partial assessments are never marked as compliant passes.
-- **Integrity-Verifiable Evidence:** Raw camera photos are preserved untouched with cryptographic SHA-256 digests and append-only database ledgers.
-- **The AI Recommends; The Officer Decides:** Algorithmic verdicts (`engine_verdict`) are permanently immutable. Officer overrides (`human_verdict`) are logged separately with mandatory legal justification.
-
----
-
 ## 2. Key Capabilities
 
 - **Sub-2-Second Turnaround:** Mean end-to-end evaluation latency of **1,598 ms** (p50: 1,547 ms, p95: 1,973 ms).
@@ -54,21 +67,108 @@ Manual field enforcement is time-consuming, subjective, and prone to legal chall
 - **Smart Recapture Loop:** Automatically surfaces actionable panel capture requests when packaging evidence is incomplete.
 - **Offline-First Synchronization:** Local SQLite persistence with cryptographic `Idempotency-Key` headers for duplicate-free sync upon reconnection.
 - **Section 36 Enforcement Dossiers:** Categorizes findings under Section 36(1) (packaging defects) vs Section 36(2) (short quantity).
+- **Honest Denominators:** Denominators are always stated explicitly (`26 registered checks`). Partial assessments are never marked as compliant passes.
 
 ---
 
 ## 3. System Architecture
 
-```mermaid
-flowchart LR
-    A[Mobile Camera] --> B[Edge Quality Gate]
-    B --> C[Cloud OCR]
-    C --> D[Cloud LLM Structuring]
-    D --> E[Deterministic Rule Engine\n(2026.09.v1 - 26 Rules)]
-    E --> F[Multi-Panel Synthesis]
-    F --> G[Officer Review Queue]
-    G --> H[Enforcement Dossier & PDF Docket]
+### 3.1 End-to-End Architectural Data Flow
+
+The following pure-markdown schematic illustrates NiyamNetra's complete data journey across all 6 operational tiers—from optical capture in the field to tamper-evident docket export:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                             TIER 1: FIELD MOBILE EDGE CLIENT                                │
+│                     (React Native · Expo SDK 54 · Standalone Android APK)                   │
+├───────────────────────────────┬───────────────────────────────┬─────────────────────────────┤
+│      CAMERA VIEWPORT          │     FORENSIC STORAGE          │      EDGE QUALITY GATE      │
+│  - Live optical guidance      │  - Raw image bit-for-bit      │  - Blur: Laplacian (>= 60)  │
+│  - Multi-panel capture        │  - SHA-256 digest anchor      │  - Glare: Luma <= 15%       │
+│  - Reference scale marker     │  - Adaptive JPEG (<=1600px)   │  - Auto-retake guidance     │
+└───────────────┬───────────────┴───────────────┬───────────────┴───────────────▲─────────────┘
+                │                               │                               │ (Retake)
+                ▼                               ▼                               │
+┌───────────────────────────────────────────────────────────────────────────────┴─────────────┐
+│                          TIER 2: TRANSPORT & OFFLINE RESILIENCE                             │
+│                  (Local SQLite Queue · HTTPS Multipart · Render Gateway)                    │
+├─────────────────────────────────────────────────────────────────────────────────────────────┤
+│  • Offline SQLite FIFO Queue (UUIDv4 tracking)   • Bearer JWT & Device install_id binding   │
+│  • Idempotency-Key header (zero duplicate scans)  • Automatic retry on network reconnection │
+└───────────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                                │
+                                                ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                         TIER 3: OPTICAL & COGNITIVE AI PROCESSING                           │
+│              (OpenCV Homography · Google Cloud Vision · Groq Llama-3.3-70B)                 │
+├───────────────────────────────┬───────────────────────────────┬─────────────────────────────┤
+│    PERSPECTIVE RECTIFY        │        CLOUD OCR ENGINE       │     CLOUD LLM STRUCTURING   │
+│  - 4-point contour detection  │  - High-precision lines       │  - Zero legal decision role │
+│  - Fronto-parallel warp       │  - Word-level bounding boxes  │  - Extracts typed JSON      │
+│  - Millimeter scale factor    │  - Optical confidence scores  │  - Strict field provenance  │
+└───────────────────────────────┴───────────────┬───────────────┴─────────────────────────────┘
+                                                │
+                                                ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                     TIER 4: DETERMINISTIC STATUTORY RULE ENGINE                             │
+│             (Python 3.11 · Rule Pack 2026.09.v1 · Fourth Amendment G.S.R. 826(E))           │
+├─────────────────────────────────────────────────────────────────────────────────────────────┤
+│  • 26 Statutory Rules: Declarations, MRP/USP math, Net Qty units, Consumer Care, Dates     │
+│  • Rule 7 Table-I: Millimeter font height validation based on Area of Principal Display     │
+│  • Multi-Panel Synthesis: Cross-panel conflict detection, dual pricing, MRP sticker check   │
+└───────────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                                │
+                     ┌──────────────────────────┼──────────────────────────┐
+                     │ (All 26 Pass)            │ (Gaps / Blur)            │ (Confirmed Defect)
+                     ▼                          ▼                          ▼
+            ┌─────────────────┐       ┌───────────────────┐       ┌───────────────────┐
+            │    COMPLIANT    │       │  REVIEW_REQUIRED  │       │     VIOLATION     │
+            │   (Green Path)  │       │   (Amber Path)    │       │    (Red Path)     │
+            └────────┬────────┘       └─────────┬─────────┘       └─────────┬─────────┘
+                     │                          │                           │
+                     │                 ┌────────┴────────┐                  │
+                     │                 ▼                 ▼                  │
+                     │        ┌─────────────────┐ ┌───────────────┐         │
+                     │        │ RECAPTURE TASK  │ │ OFFICER QUEUE │         │
+                     │        │ (Missing Panel) │ │ (Web Portal)  │         │
+                     │        └────────┬────────┘ └───────┬───────┘         │
+                     │                 │                  │                 │
+                     │                 ▼                  ▼                 │
+                     │          (Feeds Tier 1)    (Officer Verdict)         │
+                     │                                    │                 │
+                     │                                    ▼                 ▼
+┌────────────────────┴──────────────────────────────────────────────────────┴─────────────────┐
+│                      TIER 5 & 6: PERSISTENCE, GOVERNANCE & ENFORCEMENT                      │
+│                (PostgreSQL · Supabase S3 · Cryptographic Ledger · PDF Docket)               │
+├─────────────────────────────────────────────────────────────────────────────────────────────┤
+│  • Immutable engine_verdict + auditable human_verdict with mandatory override justification │
+│  • Append-Only Cryptographic Audit Ledger (SHA-256 hash-chain across all state events)      │
+│  • Section 36 Violation Dossier: Limb 36(1) Labeling Defects vs Limb 36(2) Short Quantity    │
+│  • Official Inspection Docket: High-res PDF/DOCX with QR code linking to verification URL   │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### 3.2 Step-by-Step Data Flow Pipeline
+
+| Stage | Operational Component | Key Actions & Invariants | Evidentiary Output |
+|---|---|---|---|
+| **1. Edge Optical Capture** | Android APK (`expo-camera`) | Officer points camera at package panels. Quality gate analyzes blur (Laplacian $\ge 60$) and specular glare ($\le 15\%$) in **~38 ms**. | Byte-exact RAW photo stored with SHA-256 digest; normalized analysis JPEG ($\le 1600\text{ px}$). |
+| **2. Transport & Ingestion** | Local SQLite + FastAPI Gateway | Persists to offline FIFO queue with client UUIDv4 and `Idempotency-Key`. Transmits via HTTPS with Bearer JWT. | Zero duplicate visits; exactly-once server ingestion. |
+| **3. Perspective & OCR** | OpenCV + Google Vision API | Detects 4-point panel quad; applies planar homography warp. High-precision OCR tokenizes words and polygon coordinates. | Fronto-parallel rectified crop + word-level bounding coordinates. |
+| **4. Cognitive Structuring** | Groq Llama-3.3-70B | Normalizes raw OCR fragments into typed Pydantic JSON schema with strict provenance. **Zero legal decisions made.** | Typed declaration DTO with exact bounding box citations. |
+| **5. Deterministic Evaluation** | Python Rule Pack `2026.09.v1` | Evaluates 26 statutory checks, Rule 7 Table-I millimeter font heights, and multi-panel conflict detection. | Three-state assessment outcome (`COMPLIANT`, `VIOLATION`, `REVIEW_REQUIRED`). |
+| **6. Supervisory Enforcement** | React Web Portal + PDF Generator | Generates targeted recapture tasks for missing panels, queues ambiguities for officer review, and creates Section 36 dockets. | Digitally verifiable PDF/DOCX inspection docket with QR verification URL. |
+
+### 3.3 Architectural Tier Matrix
+
+| Tier | Primary Technologies | Key Responsibility | Evidentiary Invariant |
+|---|---|---|---|
+| **1. Client & Edge** | React Native, Expo SDK 54, OpenCV heuristic algorithms | Captures packaging panels, stores raw originals, checks blur & glare in ~38 ms | RAW camera bytes preserved byte-for-byte with SHA-256 hash |
+| **2. Transport** | HTTPS, Bearer JWT, UUIDv4 Idempotency Keys | Authenticates device binding, buffers offline sync queues | Exactly-once ingestion; no duplicate visits or double scans |
+| **3. Optical & AI** | Google Cloud Vision / OCR.space, Groq Llama-3.3-70B | Transcribes text, structures declarations into typed JSON | Grounded strictly in OCR text; zero legal decision-making |
+| **4. Statutory Engine** | Python 3.11, Rule Pack `2026.09.v1` (26 Rules) | Evaluates Rule 6 declarations, Rule 7 Table-I font heights, Second Schedule | 100% deterministic code; fail-open on optical ambiguity |
+| **5. Persistence** | PostgreSQL 15+ (Supabase), S3 Object Storage | Relational data, Alembic migrations 0001–0009, append-only audit trail | Immutable `engine_verdict`; tamper-evident cryptographic hash chain |
+| **6. Governance** | React 18, Vite 5, ReportLab PDF generation | Officer review queue, targeted recapture tasks, Section 36 dockets | AI recommends; authorized human officer decides and signs |
 
 ---
 
