@@ -15,8 +15,8 @@ const STR = {
     fieldDivision: 'Field Division', syncNow: 'Sync now', syncing: 'Syncing...',
     pending: 'pending', uploading: 'Uploading to server', tapToSync: 'Tap to sync now',
     help: 'Help & Guidance', about: 'About NiyamNetra & Statutory Rules',
-    helpText: 'Capture front, back, MRP and batch panels. The server assesses 19 checks (CHK01–CHK18 + CHK06b) after sync.',
-    aboutText: 'NiyamNetra • Legal Metrology (Packaged Commodities) Rules, 2011. 19 statutory rule checks.',
+    helpText: 'Capture front, back, MRP and batch panels. The server assesses 26 checks (2026.09.v1) after sync.',
+    aboutText: 'NiyamNetra • Legal Metrology (Packaged Commodities) Rules, 2011. 26 statutory rule checks (2026.09.v1).',
     language: 'Language', english: 'English', hindi: 'हिन्दी',
     footer: 'NiyamNetra • Legal Metrology (Packaged Commodities) Rules, 2011',
     langTitle: 'Language', langMsg: 'Choose display language for this screen.',
@@ -26,8 +26,8 @@ const STR = {
     fieldDivision: 'क्षेत्रीय प्रभाग', syncNow: 'अभी सिंक करें', syncing: 'सिंक हो रहा है...',
     pending: 'लंबित', uploading: 'सर्वर पर अपलोड हो रहा है', tapToSync: 'सिंक के लिए टैप करें',
     help: 'सहायता और मार्गदर्शन', about: 'नियमनेत्रा और वैधानिक नियमों के बारे में',
-    helpText: 'फ्रंट, बैक, MRP और बैच पैनल कैप्चर करें। सिंक के बाद सर्वर 19 जांचों (CHK01–CHK18 + CHK06b) का मूल्यांकन करता है।',
-    aboutText: 'नियमनेत्रा • विधिक मापविज्ञान (पैकेज्ड वस्तुएं) नियम, 2011. 19 वैधानिक नियम जांचें।',
+    helpText: 'फ्रंट, बैक, MRP और बैच पैनल कैप्चर करें। सिंक के बाद सर्वर 26 जांचों (2026.09.v1) का मूल्यांकन करता है।',
+    aboutText: 'नियमनेत्रा • विधिक मापविज्ञान (पैकेज्ड वस्तुएं) नियम, 2011. 26 वैधानिक नियम जांचें (2026.09.v1)।',
     language: 'भाषा', english: 'English', hindi: 'हिन्दी',
     footer: 'नियमनेत्रा • विधिक मापविज्ञान (पैकेज्ड वस्तुएं) नियम, 2011',
     langTitle: 'भाषा', langMsg: 'इस स्क्रीन के लिए भाषा चुनें।',
@@ -80,8 +80,10 @@ export default function MoreScreen({ navigation }) {
     if (key === 'help') {
       Alert.alert(t.help, t.helpText);
     } else {
+      const count = ruleInfo?.total_checks || ruleInfo?.checks_registered || 26;
+      const packVer = ruleInfo?.active_rule_pack_version || ruleInfo?.rule_pack_version || '2026.09.v1';
       const details = ruleInfo
-        ? `${ruleInfo.name}\n\n• Gazette Reference: ${ruleInfo.gazette_ref || 'Official Gazette'}\n• 19 Statutory Checks Enforced\n• Status: ${ruleInfo.status || 'Active'}\n\n${ruleInfo.summary || ruleInfo.description || ''}`
+        ? `${ruleInfo.name || 'Legal Metrology Rules Engine'}\n\n• Gazette Reference: ${ruleInfo.gazette_ref || 'G.S.R. 826(E)'}\n• ${count} Statutory Checks Enforced (${packVer})\n• Status: ${ruleInfo.status || 'Active'}\n\n${ruleInfo.summary || ruleInfo.description || ''}`
         : t.aboutText;
       Alert.alert(t.about, details);
     }

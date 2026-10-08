@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -192,6 +192,8 @@ class ScanImageOut(ORMModel):
     similarity_status: str | None = None
     duplicate_of_image_id: int | None = None
     hamming_distance: int | None = None
+    url: str | None = None
+    thumbnail_url: str | None = None
 
 
 class VerdictCounts(BaseModel):
@@ -213,6 +215,7 @@ class ScanOut(ORMModel):
     inspection_id: int
     commodity_generic: str | None = None
     brand_name: str | None = None
+    batch_number: str | None = None
     overall_result: ScanResult
     violation_limb: str | None = None
     recommended_action: str | None = None
@@ -231,6 +234,7 @@ class ScanOut(ORMModel):
     counts: VerdictCounts | None = None
     findings: list[FindingOut]
     images: list[ScanImageOut]
+    diagnostics: dict[str, Any] | None = None
 
 
 class ScanListItemOut(BaseModel):

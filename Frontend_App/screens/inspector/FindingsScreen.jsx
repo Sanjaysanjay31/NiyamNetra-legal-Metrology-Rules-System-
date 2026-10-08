@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   StyleSheet,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, typography, radius, shadows } from '../../theme';
@@ -16,29 +17,30 @@ import Header from '../../components/Header';
 import Card from '../../components/Card';
 import VerdictBadge from '../../components/VerdictBadge';
 import PrimaryButton from '../../components/PrimaryButton';
-import { overrideFinding, assessScan, fetchScanDetails, verifyEvidence } from '../../api/inspections';
+import { overrideFinding, assessScan, fetchScanDetails, verifyEvidence, fetchRuleInfo } from '../../api/inspections';
+import { API_BASE_URL } from '../../api/config';
 
-// The 19 statutory checks under Legal Metrology (Packaged Commodities) Rules 2011
+// The 26 authoritative statutory checks under active rule pack 2026.09.v1
 const STATUTORY_CHECKS_MASTER = [
   {
     code: 'CHK01',
-    name: 'Maximum Retail Price (MRP)',
-    citation: 'Rule 6(1)(e) — Inclusive of all taxes',
-    defaultObserved: 'Pending OCR extraction from MRP panel',
-    required: 'MRP in Indian Rupees inclusive of all taxes',
+    name: 'Mandatory Declarations on Retail Pre-Packaged Commodity',
+    citation: 'Rule 6(1)',
+    defaultObserved: 'Pending OCR extraction from principal display panel',
+    required: 'All statutory declarations present on PDP',
     severity: 'critical',
   },
   {
     code: 'CHK02',
-    name: 'Unit Sale Price (USP)',
-    citation: 'Rule 6(1)(ea) — 2017 Amendment',
-    defaultObserved: 'Pending OCR extraction of unit sale price',
-    required: 'Unit price in Rs per g/ml/piece where net qty > 100g/ml',
-    severity: 'major',
+    name: 'Tobacco Products Exemption Carve-Out',
+    citation: 'Rule 26(a)',
+    defaultObserved: 'Scope verification',
+    required: 'Tobacco carve-out applicability verification',
+    severity: 'advisory',
   },
   {
     code: 'CHK03',
-    name: 'Chapter II Applicability',
+    name: 'Chapter II Scope & Quantity Thresholds',
     citation: 'Rule 3 — Retail Sale Scope',
     defaultObserved: 'Retail sale transaction verification',
     required: 'Pre-packaged commodity intended for retail sale',
@@ -46,131 +48,187 @@ const STATUTORY_CHECKS_MASTER = [
   },
   {
     code: 'CHK04',
-    name: 'Manufacturer / Packer Identity',
-    citation: 'Rule 6(1)(a) — Name & Complete Address',
-    defaultObserved: 'Pending OCR extraction of manufacturer/packer address',
-    required: 'Name and complete physical address of manufacturer/packer',
+    name: 'Retail Sale Price (MRP) Correctly Expressed',
+    citation: 'Rule 6(1)(e) read with Rule 2(m)',
+    defaultObserved: 'Pending OCR extraction from MRP panel',
+    required: 'MRP in Indian Rupees inclusive of all taxes',
     severity: 'critical',
   },
   {
     code: 'CHK05',
-    name: 'Generic Commodity Name',
-    citation: 'Rule 6(1)(b) — Common / Generic Name',
-    defaultObserved: 'Pending declared generic name verification',
-    required: 'Common or generic name of commodity in package',
-    severity: 'major',
+    name: 'Prescribed Standard Units of Weight, Volume, or Length',
+    citation: 'Rule 12 & Rule 13',
+    defaultObserved: 'Pending metric unit verification',
+    required: 'Standard metric units without non-standard qualifiers',
+    severity: 'critical',
   },
   {
     code: 'CHK06',
-    name: 'Net Quantity Declaration',
-    citation: 'Rule 6(1)(c) — Standard Weights & Measures',
-    defaultObserved: 'Pending OCR extraction of net quantity',
-    required: 'Net weight, measure or number in standard metric units',
-    severity: 'critical',
-  },
-  {
-    code: 'CHK06b',
-    name: 'Metric Units Compliance',
-    citation: 'Rule 12 — Standard Metric Units (SI)',
-    defaultObserved: 'Pending metric unit verification',
-    required: 'Only metric units (g, kg, ml, L, m, cm) permissible',
-    severity: 'critical',
-  },
-  {
-    code: 'CHK07',
-    name: 'Date of Manufacture / Packing',
-    citation: 'Rule 6(1)(d) — Month & Year',
-    defaultObserved: 'Pending OCR extraction of date of manufacture/packing',
-    required: 'Month and year of manufacture or pre-packing',
-    severity: 'critical',
-  },
-  {
-    code: 'CHK08',
-    name: 'Best Before / Expiry Date',
-    citation: 'Rule 6(1)(d) — Perishable Commodities',
-    defaultObserved: 'Pending expiry / best-before verification',
-    required: 'Clear expiry or best before period for perishable goods',
+    name: 'Minimum Height of Letters on PDP',
+    citation: 'Rule 7(1) & Table-I',
+    defaultObserved: 'Pending optical font height verification',
+    required: 'Letter height proportion matching Table-I standards',
     severity: 'major',
   },
   {
+    code: 'CHK06b',
+    name: 'Minimum Height of Net Quantity Numerals',
+    citation: 'Rule 7(2) read with Table-I (GSR 629(E))',
+    defaultObserved: 'Pending numeral height measurement',
+    required: 'Numeral height matching Table-I standards',
+    severity: 'major',
+  },
+  {
+    code: 'CHK06b_hist',
+    name: 'Historical Minimum Height of Numerals (Pre-2018 Table-II)',
+    citation: 'Rule 7 & Table-II (pre-2018)',
+    defaultObserved: 'Historical table reference',
+    required: 'Pre-2018 historical numeral standard check',
+    severity: 'major',
+  },
+  {
+    code: 'CHK07',
+    name: 'Character Width Proportion (>= 1/3 height)',
+    citation: 'Rule 7(3)',
+    defaultObserved: 'Pending character width calculation',
+    required: 'Width at least one-third of character height',
+    severity: 'minor',
+  },
+  {
+    code: 'CHK08',
+    name: 'Conspicuous Contrast with Background',
+    citation: 'Rule 9(1)',
+    defaultObserved: 'Pending contrast ratio evaluation',
+    required: 'High visual contrast against background',
+    severity: 'minor',
+  },
+  {
     code: 'CHK09',
-    name: 'Consumer Care Contact Details',
-    citation: 'Rule 6(1)(n) — Name, Address, Tel, Email',
-    defaultObserved: 'Pending OCR extraction of consumer care details',
-    required: 'Designation, full postal address, phone number & email',
+    name: 'Clear Surrounding Space Around Net Quantity',
+    citation: 'Rule 8',
+    defaultObserved: 'Pending clear space measurement',
+    required: 'Unobstructed surrounding boundary',
+    severity: 'minor',
+  },
+  {
+    code: 'CHK22',
+    name: 'Placement of Mandatory Declarations on PDP',
+    citation: 'Rule 8',
+    defaultObserved: 'Pending PDP layout analysis',
+    required: 'Mandatory declarations grouped on PDP',
     severity: 'major',
   },
   {
     code: 'CHK10',
-    name: 'Country of Origin (Imports)',
-    citation: 'Rule 6(1)(a) proviso — Imported Packages',
-    defaultObserved: 'Pending country of origin declaration check',
-    required: 'Clear declaration of country of origin for all packages',
-    severity: 'major',
+    name: 'Standard Prescribed Packaging Quantities',
+    citation: 'Rule 5 & Second Schedule',
+    defaultObserved: 'Pending schedule comparison',
+    required: 'Standard quantity schedules under Second Schedule',
+    severity: 'minor',
   },
   {
     code: 'CHK11',
-    name: 'Principal Display Panel (PDP) Area',
-    citation: 'Rule 9 — Calculation of PDP Dimensions',
-    defaultObserved: 'Pending PDP area calculation from panel geometry',
-    required: 'At least 40% of total surface area on front panel',
-    severity: 'minor',
+    name: 'Permissible Conditions for Price Alteration Stickers',
+    citation: 'Rule 6(3), 6(4), 6(4A)',
+    defaultObserved: 'Declared sticker inspection',
+    required: 'Declarations must be indelible; no unauthorized stickers',
+    severity: 'critical',
   },
   {
     code: 'CHK12',
-    name: 'Minimum Font Height & Proportion',
-    citation: 'Rule 9 Table I — Font Size by PDP Area',
-    defaultObserved: 'Pending optical font height verification',
-    required: 'Numeral height matching Table I prescribed standards',
-    severity: 'minor',
+    name: 'Country of Origin Declaration on Imported Packages',
+    citation: 'Rule 6(1)(aa)',
+    defaultObserved: 'Pending origin declaration check',
+    required: 'Country of origin stated for all packages',
+    severity: 'critical',
   },
   {
     code: 'CHK13',
-    name: 'Sticker / Smudge Alteration',
-    citation: 'Section 36 & Rule 6 — Over-stickering Prohibition',
-    defaultObserved: 'Declared sticker inspection',
-    required: 'Declarations must be indelible; no price alterations',
+    name: 'Best Before or Use By Date for Perishables',
+    citation: 'Rule 6(1)(da)',
+    defaultObserved: 'Pending date verification',
+    required: 'Clear expiry or best before for perishables',
     severity: 'critical',
   },
   {
     code: 'CHK14',
-    name: 'Overcharging Assessment',
-    citation: 'Section 36(1) — Sale beyond declared MRP',
-    defaultObserved: 'Pending POS price vs stamped MRP comparison',
-    required: 'Prohibition of sale at price exceeding declared MRP',
-    severity: 'critical',
-  },
-  {
-    code: 'CHK15',
-    name: 'E-Commerce Marketplace Listing',
-    citation: 'Rule 6(10) — Digital Display Compliance',
-    defaultObserved: 'Physical retail package sampled',
-    required: 'All mandatory declarations displayed on web listing',
+    name: 'Medical Devices Applicability Proviso',
+    citation: 'Rule 2(h) Proviso',
+    defaultObserved: 'Scope verification',
+    required: 'Medical devices regulatory carve-out',
     severity: 'advisory',
   },
   {
+    code: 'CHK15',
+    name: 'Mandatory Declarations on E-Commerce Listings',
+    citation: 'Rule 6(10)',
+    defaultObserved: 'Physical retail package sampled in store',
+    required: 'E-commerce digital display declarations',
+    severity: 'major',
+  },
+  {
     code: 'CHK16',
-    name: 'Dual MRP Assessment',
-    citation: 'Rule 18(2) — Prohibition of dual pricing',
-    defaultObserved: 'Pending multi-panel MRP comparison',
-    required: 'No manufacturer shall declare different MRPs on identical packages',
-    severity: 'critical',
+    name: 'E-Commerce Marketplace Search Filter for Origin',
+    citation: 'Rule 6(10A)',
+    defaultObserved: 'Physical retail package sampled in store',
+    required: 'Search filter requirement for e-commerce platforms',
+    severity: 'major',
   },
   {
     code: 'CHK17',
-    name: 'Veg / Non-Veg Statutory Symbol',
-    citation: 'FSSAI Alignment & Rule 6 General',
-    defaultObserved: 'Pending food category indicator check',
-    required: 'Food category indicator present and conspicuous',
+    name: 'Alignment with FSSAI Packaging Advisories',
+    citation: 'FSSAI Packaging Regulations & LM Alignment',
+    defaultObserved: 'Pending regulatory review',
+    required: 'Food safety advisory alignment',
     severity: 'advisory',
   },
   {
     code: 'CHK18',
-    name: 'Penalty Limb & Section 36 Classification',
+    name: 'Graduated Enforcement Response & Section 36 Sanctions',
     citation: 'Section 36, Legal Metrology Act 2009',
     defaultObserved: 'Pending statutory review',
-    required: 'Section 36 tier 1 / tier 2 offense determination',
+    required: 'Statutory penalty classification',
     severity: 'critical',
+  },
+  {
+    code: 'CHK19',
+    name: 'Unit Sale Price (USP) Declaration',
+    citation: 'Rule 6(1)(g)',
+    defaultObserved: 'Pending USP extraction',
+    required: 'Unit sale price declared in Rs per g/ml/piece',
+    severity: 'major',
+  },
+  {
+    code: 'CHK20',
+    name: 'Dimensions Declaration Where Size is Relevant',
+    citation: 'Rule 6(1)(m)',
+    defaultObserved: 'Pending dimension extraction',
+    required: 'Dimensions declared in metric units',
+    severity: 'minor',
+  },
+  {
+    code: 'CHK21',
+    name: 'Special Standards for Garments and Hosiery',
+    citation: 'Rule 6(1)(b) Proviso & Second Schedule Exemption',
+    defaultObserved: 'Non-apparel commodity',
+    required: 'Garments and hosiery size standards',
+    severity: 'major',
+  },
+  {
+    code: 'CHK23_hist',
+    name: 'Origin Marking on Cosmetics (Former Rule 6(8))',
+    citation: 'Rule 6(8) (omitted w.e.f 21.09.2026 by GSR 826(E))',
+    defaultObserved: 'Historical rule check',
+    required: 'Historical cosmetics origin indicator',
+    severity: 'major',
+  },
+  {
+    code: 'CHK23',
+    name: 'Origin Marking on Soap, Cosmetics, Toiletries',
+    citation: 'Rule 6(4A)(d)',
+    defaultObserved: 'Pending visual inspection',
+    required: 'Vegetarian / non-vegetarian dot on specified items',
+    severity: 'advisory',
   },
 ];
 
@@ -237,9 +295,48 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
   const [reassessing, setReassessing] = useState(false);
   const [verifyingEvidence, setVerifyingEvidence] = useState(false);
   const [evidenceIntegrity, setEvidenceIntegrity] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
   const reassessBusyRef = useRef(false);
 
   const scanId = scan?.server_id || (typeof scan?.id === 'number' && scan.id > 0 ? scan.id : null);
+
+  const evidenceImages = React.useMemo(() => {
+    const list = [];
+    if (Array.isArray(scan?.images) && scan.images.length > 0) {
+      scan.images.forEach((img, i) => {
+        list.push({
+          id: img.id || i,
+          panel: img.panel || `panel_${i + 1}`,
+          url: img.url || img.thumbnail_url,
+          thumbnail_url: img.thumbnail_url || img.url,
+          sha256: img.sha256,
+        });
+      });
+    } else if (scan?.panelPhotos && typeof scan.panelPhotos === 'object') {
+      Object.entries(scan.panelPhotos).forEach(([p, uri], i) => {
+        if (uri) {
+          list.push({
+            id: i,
+            panel: p,
+            url: uri,
+            thumbnail_url: uri,
+            sha256: null,
+          });
+        }
+      });
+    } else if (evidenceIntegrity?.images && Array.isArray(evidenceIntegrity.images)) {
+      evidenceIntegrity.images.forEach((img, i) => {
+        list.push({
+          id: img.image_id || i,
+          panel: img.panel || `panel_${i + 1}`,
+          url: img.thumbnail_url,
+          thumbnail_url: img.thumbnail_url,
+          sha256: img.sha256_recorded,
+        });
+      });
+    }
+    return list;
+  }, [scan, evidenceIntegrity]);
 
   const handleVerifyEvidence = async () => {
     if (!scanId) {
@@ -436,11 +533,24 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
   const notAssessedCount = findings.filter((f) => f.effective_verdict === 'not_assessed').length;
   const overallResult = failCount > 0 ? 'violation' : (passCount > 0 && notAssessedCount === 0 ? 'compliant' : 'not_assessed');
 
+  const brand = (scan?.brand_name && !scan.brand_name.toLowerCase().includes('unspecified')) ? scan.brand_name : null;
+  const commodity = (scan?.commodity_generic && !scan.commodity_generic.toLowerCase().includes('unspecified')) ? scan.commodity_generic : null;
+  const batch = (scan?.batch_number && scan.batch_number !== 'N/A') ? scan.batch_number : null;
+
+  const displayTitle = `${scan?.checks_total || findings.length || 26} Statutory Rule Checks`;
+  const displaySubtitle = `${brand || 'Product identity pending'} • ${commodity || 'Commodity not determined'}`;
+  const displayBatch = `Batch: ${batch || 'Batch not observed'} • ${findings.length} Checks Evaluated`;
+
+  const isServerPending = Boolean(
+    (scan?.is_offline || (scan?.overall_result === 'not_assessed' && (!scan?.checks_assessed || scan?.checks_assessed === 0))) &&
+    Boolean(scan?.server_id || (typeof scan?.id === 'number' && scan.id > 0))
+  );
+
   return (
     <View style={styles.container}>
       <Header
-        title="19 Statutory Rule Checks"
-        subtitle={`${scan?.brand_name || 'Package'} (${scan?.commodity_generic || 'Sample'})`}
+        title={displayTitle}
+        subtitle={displaySubtitle}
         onBack={() => {
           if (onSaveFindings) onSaveFindings(findings);
           if (onBack) onBack();
@@ -452,10 +562,8 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
         <Card padding="md" style={styles.headerCard}>
           <View style={styles.rowBetween}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.packageTitle}>{scan?.brand_name} {scan?.commodity_generic}</Text>
-              <Text style={styles.packageSub}>
-                Batch: {scan?.batch_number || 'N/A'} • {findings.length} Checks Evaluated
-              </Text>
+              <Text style={styles.packageTitle}>{displaySubtitle}</Text>
+              <Text style={styles.packageSub}>{displayBatch}</Text>
             </View>
             <VerdictBadge result={overallResult} />
           </View>
@@ -501,8 +609,8 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
           </View>
         </Card>
 
-        {/* Run Server Assessment Action (if checks are pending) */}
-        {notAssessedCount > 0 && Boolean(scan?.server_id || (typeof scan?.id === 'number' && scan.id > 0)) && (
+        {/* Run Server Assessment Action (only when genuinely pending) */}
+        {isServerPending && (
           <View style={{ marginBottom: spacing.sm }}>
             <Pressable
               onPress={handleTriggerReassess}
@@ -514,11 +622,11 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
               {reassessing ? (
                 <View style={styles.rowAlign}>
                   <ActivityIndicator color={colors.white} size="small" style={{ marginRight: 8 }} />
-                  <Text style={styles.reassessBtnText}>Evaluating 19 Checks with OCR…</Text>
+                  <Text style={styles.reassessBtnText}>Evaluating {findings.length} Statutory Checks with OCR & LLM…</Text>
                 </View>
               ) : (
                 <Text style={styles.reassessBtnText}>
-                  ⚡ Run Server Assessment ({notAssessedCount} Pending Checks) →
+                  ⚡ Run Server Assessment ({findings.length} Statutory Checks) →
                 </Text>
               )}
             </Pressable>
@@ -535,6 +643,60 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
             }}
           />
         </View>
+
+        {/* Evidence Panel Gallery */}
+        <Card padding="md" style={styles.galleryCard}>
+          <View style={styles.rowBetween}>
+            <View style={styles.rowAlign}>
+              <Text style={styles.galleryTitle}>📸 Evidence Panel Gallery</Text>
+            </View>
+            <Text style={styles.gallerySub}>
+              {evidenceImages.length} Panel(s) Captured
+            </Text>
+          </View>
+          {evidenceImages.length === 0 ? (
+            <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 8 }}>
+              No evidence images attached to this package session.
+            </Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
+              {evidenceImages.map((img, idx) => {
+                const rawUrl = img.thumbnail_url || img.url;
+                const fullUrl = rawUrl ? (
+                  (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') || rawUrl.startsWith('file://'))
+                    ? rawUrl
+                    : `${API_BASE_URL.replace(/\/+$/, '')}/${rawUrl.replace(/^\/+/, '')}`
+                ) : null;
+                const highResUrl = img.url ? (
+                  (img.url.startsWith('http://') || img.url.startsWith('https://') || img.url.startsWith('file://'))
+                    ? img.url
+                    : `${API_BASE_URL.replace(/\/+$/, '')}/${img.url.replace(/^\/+/, '')}`
+                ) : fullUrl;
+
+                return (
+                  <Pressable
+                    key={`panel-thumb-${scanId || 'scan'}-${img.id || idx}`}
+                    onPress={() => setSelectedImage({ ...img, displayUrl: highResUrl })}
+                    style={styles.thumbWrapper}
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel={`View ${img.panel} panel evidence`}
+                  >
+                    {fullUrl ? (
+                      <Image source={{ uri: fullUrl }} style={styles.panelThumb} />
+                    ) : (
+                      <View style={[styles.panelThumb, { backgroundColor: colors.borderLight, justifyContent: 'center', alignItems: 'center' }]}>
+                        <Text style={{ fontSize: 10, color: colors.textMuted }}>No photo</Text>
+                      </View>
+                    )}
+                    <View style={styles.panelBadge}>
+                      <Text style={styles.panelBadgeText}>{(img.panel || 'panel').toUpperCase()}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+        </Card>
 
         {/* Evidence Integrity Card (SHA-256) */}
         <Card padding="md" style={styles.integrityCard}>
@@ -565,23 +727,27 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
           </View>
           {evidenceIntegrity?.images && evidenceIntegrity.images.length > 0 && (
             <View style={styles.hashList}>
-              {evidenceIntegrity.images.map((img, i) => (
-                <View key={i} style={styles.hashItem}>
-                  <Text style={styles.hashLabel}>{img.panel_type ? img.panel_type.toUpperCase() : `PANEL ${i + 1}`}:</Text>
-                  <Text style={styles.hashCode} numberOfLines={1} ellipsizeMode="middle">
-                    {img.sha256_hash ? `${img.sha256_hash.slice(0, 16)}…` : 'Pending'}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: img.sha256_matches ? colors.pass.text : colors.violation.text, fontWeight: '700' }}>
-                    {img.sha256_matches ? '✓ Intact' : '⚠️ Mismatch'}
-                  </Text>
-                </View>
-              ))}
+              {evidenceIntegrity.images.map((img, i) => {
+                const panelName = img.panel || img.panel_type || `PANEL ${i + 1}`;
+                const shaRecorded = img.sha256_recorded || img.sha256_hash || img.sha256;
+                return (
+                  <View key={`hash-${scanId || 'curr'}-${img.image_id || i}`} style={styles.hashItem}>
+                    <Text style={styles.hashLabel}>{panelName.toUpperCase()}:</Text>
+                    <Text style={styles.hashCode} numberOfLines={1} ellipsizeMode="middle">
+                      {shaRecorded ? `${shaRecorded.slice(0, 16)}…` : 'Pending'}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: img.sha256_matches ? colors.pass.text : colors.violation.text, fontWeight: '700' }}>
+                      {img.sha256_matches ? '✓ Intact' : '⚠️ Mismatch'}
+                    </Text>
+                  </View>
+                );
+              })}
             </View>
           )}
         </Card>
 
-        {/* List of 19 Checks */}
-        <Text style={styles.sectionTitle}>CHECKLIST BREAKDOWN (19 STATUTORY CHECKS)</Text>
+        {/* List of Statutory Checks */}
+        <Text style={styles.sectionTitle}>CHECKLIST BREAKDOWN ({findings.length} STATUTORY CHECKS)</Text>
         {findings.map((f) => {
           return (
             <Card key={f.check_id} padding="md" style={styles.findingCard}>
@@ -727,6 +893,45 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
                   disabled={submittingOverride}
                 />
               </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Fullscreen Evidence Image Viewer Modal */}
+      <Modal visible={!!selectedImage} animationType="fade" transparent onRequestClose={() => setSelectedImage(null)}>
+        <View style={styles.imageModalBackdrop}>
+          <View style={styles.imageModalContainer}>
+            <View style={styles.imageModalHeader}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={styles.imageModalTitle}>
+                  {(selectedImage?.panel || 'Evidence').toUpperCase()} PANEL
+                </Text>
+                {selectedImage?.sha256 && (
+                  <Text style={styles.imageModalSub} numberOfLines={1} ellipsizeMode="middle">
+                    SHA-256: {selectedImage.sha256}
+                  </Text>
+                )}
+              </View>
+              <Pressable
+                onPress={() => setSelectedImage(null)}
+                style={styles.closeBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Close evidence image viewer"
+              >
+                <Text style={styles.closeBtnText}>✕</Text>
+              </Pressable>
+            </View>
+            <View style={styles.imageModalBody}>
+              {selectedImage?.displayUrl ? (
+                <Image
+                  source={{ uri: selectedImage.displayUrl }}
+                  style={styles.fullscreenImage}
+                  resizeMode="contain"
+                />
+              ) : (
+                <Text style={{ color: colors.white }}>Image unavailable</Text>
+              )}
             </View>
           </View>
         </View>
@@ -983,5 +1188,104 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.white,
     letterSpacing: 0.3,
+  },
+  galleryCard: {
+    marginBottom: spacing.md,
+    backgroundColor: '#F8FAFC',
+    borderColor: colors.borderLight,
+    borderWidth: 1,
+  },
+  galleryTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.niyamBlue,
+  },
+  gallerySub: {
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  thumbWrapper: {
+    marginRight: 10,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  panelThumb: {
+    width: 72,
+    height: 72,
+    borderRadius: radius.sm,
+    backgroundColor: colors.borderLight,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  panelBadge: {
+    position: 'absolute',
+    bottom: 2,
+    left: 2,
+    right: 2,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderRadius: 3,
+    paddingVertical: 1,
+    alignItems: 'center',
+  },
+  panelBadgeText: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: colors.white,
+    letterSpacing: 0.5,
+  },
+  imageModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageModalContainer: {
+    width: '94%',
+    height: '82%',
+    backgroundColor: '#0F172A',
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  imageModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+  },
+  imageModalTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  imageModalSub: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontFamily: 'monospace',
+    marginTop: 2,
+  },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#334155',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  imageModalBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.sm,
+  },
+  fullscreenImage: {
+    width: '100%',
+    height: '100%',
   },
 });

@@ -7,6 +7,7 @@ import VerdictBadge from '../../components/VerdictBadge';
 import EmptyState from '../../components/EmptyState';
 import SegmentControl from '../../components/SegmentControl';
 import { fetchInspections } from '../../api/admin';
+import { API_BASE_URL } from '../../api/config';
 
 // §5.3 Pass/Compliant inspections list — live data from GET /inspections.
 function todayLocal() {
@@ -173,16 +174,19 @@ export default function PassScreen({ navigation }) {
                   <VerdictBadge result="compliant" />
                 </View>
                 <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: spacing.md }}>
-                  Assessed by the server against 19 checks (CHK01–CHK18 + CHK06b).
-                  {(detail?.checks_assessed || detail?.checks) ? ` ${detail.checks_assessed ?? detail.checks} assessed on this package.` : ''}
+                  Assessed by the server against 26 statutory rule checks (2026.09.v1).
+                  {(detail?.checks_assessed || detail?.checks) ? ` ${detail.checks_assessed ?? detail.checks} evaluated on this package.` : ''}
                 </Text>
                 {(detail?.evidence_uris || detail?.photos || detail?.images || []).length > 0 ? (
                   <>
                     <Text style={{ ...typography.label, marginBottom: spacing.sm }}>Evidence</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: spacing.sm }}>
                       {(detail.evidence_uris || detail.photos || detail.images || []).map((u, i) => {
-                        const uri = typeof u === 'string' ? u : u?.uri || u?.url;
-                        if (!uri) return null;
+                        const rawUri = typeof u === 'string' ? u : u?.thumbnail_url || u?.url || u?.uri || u?.file_path;
+                        if (!rawUri) return null;
+                        const uri = (rawUri.startsWith('http://') || rawUri.startsWith('https://') || rawUri.startsWith('file://'))
+                          ? rawUri
+                          : `${API_BASE_URL.replace(/\/+$/, '')}/${rawUri.replace(/^\/+/, '')}`;
                         return (
                           <Image key={i} source={{ uri }} style={{ width: 160, height: 160, borderRadius: radius.md, marginRight: spacing.sm, backgroundColor: colors.borderLight }} />
                         );

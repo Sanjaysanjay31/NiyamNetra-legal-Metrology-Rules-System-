@@ -42,25 +42,32 @@ const PANELS = [
 
 function buildOfflineFindings({ commodity, brand, batch, hasSticker, isImported, isPerishable }) {
   const master = [
-    { code: 'CHK01', name: 'All mandatory Rule 6 declarations present', citation: 'Rule 6(1) and 6(2), mandatory declarations', required: 'All statutory declarations present on PDP', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
-    { code: 'CHK02', name: 'Unit Sale Price (USP)', citation: 'Rule 6(1)(ea) — 2017 Amendment', required: 'Unit price in Rs per g/ml/piece where net qty > 100g/ml', severity: 'major', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
-    { code: 'CHK03', name: 'Chapter II Applicability', citation: 'Rule 3 — Retail Sale Scope', required: 'Pre-packaged commodity intended for retail sale', severity: 'critical', defaultObserved: 'Retail sale transaction confirmed', needsOcr: false, verdict: 'pass' },
-    { code: 'CHK04', name: 'Manufacturer / Packer Identity', citation: 'Rule 6(1)(a) — Name & Complete Address', required: 'Name and complete physical address of manufacturer/packer', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
-    { code: 'CHK05', name: 'Generic Commodity Name', citation: 'Rule 6(1)(b) — Common / Generic Name', required: 'Common or generic name of commodity in package', severity: 'major', defaultObserved: commodity ? `Declared: ${commodity}` : 'Missing generic commodity name', needsOcr: false, verdict: commodity ? 'pass' : 'fail', reason: commodity ? null : 'Generic commodity name not provided.' },
-    { code: 'CHK06', name: 'Net Quantity Declaration', citation: 'Rule 6(1)(c) — Standard Weights & Measures', required: 'Net weight, measure or number in standard metric units', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
-    { code: 'CHK06b', name: 'Metric Units Compliance', citation: 'Rule 12 — Standard Metric Units (SI)', required: 'Only metric units (g, kg, ml, L, m, cm) permissible', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
-    { code: 'CHK07', name: 'Date of Manufacture / Packing', citation: 'Rule 6(1)(d) — Month & Year', required: 'Month and year of manufacture or pre-packing', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
-    { code: 'CHK08', name: 'Best Before / Expiry Date', citation: 'Rule 6(1)(d) — Perishable Commodities', required: 'Clear expiry or best before period for perishable goods', severity: 'major', defaultObserved: isPerishable ? 'Perishable good flagged — pending expiry check' : 'Non-perishable commodity', needsOcr: isPerishable, verdict: isPerishable ? 'not_assessed' : 'pass', reason: isPerishable ? 'Perishable item requires verified expiry date from server OCR.' : null },
-    { code: 'CHK09', name: 'Consumer Care Contact Details', citation: 'Rule 6(1)(n) — Name, Address, Tel, Email', required: 'Designation, full postal address, phone number & email', severity: 'major', defaultObserved: 'Pending server OCR text extraction (captured offline)', needsOcr: true },
-    { code: 'CHK10', name: 'Country of Origin (Imports)', citation: 'Rule 6(1)(a) proviso — Imported Packages', required: 'Clear declaration of country of origin for all packages', severity: 'major', defaultObserved: isImported ? 'Imported item — pending origin check' : 'Domestic package', needsOcr: isImported, verdict: isImported ? 'not_assessed' : 'pass', reason: isImported ? 'Imported item requires Country of Origin declaration.' : null },
-    { code: 'CHK11', name: 'Principal Display Panel (PDP) Area', citation: 'Rule 9 — Calculation of PDP Dimensions', required: 'At least 40% of total surface area on front panel', severity: 'minor', defaultObserved: 'Dimensions recorded from geometry input', needsOcr: false, verdict: 'pass' },
-    { code: 'CHK12', name: 'Minimum Font Height & Proportion', citation: 'Rule 9 Table I — Font Size by PDP Area', required: 'Numeral height matching Table I prescribed standards', severity: 'minor', defaultObserved: 'Pending millimetre pixel measurement (captured offline)', needsOcr: true },
-    { code: 'CHK13', name: 'Sticker / Smudge Alteration', citation: 'Section 36 & Rule 6 — Over-stickering Prohibition', required: 'Declarations must be indelible; no price alterations', severity: 'critical', defaultObserved: hasSticker ? 'Price sticker found affixed over declared MRP' : 'No sticker alteration declared', needsOcr: false, verdict: hasSticker ? 'fail' : 'pass', reason: hasSticker ? 'Price sticker affixed over original declared MRP. Section 36 violation.' : null },
-    { code: 'CHK14', name: 'Overcharging Assessment', citation: 'Section 36(1) — Sale beyond declared MRP', required: 'Prohibition of sale at price exceeding declared MRP', severity: 'critical', defaultObserved: 'Pending server price verification', needsOcr: true },
-    { code: 'CHK15', name: 'E-Commerce Marketplace Listing', citation: 'Rule 6(10) — Digital Display Compliance', required: 'All mandatory declarations displayed on web listing', severity: 'advisory', defaultObserved: 'Physical retail package sampled in store', needsOcr: false, verdict: 'not_assessed', reason: 'Rule 6(10) governs digital marketplace listings.' },
-    { code: 'CHK16', name: 'Dual MRP Assessment', citation: 'Rule 18(2) — Prohibition of dual pricing', required: 'No manufacturer shall declare different MRPs on identical packages', severity: 'critical', defaultObserved: 'Pending multi-panel comparison', needsOcr: true },
-    { code: 'CHK17', name: 'Veg / Non-Veg Statutory Symbol', citation: 'FSSAI Alignment & Rule 6 General', required: 'Food category indicator present and conspicuous', severity: 'advisory', defaultObserved: 'Pending visual inspection', needsOcr: true },
-    { code: 'CHK18', name: 'Penalty Limb & Section 36 Classification', citation: 'Section 36, Legal Metrology Act 2009', required: 'Section 36 tier 1 / tier 2 offense determination', severity: 'critical', defaultObserved: hasSticker ? 'Section 36(1) penalty limb engaged due to sticker alteration' : 'Pending server statutory review', needsOcr: false, verdict: hasSticker ? 'fail' : 'not_assessed', reason: hasSticker ? 'Section 36(1) penalty limb engaged.' : 'Pending complete evidence review.' },
+    { code: 'CHK01', name: 'Mandatory declarations on retail pre-packaged commodity', citation: 'Rule 6(1)', required: 'All statutory declarations present on PDP', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)' },
+    { code: 'CHK02', name: 'Exemption carve-out for tobacco and tobacco products', citation: 'Rule 26(a)', required: 'Tobacco carve-out applicability verification', severity: 'advisory', defaultObserved: 'Scope verification' },
+    { code: 'CHK03', name: 'Chapter II scope and retail quantity thresholds', citation: 'Rule 3', required: 'Pre-packaged commodity intended for retail sale', severity: 'critical', defaultObserved: 'Retail sale transaction confirmed' },
+    { code: 'CHK04', name: 'Retail sale price (MRP) correctly expressed', citation: 'Rule 6(1)(e) & Rule 2(m)', required: 'MRP in Indian Rupees inclusive of all taxes', severity: 'critical', defaultObserved: 'Pending server OCR text extraction (captured offline)' },
+    { code: 'CHK05', name: 'Prescribed standard units of weight, volume, or length', citation: 'Rule 12 & Rule 13', required: 'Standard metric units without non-standard qualifiers', severity: 'critical', defaultObserved: 'Pending metric unit verification' },
+    { code: 'CHK06', name: 'Minimum height of letters on Principal Display Panel', citation: 'Rule 7(1) & Table-I', required: 'Letter height proportion matching Table-I standards', severity: 'major', defaultObserved: 'Pending optical font height verification' },
+    { code: 'CHK06b', name: 'Minimum height of net quantity numerals', citation: 'Rule 7(2) read with Table-I', required: 'Numeral height matching GSR 629(E) standards', severity: 'major', defaultObserved: 'Pending numeral height measurement' },
+    { code: 'CHK06b_hist', name: 'Historical minimum height of net quantity numerals', citation: 'Rule 7 & Table-II (pre-2018)', required: 'Pre-2018 historical numeral standard check', severity: 'major', defaultObserved: 'Historical table reference' },
+    { code: 'CHK07', name: 'Character width proportion', citation: 'Rule 7(3)', required: 'Width at least one-third of character height', severity: 'minor', defaultObserved: 'Pending character width calculation' },
+    { code: 'CHK08', name: 'Conspicuous contrast of declarations with background', citation: 'Rule 9(1)', required: 'High visual contrast against background', severity: 'minor', defaultObserved: 'Pending contrast ratio evaluation' },
+    { code: 'CHK09', name: 'Clear surrounding space around net-quantity declaration', citation: 'Rule 8', required: 'Unobstructed surrounding boundary', severity: 'minor', defaultObserved: 'Pending clear space measurement' },
+    { code: 'CHK22', name: 'Placement of mandatory declarations on Principal Display Panel', citation: 'Rule 8', required: 'Mandatory declarations grouped on PDP', severity: 'major', defaultObserved: 'Pending PDP layout analysis' },
+    { code: 'CHK10', name: 'Standard prescribed packaging quantities', citation: 'Rule 5 read with the Second Schedule', required: 'Standard quantity schedules under Second Schedule', severity: 'minor', defaultObserved: 'Pending schedule comparison' },
+    { code: 'CHK11', name: 'Permissible conditions for price alteration stickers', citation: 'Rule 6(3), 6(4), 6(4A)', required: 'Declarations must be indelible; no unauthorized stickers', severity: 'critical', defaultObserved: hasSticker ? 'Sticker found affixed over package' : 'No sticker alteration declared' },
+    { code: 'CHK12', name: 'Country of origin declaration on imported commodities', citation: 'Rule 6(1)(aa)', required: 'Country of origin stated for all packages', severity: 'critical', defaultObserved: isImported ? 'Imported item — pending origin declaration check' : 'Domestic package' },
+    { code: 'CHK13', name: 'Best before or use by date for perishable commodities', citation: 'Rule 6(1)(da)', required: 'Clear expiry or best before for perishables', severity: 'critical', defaultObserved: isPerishable ? 'Perishable item — pending date verification' : 'Non-perishable commodity' },
+    { code: 'CHK14', name: 'Applicability proviso for medical devices', citation: 'Rule 2(h) Proviso', required: 'Medical devices regulatory carve-out', severity: 'advisory', defaultObserved: 'Scope verification' },
+    { code: 'CHK15', name: 'Mandatory declarations on e-commerce product listings', citation: 'Rule 6(10)', required: 'E-commerce digital display declarations', severity: 'major', defaultObserved: 'Physical retail package sampled in store' },
+    { code: 'CHK16', name: 'Marketplace search filter for country of origin', citation: 'Rule 6(10A)', required: 'Search filter requirement for e-commerce platforms', severity: 'major', defaultObserved: 'Physical retail package sampled in store' },
+    { code: 'CHK17', name: 'Alignment with FSSAI statutory packaging advisories', citation: 'FSSAI Packaging Regulations & LM Alignment', required: 'Food safety advisory alignment', severity: 'advisory', defaultObserved: 'Pending regulatory review' },
+    { code: 'CHK18', name: 'Graduated enforcement response and Section 36 sanctions', citation: 'Section 36', required: 'Statutory penalty classification', severity: 'critical', defaultObserved: 'Pending statutory review' },
+    { code: 'CHK19', name: 'Unit Sale Price (USP) declaration', citation: 'Rule 6(1)(g)', required: 'Unit sale price declared in Rs per g/ml/piece', severity: 'major', defaultObserved: 'Pending USP extraction' },
+    { code: 'CHK20', name: 'Dimensions declaration where size is relevant', citation: 'Rule 6(1)(m)', required: 'Dimensions declared in metric units', severity: 'minor', defaultObserved: 'Pending dimension extraction' },
+    { code: 'CHK21', name: 'Special declaration standards for garments and hosiery goods', citation: 'Rule 6(1)(b) Proviso & Second Schedule Exemption', required: 'Garments and hosiery size standards', severity: 'major', defaultObserved: 'Non-apparel commodity' },
+    { code: 'CHK23_hist', name: 'Origin marking on cosmetics (former Rule 6(8))', citation: 'Rule 6(8) (omitted w.e.f 21.09.2026 by GSR 826(E))', required: 'Historical cosmetics origin indicator', severity: 'major', defaultObserved: 'Historical rule check' },
+    { code: 'CHK23', name: 'Origin marking on soap, cosmetics, toiletries', citation: 'Rule 6(4A)(d)', required: 'Vegetarian / non-vegetarian dot on specified items', severity: 'advisory', defaultObserved: 'Pending visual inspection' },
   ];
 
   // 05_SYSTEM_ARCHITECTURE §1.1 / Backend.md C4: the server is the ONLY
@@ -378,9 +385,9 @@ export default function InspectionSessionScreen({
         scanItem = {
           id: `pkg-${serverScanId || Date.now()}`,
           server_id: serverScanId,
-          commodity_generic: assessedScan.commodity_generic || commodity.trim() || 'Unspecified Commodity',
-          brand_name: assessedScan.brand_name || brand.trim() || 'Unspecified Brand',
-          batch_number: assessedScan.batch_number || batch.trim() || null,
+          commodity_generic: assessedScan.commodity_generic || (commodity.trim() ? commodity.trim() : null),
+          brand_name: assessedScan.brand_name || (brand.trim() ? brand.trim() : null),
+          batch_number: assessedScan.batch_number || (batch.trim() ? batch.trim() : null),
           geometry,
           panelPhotos: { ...panelPhotos },
           panelEvidence: { ...panelEvidence },
@@ -401,7 +408,7 @@ export default function InspectionSessionScreen({
           overall_result: assessedScan.overall_result,
           violation_limb: assessedScan.violation_limb,
           checks_assessed: assessedScan.checks_assessed,
-          checks_total: assessedScan.checks_total,
+          checks_total: assessedScan.checks_total || 26,
           findings: assessedScan.findings,
           created_at: assessedScan.created_at || new Date().toISOString(),
         };
@@ -418,8 +425,8 @@ export default function InspectionSessionScreen({
         scanItem = {
           id: `pkg-${serverScanId || Date.now()}`,
           server_id: serverScanId,
-          commodity_generic: commodity.trim() || 'Unspecified Commodity',
-          brand_name: brand.trim() || 'Unspecified Brand',
+          commodity_generic: commodity.trim() || null,
+          brand_name: brand.trim() || null,
           batch_number: batch.trim() || null,
           geometry,
           panelPhotos: { ...panelPhotos },
@@ -440,7 +447,7 @@ export default function InspectionSessionScreen({
           has_sticker: hasSticker,
           overall_result: 'not_assessed',
           checks_assessed: 0,
-          checks_total: 19,
+          checks_total: 26,
           findings: offlineFindings,
           is_offline: true,
           created_at: new Date().toISOString(),
@@ -449,7 +456,7 @@ export default function InspectionSessionScreen({
         // Alert the inspector with the reason why live evaluation couldn't complete
         Alert.alert(
           'Assessment Pending — Not Scored Yet',
-          `The 19 statutory checks could not be assessed right now:\n• ${serverErrorDetail}\n\nYour photos and package details are saved. Nothing has been scored, so no verdict is invented. Once you are online, open this package and tap "Run Server Assessment" — the engine will read YOUR actual photos and produce a genuine result.`,
+          `The statutory checks could not be assessed live right now:\n• ${serverErrorDetail}\n\nYour photos and package details are saved. Nothing has been scored, so no verdict is invented. Once you are online, open this package and tap "Run Server Assessment" — the engine will read YOUR actual photos and produce a genuine result.`,
           [{ text: 'Review Package' }]
         );
       }
@@ -585,10 +592,10 @@ export default function InspectionSessionScreen({
                 <View style={styles.rowBetween}>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
-                      #{idx + 1}: {pkg.brand_name} ({pkg.commodity_generic})
+                      #{idx + 1}: {(pkg.brand_name && !pkg.brand_name.toLowerCase().includes('unspecified')) ? pkg.brand_name : 'Product identity pending'} ({(pkg.commodity_generic && !pkg.commodity_generic.toLowerCase().includes('unspecified')) ? pkg.commodity_generic : 'Commodity not determined'})
                     </Text>
                     <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 1 }}>
-                      Batch: {pkg.batch_number || 'N/A'} • 19 Checks Evaluated
+                      Batch: {(pkg.batch_number && pkg.batch_number !== 'N/A') ? pkg.batch_number : 'Batch not observed'} • {pkg.checks_total || 26} Checks Evaluated
                     </Text>
                   </View>
                   <View style={[styles.rowAlign, { gap: 6 }]}>

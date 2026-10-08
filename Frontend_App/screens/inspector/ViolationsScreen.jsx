@@ -8,6 +8,7 @@ import EmptyState from '../../components/EmptyState';
 import FindingRow from '../../components/FindingRow';
 import SegmentControl from '../../components/SegmentControl';
 import { fetchInspections } from '../../api/admin';
+import { API_BASE_URL } from '../../api/config';
 
 // §5.4 Violations list — live data from GET /inspections, with detail view.
 function todayLocal() {
@@ -175,12 +176,15 @@ export default function ViolationsScreen({ navigation }) {
             ) : (
               <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                 {(v.evidence_uris || v.photos || v.images || []).map((u, i) => {
-                  const uri = typeof u === 'string' ? u : u?.uri || u?.url || u?.file_path;
-                  if (!uri) return null;
+                  const rawUri = typeof u === 'string' ? u : u?.thumbnail_url || u?.url || u?.uri || u?.file_path;
+                  if (!rawUri) return null;
+                  const uri = (rawUri.startsWith('http://') || rawUri.startsWith('https://') || rawUri.startsWith('file://'))
+                    ? rawUri
+                    : `${API_BASE_URL.replace(/\/+$/, '')}/${rawUri.replace(/^\/+/, '')}`;
                   return (
                     <Pressable
                       key={i}
-                      onPress={() => Alert.alert('Evidence', `Image ${i + 1} — full carousel is roadmap; file kept server-side.`)}
+                      onPress={() => Alert.alert('Evidence', `Image ${i + 1} — file retained securely on server.`)}
                       accessibilityRole="imagebutton"
                       accessibilityLabel={`Evidence image ${i + 1}`}
                     >

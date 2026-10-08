@@ -748,17 +748,37 @@ def update_inspection(inspection_id: int,
 
 @router.get("/rule-info")
 def get_rule_info(user: User = Depends(get_current_user)):
-    """Return active statutory rulebook info for inspector app."""
+    """Return active statutory rulebook info for inspector app (dynamic 2026.09.v1)."""
+    from rules.loader import load_rule_pack
+    pack = load_rule_pack(settings.RULE_PACK_VERSION)
+    enabled_rules = [r for r in pack.rules if r.enabled]
     return {
-        "id": "rv-2026-current",
-        "name": "Legal Metrology (Packaged Commodities) Rules, 2011 (As Amended 2026)",
-        "gazette_ref": "G.S.R. 226(E) & 521(E) · Consolidated 2026 Edition",
-        "rules_as_at": settings.RULES_AS_AT,
+        "id": f"rv-{pack.rule_pack_version}",
+        "name": pack.title,
+        "gazette_ref": pack.metadata.get("gazette_baseline", "G.S.R. 826(E) (Fourth Amendment Rules 2026)"),
+        "rule_pack_version": pack.rule_pack_version,
+        "active_rule_pack_version": pack.rule_pack_version,
+        "rules_as_at": pack.rules_as_at,
         "engine_version": settings.ENGINE_VERSION,
         "is_active": True,
         "status": "Active",
-        "total_checks": 19,
-        "summary": "Consolidated rules in force as at 2026-07-01. Governs all 19 algorithmic statutory checks in NiyamNetra including Rule 6(1)(f) Unit Sale Price, Second Schedule standard sizing, and digital e-commerce compliance.",
+        "total_checks": len(enabled_rules),
+        "checks_registered": len(enabled_rules),
+        "total_rules": len(pack.rules),
+        "summary": pack.description,
+        "rules": [
+            {
+                "rule_id": r.rule_id,
+                "code": r.code,
+                "title": r.title,
+                "source_rule": r.source_rule,
+                "citation": f"{r.source_rule} — {r.source_document}",
+                "severity": r.severity,
+                "statutory_limb": r.statutory_limb,
+                "required_fields": r.required_fields,
+            }
+            for r in enabled_rules
+        ],
     }
 
 
