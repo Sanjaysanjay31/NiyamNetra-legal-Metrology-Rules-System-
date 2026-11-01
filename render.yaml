@@ -83,8 +83,6 @@ services:
         sync: false
       - key: GROQ_MODEL
         value: meta-llama/llama-4-scout-17b-16e-instruct
-      - key: GOOGLE_VISION_API_KEY
-        sync: false
       - key: OCR_SPACE_API_KEY
         sync: false
       # Cloud-only mode: never attempt the 1.5GB Paddle import on 512MB.
