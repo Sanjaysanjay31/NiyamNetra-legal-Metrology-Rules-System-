@@ -10,7 +10,6 @@ from config import settings
 from ocr import (
     AzureVisionProvider,
     BaseOCRProvider,
-    GoogleVisionProvider,
     OCRSpaceProvider,
     OcrBlock,
     OcrLine,
@@ -56,7 +55,7 @@ def get_paddle(lang: str = "en"):
     _lang = getattr(settings, "OCR_PADDLE_LANG", "en")
     raise RuntimeError(
         f"PaddleOCR is removed from the production runtime architecture (OCR_PADDLE_LANG={_lang}). "
-        "Use cloud OCR provider abstraction (Google Cloud Vision / OCR.space / Azure Vision)."
+        "Use cloud OCR provider abstraction (OCR.space / Azure Vision)."
     )
 
 

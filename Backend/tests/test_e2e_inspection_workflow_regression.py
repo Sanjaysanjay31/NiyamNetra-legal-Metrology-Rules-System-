@@ -218,15 +218,15 @@ def test_e2e_ocr_fallback_through_actual_assessment_pipeline(test_env, monkeypat
     db.commit()
 
     # Configure controlled test doubles:
-    # Primary Google Vision fails with HTTP 403 billing suspended (containing dummy key in message)
+    # Primary OCR.space fails with HTTP 403 billing suspended (containing dummy key in message)
     p_google = MockProviderDouble(
-        name="google_vision",
+        name="ocr_space",
         configured=True,
         result=OcrResult(
-            engine="google_vision",
-            provider="google_vision",
+            engine="ocr_space",
+            provider="ocr_space",
             status=STATUS_BILLING_ERROR,
-            failure_reason="Google Cloud Vision HTTP 403: Billing suspended for apikey=AIzaSySecretGoogleKey123456",
+            failure_reason="OCR.space HTTP 403: Billing suspended for apikey=AIzaSySecretGoogleKey123456",
             duration_ms=85.0,
         ),
     )
@@ -326,9 +326,9 @@ def test_e2e_all_providers_fail_and_legal_safety(test_env, monkeypatch):
 
     # Simulate all providers failing (timeout on Google Vision, 500 on OCR.space)
     p1 = MockProviderDouble(
-        name="google_vision",
+        name="azure",
         configured=True,
-        result=OcrResult(engine="google_vision", provider="google_vision", status=STATUS_TIMEOUT, failure_reason="Read timed out"),
+        result=OcrResult(engine="azure", provider="azure", status=STATUS_TIMEOUT, failure_reason="Read timed out"),
     )
     p2 = MockProviderDouble(
         name="ocr_space",
@@ -612,7 +612,6 @@ def test_e2e_security_and_credential_protection(test_env, monkeypatch):
     client = test_env["client"]
 
     # Injected synthetic secrets
-    monkeypatch.setattr(settings, "GOOGLE_VISION_API_KEY", "AIzaSyFakeGoogleTestKey999")
     monkeypatch.setattr(settings, "OCR_SPACE_API_KEY", "K89999999999999")
     monkeypatch.setattr(settings, "AZURE_VISION_KEY", "0123456789abcdef0123456789abcdef")
 

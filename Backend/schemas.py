@@ -203,6 +203,22 @@ class ScanImageOut(ORMModel):
     hamming_distance: int | None = None
     url: str | None = None
     thumbnail_url: str | None = None
+    ocr_provider: str | None = None
+    ocr_status: str | None = None
+    ocr_error_code: str | None = None
+    ocr_duration_ms: float | None = None
+    ocr_attempts_json: str | None = None
+    ocr_attempts: list[dict[str, Any]] | None = None
+
+    @model_validator(mode="after")
+    def _decode_ocr_attempts(self) -> ScanImageOut:
+        if self.ocr_attempts_json and not self.ocr_attempts:
+            try:
+                import json
+                self.ocr_attempts = json.loads(self.ocr_attempts_json)
+            except Exception:
+                self.ocr_attempts = []
+        return self
 
 
 class VerdictCounts(BaseModel):
@@ -241,6 +257,10 @@ class ScanOut(ORMModel):
     rule_pack_version: str | None = None
     duplicate_of: int | None = None
     created_at: datetime
+    ocr_provider: str | None = None
+    ocr_status: str | None = None
+    ocr_duration_ms: float | None = None
+    ocr_error: str | None = None
     # Set by the router after model_validate (the ORM row has no `counts`
     # attribute); optional here so validation of the ORM object does not fail.
     counts: VerdictCounts | None = None

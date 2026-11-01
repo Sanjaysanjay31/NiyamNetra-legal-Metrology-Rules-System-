@@ -322,7 +322,7 @@ def test_failed_ocr_never_cached_as_successful_empty_text(env):
     with patch("ocr_engine.run_ocr") as mock_ocr:
         mock_ocr.return_value = OcrResult(
             lines=[],
-            engine="google_vision",
+            engine="ocr_space",
             mean_confidence=None,
             failure_reason="HTTP 403: Billing disabled",
             status=STATUS_PROVIDER_ERROR,
@@ -462,7 +462,7 @@ def test_ocr_provider_config_change_invalidates_fingerprint(env):
     db.add(s_img)
     db.commit()
 
-    with patch.object(settings, "OCR_PROVIDER", "google_vision"), patch.object(settings, "OCR_PROVIDER_CHAIN", "google_vision,ocr_space"):
+    with patch.object(settings, "OCR_PROVIDER", "azure"), patch.object(settings, "OCR_PROVIDER_CHAIN", "azure,ocr_space"):
         fp1 = compute_assessment_fingerprint(scan, [s_img])
 
     with patch.object(settings, "OCR_PROVIDER", "ocr_space"), patch.object(settings, "OCR_PROVIDER_CHAIN", "ocr_space,tesseract"):

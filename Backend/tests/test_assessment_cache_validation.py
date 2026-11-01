@@ -152,8 +152,8 @@ def _mock_success_ocr(text="ROYAL RICE NET QTY 1 kg MRP Rs 120.00"):
             OcrLine(text="CONSUMER CARE: care@royal.test 1800-111-2222", confidence=0.95, box=[[10.0, 160.0], [350.0, 160.0], [350.0, 180.0], [10.0, 180.0]]),
             OcrLine(text="COUNTRY OF ORIGIN: INDIA", confidence=0.98, box=[[10.0, 190.0], [220.0, 190.0], [220.0, 210.0], [10.0, 210.0]]),
         ],
-        engine="google_vision",
-        provider="google_vision",
+        engine="ocr_space",
+        provider="ocr_space",
         status=STATUS_SUCCESS,
         mean_confidence=0.97,
     )
@@ -248,13 +248,13 @@ def test_ocr_input_change_invalidates_llm_cache():
         lines=[OcrLine(text="NET QTY 500 g", confidence=0.99)],
         panel="front",
         image_id=1,
-        engine="google_vision",
+        engine="ocr_space",
     )
     ocr2 = OcrResult(
         lines=[OcrLine(text="NET QTY 1 kg", confidence=0.99)],
         panel="front",
         image_id=1,
-        engine="google_vision",
+        engine="ocr_space",
     )
 
     pkg1 = package_ocr_for_llm(ocr1)
@@ -272,7 +272,7 @@ def test_model_or_prompt_schema_version_change_invalidates_extraction():
         lines=[OcrLine(text="MRP Rs 50.00", confidence=0.98)],
         panel="front",
         image_id=1,
-        engine="google_vision",
+        engine="ocr_space",
     )
     pkg = package_ocr_for_llm(ocr)
 

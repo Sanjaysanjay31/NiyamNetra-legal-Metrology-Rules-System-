@@ -54,7 +54,7 @@ def run_smoke_ocr(
     -----------
     image_path: Path to the target packaging image file.
     live_provider_call: Must be True to permit external cloud API requests.
-    provider_name: Optional override ('auto', 'google_vision', 'ocr_space', 'azure').
+    provider_name: Optional override ('auto', 'ocr_space', 'azure').
     options: Optional provider options dictionary.
 
     Returns:
@@ -213,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--provider",
         default=None,
-        help="Override OCR provider selection ('auto', 'google_vision', 'ocr_space', 'azure')",
+        help="Override OCR provider selection ('auto', 'ocr_space', 'azure')",
     )
     parser.add_argument(
         "--json",

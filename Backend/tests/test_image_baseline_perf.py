@@ -41,8 +41,8 @@ def _create_benchmark_ocr_result() -> OcrResult:
             OcrLine(text="CONSUMER CARE: 1800-111-2222 care@royal.test", confidence=0.95, box=[[10.0, 210.0], [520.0, 210.0], [520.0, 240.0], [10.0, 240.0]]),
             OcrLine(text="COUNTRY OF ORIGIN: INDIA", confidence=0.98, box=[[10.0, 250.0], [350.0, 250.0], [350.0, 280.0], [10.0, 280.0]]),
         ],
-        engine="google_vision",
-        provider="google_vision",
+        engine="ocr_space",
+        provider="ocr_space",
         status=STATUS_SUCCESS,
         mean_confidence=0.97,
     )

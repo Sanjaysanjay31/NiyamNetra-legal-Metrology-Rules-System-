@@ -68,7 +68,7 @@ def compute_assessment_fingerprint(scan: Scan, images: list[ScanImage]) -> str:
         else:
             rp = getattr(settings, "RULE_PACK_VERSION", "2026.09.v1")
     scale_src = getattr(scan, "scale_source", None) or "declared"
-    ocr_prov = getattr(settings, "OCR_PROVIDER", "google_vision")
+    ocr_prov = getattr(settings, "OCR_PROVIDER", "auto")
     ocr_chain = getattr(settings, "OCR_PROVIDER_CHAIN", "")
     llm_prov = getattr(settings, "LLM_PROVIDER", "groq")
     if llm_prov in ("gemini", "google_gemini", "gemini-flash"):
@@ -853,11 +853,29 @@ def _scan_out(db: Session, scan: Scan) -> ScanOut:
             _curr_imgs = db.query(ScanImage).filter(ScanImage.scan_id == scan.id).all()
         _fp = compute_assessment_fingerprint(scan, _curr_imgs)
 
+    _img_list = getattr(scan, "images", None)
+    if _img_list is None:
+        _img_list = db.query(ScanImage).filter(ScanImage.scan_id == scan.id).all()
+    _ocr_images_diag = [
+        {
+            "image_id": im.id,
+            "panel": im.panel,
+            "ocr_provider": im.ocr_provider or "unknown",
+            "ocr_status": im.ocr_status or "unknown",
+            "ocr_error_code": im.ocr_error_code,
+            "ocr_duration_ms": im.ocr_duration_ms,
+        }
+        for im in _img_list
+    ]
+
     out.diagnostics = {
         "assessment_id": f"assess-{scan.id}-{(_fp or '00000000')[:8]}",
         "assessment_input_fingerprint": _fp,
-        "ocr_provider": getattr(scan, "ocr_provider", None) or getattr(settings, "OCR_PROVIDER", "google_vision"),
-        "ocr_status": "success" if scan.ocr_text else "no_text",
+        "ocr_provider": scan.ocr_provider or "unknown",
+        "ocr_status": scan.ocr_status or ("success" if scan.ocr_text else "unknown"),
+        "ocr_duration_ms": scan.ocr_duration_ms,
+        "ocr_error": scan.ocr_error,
+        "ocr_images": _ocr_images_diag,
         "ocr_confidence_mean": scan.ocr_confidence_mean,
         "ocr_lines_count": len(scan.ocr_text.splitlines()) if scan.ocr_text else 0,
         "ocr_cache_hit": getattr(scan, "ocr_cache", None) is not None,
@@ -1437,11 +1455,16 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         _word_cnt = sum(len((l.text or "").split()) for l in _cached_ocr.lines)
         _ocr_log.info(
             "[OCR] ocr_completed provider=%s panel=all image_id=all input_artifact_type=cached status=success duration_ms=0.00 line_count=%d word_count=%d cache_hit=True",
-            getattr(_cached_ocr, "engine", "google_vision"),
+            getattr(_cached_ocr, "engine", getattr(scan, "ocr_provider", None) or "cache"),
             _line_cnt,
             _word_cnt,
         )
         ocr = _cached_ocr
+        if not getattr(scan, "ocr_provider", None):
+            scan.ocr_provider = getattr(_cached_ocr, "engine", "cache")
+        scan.ocr_status = "success"
+        scan.ocr_duration_ms = 0.0
+        scan.ocr_error = None
     else:
         # Cache miss: run OCR per panel using DERIVED ARTIFACTS ONLY.
         # MANDATORY INVARIANT (Section 2 & 3 & 28):
@@ -1467,7 +1490,7 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
                 import logging as _log
                 _ocr_log = _log.getLogger("niyamnetra.ocr")
                 _ocr_t0 = time.perf_counter()
-                _prov = getattr(settings, "OCR_PROVIDER", "google_vision")
+                _prov = getattr(settings, "OCR_PROVIDER", "auto")
                 _ocr_log.info(
                     "[OCR] ocr_started provider=%s panel=%s image_id=%s input_artifact_type=%s",
                     _prov,
@@ -1541,6 +1564,31 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
             with ThreadPoolExecutor(max_workers=min(4, len(_panel_jobs))) as _pool:
                 _ocr_results = list(_pool.map(_ocr_single, _panel_jobs))
 
+        from ocr.base import normalize_ocr_status, STATUS_CONFIGURATION_ERROR, STATUS_NETWORK_ERROR
+
+        # 1. Authoritative per-image persistence
+        for (_im, _p, _atype, _m), _ocr in zip(_panel_jobs, _ocr_results):
+            _im.ocr_provider = getattr(_ocr, "engine", None)
+            _im.ocr_status = normalize_ocr_status(getattr(_ocr, "status", None))
+            _im.ocr_error_code = getattr(_ocr, "error_code", None)
+            _im.ocr_duration_ms = getattr(_ocr, "duration_ms", None)
+            _attempts = getattr(_ocr, "attempts", None)
+            if _attempts:
+                import json as _json
+                _im.ocr_attempts_json = _json.dumps(_attempts)
+            else:
+                _im.ocr_attempts_json = None
+
+        # Images without derived artifacts
+        _job_im_ids = {job[0].id for job in _panel_jobs}
+        for _im in images:
+            if _im.id not in _job_im_ids:
+                _im.ocr_provider = "none"
+                _im.ocr_status = "input_unavailable"
+                _im.ocr_error_code = "DERIVED_ARTIFACT_MISSING"
+                _im.ocr_duration_ms = 0.0
+                _im.ocr_attempts_json = None
+
         for _ocr in _ocr_results:
             if _ocr.lines:
                 _all_lines.extend(_ocr.lines)
@@ -1550,17 +1598,49 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
             if _ocr.failure_reason and _fail_reason is None:
                 _fail_reason = _ocr.failure_reason
 
+        # Determine mixed or single provider
+        _success_engines = {
+            getattr(r, "engine", None)
+            for r in _ocr_results
+            if getattr(r, "status", None) == STATUS_SUCCESS and getattr(r, "lines", None)
+        }
+        _success_engines.discard(None)
+        _success_engines.discard("none")
+
+        _all_engines = {
+            getattr(r, "engine", None)
+            for r in _ocr_results
+            if getattr(r, "engine", None) and getattr(r, "engine", None) != "none"
+        }
+        _all_engines.discard(None)
+
+        if len(_success_engines) > 1:
+            _scan_engine = "mixed"
+        elif len(_success_engines) == 1:
+            _scan_engine = list(_success_engines)[0]
+        elif len(_all_engines) > 1:
+            _scan_engine = "mixed"
+        elif len(_all_engines) == 1:
+            _scan_engine = list(_all_engines)[0]
+        else:
+            _scan_engine = _engines[0] if _engines else "none"
+
         if _all_lines:
             _mean = float(sum(_confs) / len(_confs)) if _confs else None
             ocr = OcrResult(
                 lines=_all_lines,
-                engine=_engines[0] if _engines else "unknown",
+                engine=_scan_engine,
                 mean_confidence=_mean,
                 failure_reason=None,
                 status=STATUS_SUCCESS,
                 scan_id=scan.id,
                 inspection_id=scan.inspection_id,
             )
+            _has_error = any(
+                getattr(r, "status", None) not in (STATUS_SUCCESS, STATUS_NO_TEXT)
+                for r in _ocr_results
+            )
+            scan.ocr_status = "partial_success" if _has_error else "success"
         else:
             _has_error = any(
                 getattr(r, "status", None) not in (STATUS_SUCCESS, STATUS_NO_TEXT)
@@ -1579,13 +1659,27 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
 
             ocr = OcrResult(
                 lines=[],
-                engine="none",
+                engine=_scan_engine,
                 mean_confidence=None,
                 failure_reason=_fail_reason or "No text detected across panels",
                 status=_status,
                 scan_id=scan.id,
                 inspection_id=scan.inspection_id,
             )
+
+            if not _panel_jobs and not images:
+                scan.ocr_status = "input_unavailable"
+            elif any(getattr(r, "status", None) == STATUS_CONFIGURATION_ERROR for r in _ocr_results):
+                scan.ocr_status = "configuration_error"
+            elif any(getattr(r, "status", None) in (STATUS_PROVIDER_ERROR, STATUS_TIMEOUT, STATUS_NETWORK_ERROR) for r in _ocr_results):
+                scan.ocr_status = "technical_failure"
+            elif all(getattr(r, "status", None) == STATUS_NO_TEXT for r in _ocr_results):
+                scan.ocr_status = "no_text"
+            else:
+                scan.ocr_status = normalize_ocr_status(getattr(ocr, "status", "technical_failure"))
+
+        scan.ocr_provider = _scan_engine if _scan_engine != "none" else None
+        scan.ocr_error = _fail_reason if scan.ocr_status not in ("success", "no_text") else None
 
         # Stage the cache on the scan instance; _assess_inner commits it.
         # Hard invariant (Requirement 8): NEVER cache a failed provider result or empty extraction.
@@ -1601,6 +1695,8 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         except Exception:
             pass
     t_ocr_end = time.perf_counter()
+    if getattr(scan, "ocr_duration_ms", None) is None or _cached_ocr is None:
+        scan.ocr_duration_ms = round((t_ocr_end - t_ocr_start) * 1000, 2)
 
     from perf_baseline import record_context_timing
     record_context_timing(scan.id, {
@@ -1767,7 +1863,8 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         if ocr.full_text:
             scan.ocr_text = ocr.full_text[:20000]
         scan.ocr_confidence_mean = ocr.mean_confidence
-        scan.ocr_provider = ocr.engine if (ocr and ocr.engine != "none") else None
+        if not scan.ocr_provider:
+            scan.ocr_provider = ocr.engine if (ocr and ocr.engine != "none") else None
     except Exception:
         pass
 

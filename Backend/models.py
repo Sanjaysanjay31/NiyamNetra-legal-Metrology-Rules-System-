@@ -189,6 +189,10 @@ class Scan(Base):
 
     ocr_confidence_mean: Mapped[float | None] = mapped_column(Float)
     ocr_text: Mapped[str | None] = mapped_column(Text)
+    ocr_provider: Mapped[str | None] = mapped_column(String(32), default=None)
+    ocr_status: Mapped[str | None] = mapped_column(String(32), default=None)
+    ocr_duration_ms: Mapped[float | None] = mapped_column(Float, default=None)
+    ocr_error: Mapped[str | None] = mapped_column(String(255), default=None)
     # OCR cache: SHA-256 of the sorted (panel, sha256) image set at last OCR.
     # If the image set is unchanged on re-assess, the cached OcrLines are
     # rehydrated instead of re-running cloud OCR. None = never cached.
@@ -268,6 +272,11 @@ class ScanImage(Base):
     hamming_distance: Mapped[int | None] = mapped_column(Integer, default=None)
     analysis_file_path: Mapped[str | None] = mapped_column(String(512), default=None)
     rectified_file_path: Mapped[str | None] = mapped_column(String(512), default=None)
+    ocr_provider: Mapped[str | None] = mapped_column(String(32), default=None)
+    ocr_status: Mapped[str | None] = mapped_column(String(32), default=None)
+    ocr_error_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    ocr_duration_ms: Mapped[float | None] = mapped_column(Float, default=None)
+    ocr_attempts_json: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     scan: Mapped[Scan] = relationship(back_populates="images")

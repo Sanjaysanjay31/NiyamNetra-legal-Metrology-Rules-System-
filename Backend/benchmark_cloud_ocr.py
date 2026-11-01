@@ -25,7 +25,6 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 from config import settings
 from ocr import (
     AzureVisionProvider,
-    GoogleVisionProvider,
     OCRSpaceProvider,
     STATUS_SUCCESS,
     STATUS_UNAVAILABLE,
@@ -149,7 +148,6 @@ def run_benchmark():
 
     providers = {
         "OCR.Space": OCRSpaceProvider(),
-        "Google Cloud Vision": GoogleVisionProvider(),
         "Azure AI Vision": AzureVisionProvider(),
     }
 

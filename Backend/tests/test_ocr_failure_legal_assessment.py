@@ -306,7 +306,7 @@ def test_llm_factory_failed_ocr_handles_empty_cleanly():
     """When OCR input panels have provider failures, structure_inspection_ocr fails without hallucination."""
     failed_panel = OcrResult(
         lines=[],
-        engine="google_vision",
+        engine="ocr_space",
         status=STATUS_PROVIDER_ERROR,
         failure_reason="Google Vision 403 Forbidden",
         panel="front",

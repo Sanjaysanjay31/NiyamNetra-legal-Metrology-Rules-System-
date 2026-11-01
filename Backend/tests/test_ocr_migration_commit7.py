@@ -48,7 +48,6 @@ from models import ScanImage
 from ocr import (
     AzureVisionProvider,
     BaseOCRProvider,
-    GoogleVisionProvider,
     OCRSpaceProvider,
     OcrBlock,
     OcrLine,
@@ -96,8 +95,8 @@ def test_provider_abstraction():
 # 2. Configured Provider Selection
 # ---------------------------------------------------------------------------
 def test_provider_selection():
-    p_google = get_ocr_provider("google_vision")
-    assert isinstance(p_google, GoogleVisionProvider)
+    with pytest.raises(ValueError, match="Unsupported OCR provider 'google_vision'"):
+        get_ocr_provider("google_vision")
 
     p_ocrspace = get_ocr_provider("ocr_space")
     assert isinstance(p_ocrspace, OCRSpaceProvider)
@@ -114,11 +113,6 @@ def test_provider_selection():
 # 3. Missing Configuration Handling
 # ---------------------------------------------------------------------------
 def test_missing_configuration_handling():
-    p_goog = GoogleVisionProvider(api_key="")
-    res_goog = p_goog.recognize(b"image_bytes")
-    assert res_goog.status == STATUS_UNAVAILABLE
-    assert "not configured" in res_goog.failure_reason.lower()
-
     p_space = OCRSpaceProvider(api_key="")
     res_space = p_space.recognize(b"image_bytes")
     assert res_space.status == STATUS_UNAVAILABLE
@@ -136,12 +130,12 @@ def test_missing_configuration_handling():
 def test_successful_provider_response():
     sample_res = OcrResult(
         lines=[OcrLine(text="BASMATI RICE", confidence=0.95, box=[[10, 10], [100, 10], [100, 30], [10, 30]], height_px=20.0)],
-        engine="google_vision",
+        engine="ocr_space",
         status=STATUS_SUCCESS,
         mean_confidence=0.95,
     )
     assert sample_res.status == STATUS_SUCCESS
-    assert sample_res.engine == "google_vision"
+    assert sample_res.engine == "ocr_space"
     assert sample_res.mean_confidence == 0.95
 
 
@@ -149,76 +143,8 @@ def test_successful_provider_response():
 # 5. Google Cloud Vision Normalization
 # ---------------------------------------------------------------------------
 def test_google_vision_normalization():
-    p = GoogleVisionProvider(api_key="mock_key")
-    mock_payload = {
-        "responses": [
-            {
-                "fullTextAnnotation": {
-                    "text": "BASMATI RICE 1kg\nMRP Rs 120",
-                    "pages": [
-                        {
-                            "blocks": [
-                                {
-                                    "paragraphs": [
-                                        {
-                                            "words": [
-                                                {
-                                                    "confidence": 0.98,
-                                                    "symbols": [{"text": "B"}, {"text": "A"}, {"text": "S"}, {"text": "M"}, {"text": "A"}, {"text": "T"}, {"text": "I"}],
-                                                    "boundingBox": {"vertices": [{"x": 10, "y": 10}, {"x": 80, "y": 10}, {"x": 80, "y": 25}, {"x": 10, "y": 25}]},
-                                                },
-                                                {
-                                                    "confidence": 0.96,
-                                                    "symbols": [{"text": "R"}, {"text": "I"}, {"text": "C"}, {"text": "E"}],
-                                                    "boundingBox": {"vertices": [{"x": 85, "y": 10}, {"x": 130, "y": 10}, {"x": 130, "y": 25}, {"x": 85, "y": 25}]},
-                                                },
-                                                {
-                                                    "confidence": 0.94,
-                                                    "symbols": [{"text": "1"}, {"text": "k"}, {"text": "g"}],
-                                                    "boundingBox": {"vertices": [{"x": 135, "y": 10}, {"x": 170, "y": 10}, {"x": 170, "y": 25}, {"x": 135, "y": 25}]},
-                                                },
-                                            ]
-                                        },
-                                        {
-                                            "words": [
-                                                {
-                                                    "confidence": 0.92,
-                                                    "symbols": [{"text": "M"}, {"text": "R"}, {"text": "P"}],
-                                                    "boundingBox": {"vertices": [{"x": 10, "y": 35}, {"x": 50, "y": 35}, {"x": 50, "y": 50}, {"x": 10, "y": 50}]},
-                                                },
-                                                {
-                                                    "confidence": 0.90,
-                                                    "symbols": [{"text": "R"}, {"text": "s"}],
-                                                    "boundingBox": {"vertices": [{"x": 55, "y": 35}, {"x": 75, "y": 35}, {"x": 75, "y": 50}, {"x": 55, "y": 50}]},
-                                                },
-                                                {
-                                                    "confidence": 0.95,
-                                                    "symbols": [{"text": "1"}, {"text": "2"}, {"text": "0"}],
-                                                    "boundingBox": {"vertices": [{"x": 80, "y": 35}, {"x": 110, "y": 35}, {"x": 110, "y": 50}, {"x": 80, "y": 50}]},
-                                                },
-                                            ]
-                                        },
-                                    ]
-                                }
-                            ]
-                        }
-                    ],
-                }
-            }
-        ]
-    }
-    res = p._normalize_response(mock_payload, image_width=800, image_height=600, duration_ms=125.0)
-    assert res.status == STATUS_SUCCESS
-    assert res.engine == "google_vision"
-    assert len(res.lines) == 2
-    assert res.lines[0].text == "BASMATI RICE 1kg"
-    assert res.lines[1].text == "MRP Rs 120"
-    assert res.lines[0].confidence is not None
-    assert res.lines[0].height_px == 15.0
-    assert len(res.lines[0].words) == 3
-    assert res.source_width == 800
-    assert res.source_height == 600
-
+    with pytest.raises(ValueError, match="Unsupported OCR provider 'google_vision'"):
+        get_ocr_provider("google_vision")
 
 # ---------------------------------------------------------------------------
 # 6. OCR.Space Normalization
@@ -294,34 +220,23 @@ def test_azure_vision_normalization():
 # 8. Bounding Box Geometry Preservation
 # ---------------------------------------------------------------------------
 def test_bounding_box_geometry_preservation():
-    p = GoogleVisionProvider(api_key="mock_key")
+    p = AzureVisionProvider(api_key="mock_key", endpoint="https://example.cognitiveservices.azure.com")
     mock_payload = {
-        "responses": [
-            {
-                "fullTextAnnotation": {
-                    "text": "EXPIRY 12/2026",
-                    "pages": [
+        "readResult": {
+            "blocks": [
+                {
+                    "lines": [
                         {
-                            "blocks": [
-                                {
-                                    "paragraphs": [
-                                        {
-                                            "words": [
-                                                {
-                                                    "confidence": 0.95,
-                                                    "symbols": [{"text": "E"}, {"text": "X"}, {"text": "P"}],
-                                                    "boundingBox": {"vertices": [{"x": 100, "y": 200}, {"x": 150, "y": 200}, {"x": 150, "y": 220}, {"x": 100, "y": 220}]},
-                                                }
-                                            ]
-                                        }
-                                    ]
-                                }
-                            ]
+                            "text": "EXPIRY 12/2026",
+                            "boundingPolygon": [{"x": 100, "y": 200}, {"x": 150, "y": 200}, {"x": 150, "y": 220}, {"x": 100, "y": 220}],
+                            "words": [
+                                {"text": "EXPIRY", "confidence": 0.95, "boundingPolygon": [{"x": 100, "y": 200}, {"x": 130, "y": 200}, {"x": 130, "y": 220}, {"x": 100, "y": 220}]}
+                            ],
                         }
-                    ],
+                    ]
                 }
-            }
-        ]
+            ]
+        }
     }
     res = p._normalize_response(mock_payload, 1000, 1000, 10.0)
     line = res.lines[0]
@@ -366,15 +281,10 @@ def test_orientation_metadata():
 # 12. Malformed Provider Output Fails Safely
 # ---------------------------------------------------------------------------
 def test_malformed_provider_output_fails_safely():
-    p = GoogleVisionProvider(api_key="key")
+    p_azure = AzureVisionProvider(api_key="key", endpoint="https://example.cognitiveservices.azure.com")
     # Empty dictionary
-    res_empty = p._normalize_response({}, None, None, 1.0)
+    res_empty = p_azure._normalize_response({}, None, None, 1.0)
     assert res_empty.status in (STATUS_NO_TEXT, STATUS_PROVIDER_ERROR)
-
-    # API error response
-    res_err = p._normalize_response({"responses": [{"error": {"message": "Invalid argument"}}]}, None, None, 1.0)
-    assert res_err.status == STATUS_PROVIDER_ERROR
-    assert "Invalid argument" in res_err.failure_reason
 
     # OCR.space processing error
     p_space = OCRSpaceProvider(api_key="key")
@@ -388,7 +298,7 @@ def test_malformed_provider_output_fails_safely():
 def test_http_timeout_handling():
     import httpx
 
-    p = GoogleVisionProvider(api_key="key")
+    p = OCRSpaceProvider(api_key="key")
     with patch("httpx.post", side_effect=httpx.TimeoutException("Read timed out")):
         res = p.recognize(b"bytes")
         assert res.status == STATUS_TIMEOUT
@@ -406,7 +316,7 @@ def test_http_429_rate_limited():
     mock_resp.json.return_value = {"error": {"message": "Quota exceeded"}}
     exc = httpx.HTTPStatusError("Rate limited", request=MagicMock(), response=mock_resp)
 
-    p = GoogleVisionProvider(api_key="key")
+    p = OCRSpaceProvider(api_key="key")
     with patch("httpx.post", side_effect=exc):
         res = p.recognize(b"bytes")
         assert res.status == STATUS_RATE_LIMITED
@@ -439,7 +349,7 @@ def test_http_auth_failure():
     mock_resp.json.return_value = {"error": {"message": "API key invalid"}}
     exc = httpx.HTTPStatusError("Unauthorized", request=MagicMock(), response=mock_resp)
 
-    p = GoogleVisionProvider(api_key="invalid_key")
+    p = OCRSpaceProvider(api_key="invalid_key")
     with patch("httpx.post", side_effect=exc):
         res = p.recognize(b"bytes")
         assert res.status == STATUS_AUTH_ERROR
@@ -449,8 +359,8 @@ def test_http_auth_failure():
 # 17. No Text Detected Handling
 # ---------------------------------------------------------------------------
 def test_no_text_detected():
-    p = GoogleVisionProvider(api_key="key")
-    res = p._normalize_response({"responses": [{}]}, 800, 600, 10.0)
+    p = OCRSpaceProvider(api_key="key")
+    res = p._normalize_response({"ParsedResults": [{"ParsedText": ""}]}, 800, 600, 10.0)
     assert res.status == STATUS_NO_TEXT
     assert len(res.lines) == 0
 
@@ -555,11 +465,11 @@ def test_missing_derived_artifact_fails_safely():
 # 23. Multiple Panels Remain Isolated With Full Provenance
 # ---------------------------------------------------------------------------
 def test_multi_panel_provenance_isolation():
-    p = GoogleVisionProvider(api_key="mock_key")
+    p = OCRSpaceProvider(api_key="mock_key")
     with patch.object(p, "recognize") as mock_rec:
         mock_rec.side_effect = lambda *a, **kw: OcrResult(
             lines=[OcrLine(text="PANEL TEXT", confidence=0.9)],
-            engine="google_vision",
+            engine="ocr_space",
             status=STATUS_SUCCESS,
         )
         with patch("ocr_engine.get_ocr_provider", return_value=p):
@@ -580,7 +490,7 @@ def test_ocr_cache_compatibility():
         OcrLine(text="MRP Rs 50.00", confidence=0.96, box=[[10.0, 10.0], [50.0, 10.0], [50.0, 20.0], [10.0, 20.0]], height_px=10.0),
         OcrLine(text="NET QTY 500 g", confidence=None, box=[[10.0, 25.0], [60.0, 25.0], [60.0, 35.0], [10.0, 35.0]], height_px=10.0),
     ]
-    orig_ocr = OcrResult(lines=lines, engine="google_vision", mean_confidence=0.96)
+    orig_ocr = OcrResult(lines=lines, engine="ocr_space", mean_confidence=0.96)
     cached_blob = _lines_to_cache(orig_ocr)
     assert cached_blob is not None
 
@@ -604,7 +514,7 @@ def test_extract_fields_compatibility():
         OcrLine(text="MANUFACTURED BY ABC FOODS LTD", confidence=0.94),
         OcrLine(text="CUSTOMER CARE: care@abcfoods.com", confidence=0.91),
     ]
-    ocr = OcrResult(lines=lines, engine="google_vision", mean_confidence=0.92)
+    ocr = OcrResult(lines=lines, engine="ocr_space", mean_confidence=0.92)
     fields = extract_fields(ocr)
 
     assert "mrp" in fields
@@ -621,7 +531,7 @@ def test_extract_fields_compatibility():
 # ---------------------------------------------------------------------------
 def test_frontend_status_contract():
     # Success
-    res = OcrResult(lines=[OcrLine(text="OK")], engine="google_vision", status=STATUS_SUCCESS)
+    res = OcrResult(lines=[OcrLine(text="OK")], engine="ocr_space", status=STATUS_SUCCESS)
     assert res.status == STATUS_SUCCESS
     assert res.engine != "none"
 
@@ -637,7 +547,7 @@ def test_frontend_status_contract():
 def test_offline_request_handling():
     import httpx
 
-    p = GoogleVisionProvider(api_key="key")
+    p = OCRSpaceProvider(api_key="key")
     with patch("httpx.post", side_effect=httpx.ConnectError("Network unreachable")):
         res = p.recognize(b"bytes")
         assert res.status == STATUS_PROVIDER_ERROR

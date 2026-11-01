@@ -23,6 +23,44 @@ STATUS_INVALID_RESPONSE = "OCR_INVALID_RESPONSE"
 STATUS_NO_TEXT = "OCR_NO_TEXT"
 STATUS_UNAVAILABLE = "OCR_UNAVAILABLE"
 STATUS_SKIPPED = "OCR_SKIPPED"
+STATUS_CONFIGURATION_ERROR = "OCR_CONFIGURATION_ERROR"
+STATUS_NETWORK_ERROR = "OCR_NETWORK_ERROR"
+
+
+def normalize_ocr_status(status: str | None, failure_reason: str | None = None) -> str:
+    """Normalize internal OCR status to canonical diagnostic vocabulary."""
+    if not status:
+        return "unknown"
+    s = str(status).strip()
+    if s in (STATUS_SUCCESS, "success", "SUCCESS"):
+        return "success"
+    if s in (STATUS_NO_TEXT, "no_text", "NO_TEXT"):
+        return "no_text"
+    if s in (STATUS_AUTH_ERROR, "auth_error", "authentication_error", "AUTH_ERROR"):
+        return "authentication_error"
+    if s in (STATUS_BILLING_ERROR, "billing_error", "BILLING_ERROR"):
+        return "billing_error"
+    if s in (STATUS_TIMEOUT, "timeout", "TIMEOUT"):
+        return "timeout"
+    if s in (STATUS_RATE_LIMITED, "rate_limited", "RATE_LIMITED"):
+        return "rate_limited"
+    if s in (STATUS_NETWORK_ERROR, "network_error", "NETWORK_ERROR"):
+        return "network_error"
+    if s in (STATUS_CONFIGURATION_ERROR, STATUS_UNAVAILABLE, STATUS_SKIPPED, "configuration_error", "unconfigured"):
+        return "configuration_error"
+    if failure_reason:
+        r_lower = failure_reason.lower()
+        if any(w in r_lower for w in ("apikey", "api key", "unauthorized", "invalid key", "auth")):
+            return "authentication_error"
+        if any(w in r_lower for w in ("billing", "billable", "quota", "credit")):
+            return "billing_error"
+        if any(w in r_lower for w in ("network", "connection", "connect")):
+            return "network_error"
+        if "timeout" in r_lower:
+            return "timeout"
+    if s in (STATUS_PROVIDER_ERROR, STATUS_INVALID_RESPONSE, STATUS_INPUT_UNAVAILABLE, "provider_error"):
+        return "provider_error"
+    return "provider_error"
 
 
 @dataclass(slots=True)

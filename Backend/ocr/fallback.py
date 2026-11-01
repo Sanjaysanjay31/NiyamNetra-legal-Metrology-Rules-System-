@@ -2,14 +2,16 @@
 
 Features:
 - Dynamically iterates over configured, supported OCR providers.
+- Primary OCR.space -> Secondary Azure AI Vision fallback.
 - Bounded retries and deliberate handling of rate limits and transient errors.
-- Automatically falls back on HTTP 403 (e.g. billing disabled), 401, 429, 5xx,
-  timeouts, and connection errors.
+- Automatically falls back on HTTP 403 (billing/auth), 401, 429, 5xx, timeouts,
+  network errors, and STATUS_NO_TEXT.
 - Skips unconfigured providers safely without attempting API calls.
 - Returns real extracted text, provider identity, duration, and status from
   the succeeding fallback provider.
 - If all providers fail, returns an explicit structured failure (never masks
-  as a silent success).
+  as a silent success or no-text).
+- If no providers are configured, returns explicit configuration_error.
 - Collects a safe diagnostic trace with zero credential leakage.
 """
 from __future__ import annotations
@@ -23,7 +25,9 @@ from ocr.base import (
     OcrResult,
     STATUS_AUTH_ERROR,
     STATUS_BILLING_ERROR,
+    STATUS_CONFIGURATION_ERROR,
     STATUS_INVALID_RESPONSE,
+    STATUS_NETWORK_ERROR,
     STATUS_NO_TEXT,
     STATUS_PROVIDER_ERROR,
     STATUS_RATE_LIMITED,
@@ -45,13 +49,15 @@ FALLBACK_TRIGGER_STATUSES = {
     STATUS_PROVIDER_ERROR,    # HTTP 5xx, connection drop, server crash
     STATUS_INVALID_RESPONSE,  # Corrupted or unexpected API response
     STATUS_UNAVAILABLE,       # Provider unreachable or unconfigured
+    STATUS_NETWORK_ERROR,     # Connection dropped / DNS resolution failure
+    STATUS_CONFIGURATION_ERROR, # Missing credentials or invalid config
 }
 
 
 def _status_to_category(status: str, failure_reason: str | None = None) -> str:
     categories = {
         STATUS_SUCCESS: "success",
-        STATUS_AUTH_ERROR: "auth_error",
+        STATUS_AUTH_ERROR: "authentication_error",
         STATUS_BILLING_ERROR: "billing_error",
         STATUS_TIMEOUT: "timeout",
         STATUS_RATE_LIMITED: "rate_limited",
@@ -60,15 +66,21 @@ def _status_to_category(status: str, failure_reason: str | None = None) -> str:
         STATUS_NO_TEXT: "no_text",
         STATUS_UNAVAILABLE: "unavailable",
         STATUS_SKIPPED: "skipped_unconfigured",
+        STATUS_CONFIGURATION_ERROR: "configuration_error",
+        STATUS_NETWORK_ERROR: "network_error",
     }
     if status in categories:
         return categories[status]
     if failure_reason:
         r_lower = failure_reason.lower()
+        if any(w in r_lower for w in ("apikey", "api key", "unauthorized", "invalid key", "auth")):
+            return "authentication_error"
         if any(w in r_lower for w in ("billing", "billable", "quota", "credit")):
             return "billing_error"
         if any(w in r_lower for w in ("network", "connection", "connect")):
             return "network_error"
+        if "timeout" in r_lower:
+            return "timeout"
     return "unknown"
 
 
@@ -109,11 +121,13 @@ class FallbackOCRProvider(BaseOCRProvider):
             return OcrResult(
                 engine="none",
                 provider="none",
-                status=STATUS_UNAVAILABLE,
+                status=STATUS_CONFIGURATION_ERROR,
                 failure_reason="No OCR providers configured or available in candidate chain.",
                 duration_ms=round((time.perf_counter() - t0_total) * 1000, 2),
                 attempts=attempts,
             )
+
+        last_no_text_result: OcrResult | None = None
 
         for candidate in candidates:
             # 1. Skip if unconfigured or unsupported
@@ -162,7 +176,7 @@ class FallbackOCRProvider(BaseOCRProvider):
             }
             attempts.append(attempt_entry)
 
-            # 3. Success check
+            # 3. Success check — Return immediately without calling subsequent providers
             if result.status == STATUS_SUCCESS:
                 try:
                     from ocr.diagnostics import record_provider_success
@@ -180,21 +194,20 @@ class FallbackOCRProvider(BaseOCRProvider):
                 )
                 return result
 
-            # 4. Valid no-text check
+            # 4. Valid no-text check — Attempt Azure fallback if configured (Case 2)
             if result.status == STATUS_NO_TEXT:
                 try:
                     from ocr.diagnostics import record_provider_success
                     record_provider_success(candidate.name, result.duration_ms, 0)
                 except Exception:
                     pass
-                result.attempts = attempts
-                result.duration_ms = round((time.perf_counter() - t0_total) * 1000, 2)
+                last_no_text_result = result
                 logger.info(
-                    "[OCR] Provider '%s' completed with NO_TEXT (duration=%.2fms)",
+                    "[OCR] Provider '%s' completed with NO_TEXT (duration=%.2fms). Attempting fallback if next provider configured...",
                     candidate.name,
                     result.duration_ms,
                 )
-                return result
+                continue
 
             # Record failure in telemetry
             try:
@@ -204,7 +217,7 @@ class FallbackOCRProvider(BaseOCRProvider):
             except Exception:
                 pass
 
-            # 5. Runtime failure eligible for fallback
+            # 5. Runtime failure eligible for fallback (Case 3 & Case 4)
             if result.status in FALLBACK_TRIGGER_STATUSES:
                 logger.warning(
                     "[OCR] Provider '%s' failed (status=%s, reason=%s). Falling back to next candidate...",
@@ -221,23 +234,44 @@ class FallbackOCRProvider(BaseOCRProvider):
         total_dur = round((time.perf_counter() - t0_total) * 1000, 2)
         invoked_attempts = [a for a in attempts if a["category"] != "skipped_unconfigured"]
 
+        # Case 7: No providers were configured
         if not invoked_attempts:
-            overall_status = STATUS_UNAVAILABLE
+            overall_status = STATUS_CONFIGURATION_ERROR
             failure_summary = "All OCR providers skipped: no configured credentials found."
+            return OcrResult(
+                lines=[],
+                engine="none",
+                provider="none",
+                status=overall_status,
+                failure_reason=failure_summary,
+                duration_ms=total_dur,
+                attempts=attempts,
+            )
+
+        # Case 5: At least one provider returned valid NO_TEXT and no subsequent provider succeeded
+        if last_no_text_result is not None:
+            last_no_text_result.attempts = attempts
+            last_no_text_result.duration_ms = total_dur
+            return last_no_text_result
+
+        # Case 6: All configured providers failed technically
+        summary_parts = [
+            f"{a['provider']} ({a['status']}: {a.get('failure_reason') or 'failed'})"
+            for a in invoked_attempts
+        ]
+        failure_summary = f"All OCR providers failed: {'; '.join(summary_parts)}"
+        if any(a["status"] == STATUS_AUTH_ERROR for a in invoked_attempts):
+            overall_status = STATUS_AUTH_ERROR
+        elif any(a["status"] == STATUS_BILLING_ERROR for a in invoked_attempts):
+            overall_status = STATUS_BILLING_ERROR
+        elif any(a["status"] == STATUS_TIMEOUT for a in invoked_attempts):
+            overall_status = STATUS_TIMEOUT
+        elif any(a["status"] == STATUS_RATE_LIMITED for a in invoked_attempts):
+            overall_status = STATUS_RATE_LIMITED
+        elif any(a["status"] == STATUS_NETWORK_ERROR for a in invoked_attempts):
+            overall_status = STATUS_NETWORK_ERROR
         else:
-            summary_parts = [
-                f"{a['provider']} ({a['status']}: {a.get('failure_reason') or 'failed'})"
-                for a in invoked_attempts
-            ]
-            failure_summary = f"All OCR providers failed: {'; '.join(summary_parts)}"
-            if any(a["status"] in (STATUS_AUTH_ERROR, STATUS_BILLING_ERROR) for a in invoked_attempts):
-                overall_status = STATUS_AUTH_ERROR
-            elif any(a["status"] == STATUS_TIMEOUT for a in invoked_attempts):
-                overall_status = STATUS_TIMEOUT
-            elif any(a["status"] == STATUS_RATE_LIMITED for a in invoked_attempts):
-                overall_status = STATUS_RATE_LIMITED
-            else:
-                overall_status = STATUS_PROVIDER_ERROR
+            overall_status = STATUS_PROVIDER_ERROR
 
         try:
             from ocr.diagnostics import record_provider_failure

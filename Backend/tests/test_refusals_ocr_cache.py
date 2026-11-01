@@ -240,7 +240,7 @@ def test_ocr_cache_skips_ocr(monkeypatch, tmp_path):
     cached_lines = [
         OcrLine(text="NET QTY 500 g", confidence=0.98, box=[[10.0, 10.0], [50.0, 10.0], [50.0, 20.0], [10.0, 20.0]], height_px=10.0)
     ]
-    cached_ocr = OcrResult(lines=cached_lines, engine="google_vision", mean_confidence=0.98, failure_reason=None)
+    cached_ocr = OcrResult(lines=cached_lines, engine="ocr_space", mean_confidence=0.98, failure_reason=None)
     cached_json = _lines_to_cache(cached_ocr)
 
     set_hash = hashlib.sha256(f"{_OCR_CACHE_SALT}|front:{img_sha}".encode()).hexdigest()

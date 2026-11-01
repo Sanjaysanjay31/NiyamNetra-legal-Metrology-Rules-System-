@@ -48,7 +48,6 @@ from ocr.diagnostics import (
 )
 from ocr.fallback import FallbackOCRProvider
 from ocr.factory import get_candidate_providers, get_ocr_provider
-from ocr.google_vision import GoogleVisionProvider
 from ocr.ocr_space import OCRSpaceProvider
 from ocr.security import sanitize_diagnostic_data, sanitize_sensitive_text
 
@@ -98,7 +97,6 @@ def client():
 # ---------------------------------------------------------------------------
 def test_health_response_when_required_provider_credentials_absent(client, monkeypatch):
     """When no provider credentials are configured, /health reports unconfigured without crashing."""
-    monkeypatch.setattr(settings, "GOOGLE_VISION_API_KEY", None)
     monkeypatch.setattr(settings, "OCR_SPACE_API_KEY", None)
     monkeypatch.setattr(settings, "AZURE_VISION_KEY", None)
     monkeypatch.setattr(settings, "OCR_PROVIDER", "auto")
@@ -123,7 +121,6 @@ def test_configured_provider_readiness_without_false_live_verification(client, m
     """When credentials are provided in settings, provider is ready but NOT falsely claimed as live verified."""
     dummy_key = "K81111111111111"
     monkeypatch.setattr(settings, "OCR_SPACE_API_KEY", dummy_key)
-    monkeypatch.setattr(settings, "GOOGLE_VISION_API_KEY", None)
     monkeypatch.setattr(settings, "AZURE_VISION_KEY", None)
     monkeypatch.setattr(settings, "OCR_PROVIDER", "auto")
 
@@ -164,41 +161,41 @@ def test_safe_diagnostic_behavior_after_successful_mocked_request(client, monkey
 # ---------------------------------------------------------------------------
 # Test 4: Google Vision authorization/billing failure followed by successful fallback
 # ---------------------------------------------------------------------------
-def test_google_vision_billing_failure_followed_by_successful_fallback():
-    """Google Vision fails with billing error; OCR.space fallback succeeds; telemetry records degraded state."""
-    p_google = MockTestProvider(
-        name="google_vision",
-        configured=True,
-        result=OcrResult(
-            engine="google_vision",
-            provider="google_vision",
-            status=STATUS_BILLING_ERROR,
-            failure_reason="Google Cloud Vision HTTP 403: Billing account not configured.",
-            duration_ms=90.0,
-        ),
-    )
+def test_ocr_space_billing_failure_followed_by_successful_fallback():
+    """OCR.space fails with billing error; Azure fallback succeeds; telemetry records degraded state."""
     p_ocrspace = MockTestProvider(
         name="ocr_space",
         configured=True,
         result=OcrResult(
-            lines=[OcrLine(text="NET QUANTITY 500g", confidence=None, box=[[0.0, 0.0]])],
             engine="ocr_space",
             provider="ocr_space",
+            status=STATUS_BILLING_ERROR,
+            failure_reason="OCR.space billing error.",
+            duration_ms=90.0,
+        ),
+    )
+    p_azure = MockTestProvider(
+        name="azure",
+        configured=True,
+        result=OcrResult(
+            lines=[OcrLine(text="NET QUANTITY 500g", confidence=None, box=[[0.0, 0.0]])],
+            engine="azure",
+            provider="azure",
             status=STATUS_SUCCESS,
             duration_ms=210.0,
         ),
     )
 
-    fallback = FallbackOCRProvider(candidates=[p_google, p_ocrspace])
+    fallback = FallbackOCRProvider(candidates=[p_ocrspace, p_azure])
     result = fallback.recognize(b"synthetic_packaging_image")
 
     assert result.status == STATUS_SUCCESS
-    assert result.provider == "ocr_space"
+    assert result.provider == "azure"
     assert len(result.attempts) == 2
-    assert result.attempts[0]["provider"] == "google_vision"
+    assert result.attempts[0]["provider"] == "ocr_space"
     assert result.attempts[0]["status"] == STATUS_BILLING_ERROR
     assert result.attempts[0]["category"] == "billing_error"
-    assert result.attempts[1]["provider"] == "ocr_space"
+    assert result.attempts[1]["provider"] == "azure"
     assert result.attempts[1]["status"] == STATUS_SUCCESS
 
     # Diagnostics show fallback occurred and state is degraded
@@ -213,32 +210,28 @@ def test_google_vision_billing_failure_followed_by_successful_fallback():
 # ---------------------------------------------------------------------------
 def test_missing_fallback_credentials_safe_skip():
     """Unconfigured fallback providers are skipped safely without network attempts or exceptions."""
-    p_google = MockTestProvider(
-        name="google_vision",
+    p_fail = MockTestProvider(
+        name="ocr_space",
         configured=True,
         result=OcrResult(
-            engine="google_vision",
-            provider="google_vision",
+            engine="ocr_space",
+            provider="ocr_space",
             status=STATUS_AUTH_ERROR,
-            failure_reason="Google Cloud Vision HTTP 401: Invalid API Key",
+            failure_reason="OCR.space HTTP 401: Invalid API Key",
             duration_ms=50.0,
         ),
     )
-    p_unconfigured_ocrspace = MockTestProvider(name="ocr_space", configured=False)
     p_unconfigured_azure = MockTestProvider(name="azure", configured=False)
 
-    fallback = FallbackOCRProvider(candidates=[p_google, p_unconfigured_ocrspace, p_unconfigured_azure])
+    fallback = FallbackOCRProvider(candidates=[p_fail, p_unconfigured_azure])
     result = fallback.recognize(b"synthetic_packaging_image")
 
-    assert p_google.call_count == 1
-    assert p_unconfigured_ocrspace.call_count == 0
+    assert p_fail.call_count == 1
     assert p_unconfigured_azure.call_count == 0
 
-    assert len(result.attempts) == 3
+    assert len(result.attempts) == 2
     assert result.attempts[1]["status"] == STATUS_SKIPPED
     assert result.attempts[1]["category"] == "skipped_unconfigured"
-    assert result.attempts[2]["status"] == STATUS_SKIPPED
-    assert result.attempts[2]["category"] == "skipped_unconfigured"
 
 
 # ---------------------------------------------------------------------------
@@ -295,11 +288,9 @@ def test_redaction_of_authorization_headers_and_tokens():
 def test_absence_of_secret_values_from_health_and_diagnostics(client, monkeypatch):
     """Neither /health nor OCR diagnostics ever leak configured secrets or keys."""
     test_key_ocr = "K84444444444444"
-    test_key_google = "AIzaSySecretGoogleKey9876543210"
     test_key_azure = "deadbeef01234567deadbeef01234567"
 
     monkeypatch.setattr(settings, "OCR_SPACE_API_KEY", test_key_ocr)
-    monkeypatch.setattr(settings, "GOOGLE_VISION_API_KEY", test_key_google)
     monkeypatch.setattr(settings, "AZURE_VISION_KEY", test_key_azure)
 
     # 1. Health endpoint
@@ -307,14 +298,12 @@ def test_absence_of_secret_values_from_health_and_diagnostics(client, monkeypatc
     assert h_resp.status_code == 200
     h_text = h_resp.text
     assert test_key_ocr not in h_text
-    assert test_key_google not in h_text
     assert test_key_azure not in h_text
 
     # 2. Diagnostics payload
     diag = get_ocr_health_diagnostics()
     diag_str = json.dumps(diag)
     assert test_key_ocr not in diag_str
-    assert test_key_google not in diag_str
     assert test_key_azure not in diag_str
 
     # 3. Provider error reporting
@@ -332,7 +321,6 @@ def test_distinction_between_missing_config_and_actual_provider_failure(monkeypa
     """System differentiates unconfigured from auth, rate-limited, timeout, network, and total failures."""
     # Case A: Missing configuration
     monkeypatch.setattr(settings, "OCR_SPACE_API_KEY", None)
-    monkeypatch.setattr(settings, "GOOGLE_VISION_API_KEY", None)
     monkeypatch.setattr(settings, "AZURE_VISION_KEY", None)
     reset_diagnostic_records()
     diag_unconfigured = get_ocr_health_diagnostics()
@@ -348,7 +336,7 @@ def test_distinction_between_missing_config_and_actual_provider_failure(monkeypa
 
     # Case C: Timeout failure
     reset_diagnostic_records()
-    record_provider_failure("google_vision", STATUS_TIMEOUT, "timeout", "Read timeout after 12s", 12000.0)
+    record_provider_failure("ocr_space", STATUS_TIMEOUT, "timeout", "Read timeout after 12s", 12000.0)
     diag_timeout = get_ocr_health_diagnostics()
     assert diag_timeout["readiness"] == "timeout"
     assert diag_timeout["verification_status"] == "timeout"
@@ -394,9 +382,9 @@ def test_correct_ocr_provider_auto_and_explicit_behavior(monkeypatch):
     prov_auto = get_ocr_provider()
     assert isinstance(prov_auto, FallbackOCRProvider)
 
-    # 2. google_vision explicit
-    prov_google = get_ocr_provider("google_vision")
-    assert isinstance(prov_google, GoogleVisionProvider)
+    # 2. google_vision explicit is rejected
+    with pytest.raises(ValueError, match="Unsupported OCR provider 'google_vision'"):
+        get_ocr_provider("google_vision")
 
     # 3. ocr_space explicit
     prov_ocrspace = get_ocr_provider("ocr_space")
@@ -413,21 +401,21 @@ def test_correct_ocr_provider_auto_and_explicit_behavior(monkeypatch):
 def test_continued_operation_of_fallback_and_legal_safety():
     """OCR failure must never be recorded as a confirmed legal violation or empty success."""
     p_fail1 = MockTestProvider(
-        name="google_vision",
-        configured=True,
-        result=OcrResult(
-            engine="google_vision",
-            provider="google_vision",
-            status=STATUS_TIMEOUT,
-            failure_reason="Connection timed out",
-        ),
-    )
-    p_fail2 = MockTestProvider(
         name="ocr_space",
         configured=True,
         result=OcrResult(
             engine="ocr_space",
             provider="ocr_space",
+            status=STATUS_TIMEOUT,
+            failure_reason="Connection timed out",
+        ),
+    )
+    p_fail2 = MockTestProvider(
+        name="azure",
+        configured=True,
+        result=OcrResult(
+            engine="azure",
+            provider="azure",
             status=STATUS_AUTH_ERROR,
             failure_reason="Invalid credentials",
         ),

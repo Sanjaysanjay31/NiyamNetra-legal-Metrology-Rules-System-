@@ -117,7 +117,7 @@ def test_successful_ocr_response_reporting(dummy_image_file):
         mean_confidence=0.95,
         duration_ms=450.0,
         attempts=[
-            {"provider": "google_vision", "status": STATUS_SKIPPED, "category": "skipped_unconfigured", "duration_ms": 0.0},
+            {"provider": "azure", "status": STATUS_SKIPPED, "category": "skipped_unconfigured", "duration_ms": 0.0},
             {"provider": "ocr_space", "status": STATUS_SUCCESS, "category": "success", "duration_ms": 450.0},
         ],
     )
@@ -175,12 +175,12 @@ def test_all_providers_failure_reporting(dummy_image_file):
         provider="none",
         engine="none",
         status=STATUS_PROVIDER_ERROR,
-        failure_reason="All OCR providers failed: google_vision (timeout); ocr_space (rate limited)",
+        failure_reason="All OCR providers failed: ocr_space (timeout); azure (rate limited)",
         lines=[],
         duration_ms=800.0,
         attempts=[
-            {"provider": "google_vision", "status": "OCR_TIMEOUT", "category": "timeout", "duration_ms": 500.0, "failure_reason": "Timeout"},
-            {"provider": "ocr_space", "status": "OCR_RATE_LIMITED", "category": "rate_limited", "duration_ms": 300.0, "failure_reason": "Rate limited"},
+            {"provider": "ocr_space", "status": "OCR_TIMEOUT", "category": "timeout", "duration_ms": 500.0, "failure_reason": "Timeout"},
+            {"provider": "azure", "status": "OCR_RATE_LIMITED", "category": "rate_limited", "duration_ms": 300.0, "failure_reason": "Rate limited"},
         ],
     )
     mock_provider.recognize.return_value = mock_result

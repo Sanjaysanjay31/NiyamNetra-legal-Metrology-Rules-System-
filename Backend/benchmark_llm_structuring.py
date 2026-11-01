@@ -63,7 +63,7 @@ def build_benchmark_dataset() -> list[dict[str, Any]]:
         "description": "Standard packaged wheat flour with all mandatory declarations clearly printed",
         "panels": [
             OcrResult(
-                engine="google_vision",
+                engine="ocr_space",
                 panel="front",
                 image_id=101,
                 scan_id=5001,
@@ -127,7 +127,7 @@ def build_benchmark_dataset() -> list[dict[str, Any]]:
         "description": "Text broken into single-word tokens due to camera angle or bounding split",
         "panels": [
             OcrResult(
-                engine="google_vision",
+                engine="ocr_space",
                 panel="back",
                 image_id=103,
                 scan_id=5003,
@@ -155,7 +155,7 @@ def build_benchmark_dataset() -> list[dict[str, Any]]:
         "description": "Inspection contains multiple distinct dates that must not be conflated",
         "panels": [
             OcrResult(
-                engine="google_vision",
+                engine="ocr_space",
                 panel="batch",
                 image_id=104,
                 scan_id=5004,
@@ -181,7 +181,7 @@ def build_benchmark_dataset() -> list[dict[str, Any]]:
         "description": "OCR contains MRP, discount price, and unit sale price (USP)",
         "panels": [
             OcrResult(
-                engine="google_vision",
+                engine="ocr_space",
                 panel="front",
                 image_id=105,
                 scan_id=5005,
@@ -206,7 +206,7 @@ def build_benchmark_dataset() -> list[dict[str, Any]]:
         "description": "Dense back panel with manufacturer, packer, marketer, and multiple addresses",
         "panels": [
             OcrResult(
-                engine="google_vision",
+                engine="ocr_space",
                 panel="back",
                 image_id=106,
                 scan_id=5006,
@@ -255,7 +255,7 @@ def build_benchmark_dataset() -> list[dict[str, Any]]:
         "description": "Package has ONLY net quantity; MRP, manufacturer, dates MUST be null/not_observed",
         "panels": [
             OcrResult(
-                engine="google_vision",
+                engine="ocr_space",
                 panel="front",
                 image_id=108,
                 scan_id=5008,
@@ -298,7 +298,7 @@ def build_benchmark_dataset() -> list[dict[str, Any]]:
         "description": "Date digits appear with no Mfg or Expiry label; model must classify as unknown/ambiguous",
         "panels": [
             OcrResult(
-                engine="google_vision",
+                engine="ocr_space",
                 panel="batch",
                 image_id=110,
                 scan_id=5010,
@@ -319,7 +319,7 @@ def build_benchmark_dataset() -> list[dict[str, Any]]:
         "description": "Dual language packaging declarations in Hindi and English",
         "panels": [
             OcrResult(
-                engine="google_vision",
+                engine="ocr_space",
                 panel="front",
                 image_id=111,
                 scan_id=5011,

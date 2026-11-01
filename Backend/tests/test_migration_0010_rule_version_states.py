@@ -43,7 +43,7 @@ def test_fresh_database_full_migration_chain(tmp_path):
     cfg = _get_alembic_config(db_url)
 
     # Run upgrade to head
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "0010")
 
     eng = create_engine(db_url)
     inspector = sa.inspect(eng)
@@ -187,7 +187,7 @@ def test_admin_rule_version_endpoints_operate_without_runtime_ddl(tmp_path):
     db_file = tmp_path / "admin_test.db"
     db_url = f"sqlite:///{db_file}"
     cfg = _get_alembic_config(db_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "0010")
 
     eng = create_engine(db_url, connect_args={"check_same_thread": False})
     Session = sessionmaker(bind=eng)

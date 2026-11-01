@@ -137,53 +137,27 @@ class Settings(BaseSettings):
     DASHBOARD_CACHE_TTL_SECONDS: int = 60  # never applied to the review-queue badge
 
     # --- OCR ---
-    # Render free tier has 512MB RAM; PaddleOCR needs ~1.5GB, Tesseract needs
-    # apt binaries absent from the native Python runtime. So the deploy-safe
-    # path is CLOUD OCR (zero RAM, only httpx): Google Vision (best accuracy,
-    # Hindi + small fonts) first, OCR.space (free, no card) second, then local
-    # Tesseract/Paddle only when present. See ocr_engine.run_ocr cascade.
-    OCR_PROVIDER: str = "auto"  # auto | google | ocrspace | azure
-    OCR_PROVIDER_ORDER: str = "google_vision,ocr_space,azure"
-    OCR_PROVIDER_CHAIN: str = "google_vision,ocr_space,azure"
+    # Approved Cloud OCR hierarchy:
+    # 1. OCR.space (Primary: lightweight, fast REST API)
+    # 2. Azure AI Vision (Secondary fallback: high-precision polygon bounding boxes)
+    # Google Cloud Vision is completely removed.
+    OCR_PROVIDER: str = "auto"  # auto | ocrspace | azure
+    OCR_PROVIDER_ORDER: str = "ocr_space,azure"
+    OCR_PROVIDER_CHAIN: str = "ocr_space,azure"
     OCR_LANGS: str = "en,hi"
     OCR_MIN_CONFIDENCE: float = 0.60
     TESSERACT_CMD: str | None = None
     DISABLE_PADDLE: bool = False  # set 1 on 512MB deploys to skip import attempt
-    # PaddleOCR recognition language (2.8 has no Devanagari model, so Hindi is
-    # covered by Tesseract eng+hin and Vision en+hi; override if yours does).
     OCR_PADDLE_LANG: str = "en"
 
-    # Cloud OCR fallback (OCR.space). When BOTH PaddleOCR and Tesseract are
-    # absent — exactly the slim Render deploy — run_ocr falls back to this HTTPS
-    # API so a scan still gets real text (and therefore a real verdict) instead
-    # of not_assessed. It needs no heavy packages: only httpx + opencv, both
-    # already in requirements-render.txt. Leave the key empty to disable, and
-    # the chain ends at engine="none" exactly as before.
-    #
-    # Privacy note: enabling this sends the label image to a third party. Fine
-    # for a demo; weigh it for anything handling real inspection evidence.
+    # Cloud OCR primary (OCR.space).
     OCR_SPACE_API_KEY: str | None = None
     OCR_SPACE_URL: str = "https://api.ocr.space/parse/image"
-    OCR_SPACE_ENGINE: int = 1              # engine 1 returns word boxes (needed
-                                           # for letter-height checks) and supports
-                                           # non-Latin langs; 2 is Latin-only, no overlay.
+    OCR_SPACE_ENGINE: int = 1              # engine 1 returns word boxes and non-Latin langs
     OCR_SPACE_LANGUAGE: str = "eng"        # OCR.space code, e.g. "eng" or "hin".
     OCR_SPACE_TIMEOUT_S: float = 12.0
-    # Best-accuracy cloud OCR: Google Cloud Vision DOCUMENT_TEXT_DETECTION.
-    # Needs only httpx (already in requirements-render.txt), ~0MB RAM.
-    # Get key: console.cloud.google.com → enable Vision API → create API key.
-    # When set, it runs BEFORE OCR.space (higher accuracy on small/Hindi text).
-    # Leave blank to use OCR.space only. See .env.example.
-    GOOGLE_VISION_API_KEY: str | None = None
-    GOOGLE_VISION_URL: str = "https://vision.googleapis.com/v1/images:annotate"
-    GOOGLE_VISION_TIMEOUT_S: float = 10.0
 
     # Free Generative AI Vision OCR: Google Gemini Flash (Google AI Studio).
-    # 100% FREE, NO credit card or billing required (aistudio.google.com/app/apikey).
-    # Single-model call, short 8s timeout so a slow/erroring Gemini never stalls
-    # the cascade. Auto order: Google Vision (real word boxes) -> Gemini -> Groq
-    # -> OCR.space -> Tesseract -> Paddle, so letter-height/clear-space checks get
-    # genuine per-line geometry from the first engine that supplies it.
     GEMINI_API_KEY: str | None = None
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"
     GEMINI_TIMEOUT_S: float = 8.0

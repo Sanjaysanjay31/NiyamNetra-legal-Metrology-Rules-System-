@@ -85,7 +85,7 @@ from rules_engine import CheckContext, run_checks
 @pytest.fixture
 def clean_ocr_result() -> OcrResult:
     return OcrResult(
-        engine="google_vision",
+        engine="ocr_space",
         panel="front",
         image_id=101,
         scan_id=901,
@@ -168,7 +168,7 @@ def test_strict_schema_validation():
 def test_missing_declarations_null_correctness():
     # Only Net Quantity is present in OCR
     ocr = OcrResult(
-        engine="google_vision",
+        engine="ocr_space",
         panel="front",
         lines=[OcrLine(text="NET WEIGHT: 500 g", confidence=0.95)],
     )
@@ -248,7 +248,7 @@ def test_ambiguous_number_preserves_candidates():
 
 def test_ambiguous_isolated_date():
     ocr = OcrResult(
-        engine="google_vision",
+        engine="ocr_space",
         panel="batch",
         lines=[OcrLine(text="06/26", confidence=0.92)],
     )
@@ -430,7 +430,7 @@ def test_provider_transient_retry_recovers():
 
 def test_fallback_provider_triggered_on_primary_failure():
     ocr = OcrResult(
-        engine="google_vision",
+        engine="ocr_space",
         panel="front",
         lines=[OcrLine(text="NET WT 500 g", confidence=0.9)],
     )
@@ -477,7 +477,7 @@ def test_fallback_provider_triggered_on_primary_failure():
 
 def test_version_persistence_and_cache_correctness():
     ocr = OcrResult(
-        engine="google_vision",
+        engine="ocr_space",
         panel="front",
         lines=[OcrLine(text="BISCUITS 100g", confidence=0.95)],
     )
@@ -518,13 +518,13 @@ def test_version_persistence_and_cache_correctness():
 
 def test_multiple_panel_packaging():
     panel_front = OcrResult(
-        engine="google_vision",
+        engine="ocr_space",
         panel="front",
         image_id=1,
         lines=[OcrLine(text="BRAND FLOUR", confidence=0.98)],
     )
     panel_back = OcrResult(
-        engine="google_vision",
+        engine="ocr_space",
         panel="back",
         image_id=2,
         lines=[OcrLine(text="NET WEIGHT 1 kg", confidence=0.97)],
