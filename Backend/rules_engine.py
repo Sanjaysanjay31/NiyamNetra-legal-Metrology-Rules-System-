@@ -104,6 +104,7 @@ class CheckContext:
     image_usable: bool = True
     image_quality_reason: str | None = None
     panels_captured: set[str] = field(default_factory=set)
+    panels_missing: set[str] = field(default_factory=set)
 
     # --- listing, only when the scan came from a web listing ---
     listing_available: bool = False
@@ -218,6 +219,11 @@ def measurement_blocked(ctx: CheckContext) -> str | None:
     front_err = getattr(ctx, "panels_failed_ocr", {}).get("front") or getattr(ctx, "panels_failed_ocr", {}).get("principal")
     if front_err:
         return f"Principal display panel OCR failed: {front_err}"
+    if ctx.panels_captured and not ("front" in ctx.panels_captured or "principal" in ctx.panels_captured):
+        return (
+            "No front-panel image is available for this scan, so declarations on the "
+            "principal display panel cannot be read or measured."
+        )
     if not ctx.ocr_available:
         return "No text was recognised on the panel."
     if ctx.mm_per_pixel is None or ctx.scale_source == "none":
@@ -494,13 +500,17 @@ def chk01_declarations_present(ctx: CheckContext) -> FindingResult:
         )
         return t
 
-    missing, unreadable = [], []
+    from rules.evaluator import is_coverage_sufficient
+    missing, unreadable, insufficient = [], [], []
     for key, label, _prov, _limb in RULE_6_DECLARATIONS:
         f = ctx.fields.get(key)
         if key == "dimensions" and ctx.net_quantity_unit not in {"pcs", "pc", "m", "cm", "mm"}:
             continue        # 6(1)(g) is conditional on sale by number or length
         if f is None or not f.found:
-            missing.append(label)
+            if is_coverage_sufficient(ctx, key):
+                missing.append(label)
+            else:
+                insufficient.append(label)
         elif f.confidence is not None and f.confidence < settings.OCR_MIN_CONFIDENCE:
             unreadable.append(f"{label} (read at {f.confidence:.0%} confidence)")
 
@@ -508,17 +518,23 @@ def chk01_declarations_present(ctx: CheckContext) -> FindingResult:
         t.verdict = "fail"
         t.limb = "36(1)"
         t.observed = f"{len(missing)} declaration(s) absent: " + "; ".join(missing) + "."
-        t.required = "Every declaration in Rule 6(1) must appear on the principal display panel."
+        t.required = "Every declaration in Rule 6(1) must appear on the package."
         return t
-    if unreadable:
-        t.verdict, t.reason = "not_assessed", (
-            "All declarations appear present, but "
-            + "; ".join(unreadable)
-            + " fell below the confidence floor, so their content cannot be "
-              "certified from this capture."
-        )
+    if insufficient or unreadable:
+        t.verdict = "not_assessed"
+        reasons = []
+        if insufficient:
+            reasons.append(
+                f"Declarations ({'; '.join(insufficient)}) were not observed, but available panel "
+                f"coverage ({', '.join(sorted(ctx.panels_captured)) or 'none'}) is insufficient to establish absence."
+            )
+        if unreadable:
+            reasons.append(
+                f"Declarations ({'; '.join(unreadable)}) fell below the confidence floor, so their content cannot be certified from this capture."
+            )
+        t.reason = " ".join(reasons)
         return t
-    t.observed = "All applicable Rule 6(1) declarations located on the panel."
+    t.observed = "All applicable Rule 6(1) declarations located on the package."
     t.confidence = ctx.ocr_mean_confidence
     return t
 

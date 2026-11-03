@@ -378,7 +378,7 @@ const EVIDENCE_SLOTS = [
   { key: 'front', label: 'FRONT', match: (p) => p === 'front' },
   { key: 'back', label: 'BACK', match: (p) => p === 'back' },
   { key: 'mrp', label: 'MRP STICKER', match: (p) => p === 'mrp' || p === 'mrp_sticker' || p === 'mrp sticker' },
-  { key: 'barcode', label: 'BARCODE', match: (p) => p === 'barcode' },
+  { key: 'barcode', label: 'BARCODE / BATCH', match: (p) => p === 'barcode' || p === 'batch' },
 ]
 
 function EvidenceThumbnail({ url, alt, className = '' }) {

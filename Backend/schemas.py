@@ -264,6 +264,8 @@ class ScanOut(ORMModel):
     # Set by the router after model_validate (the ORM row has no `counts`
     # attribute); optional here so validation of the ORM object does not fail.
     counts: VerdictCounts | None = None
+    panels_captured: list[str] | None = None
+    panels_missing: list[str] | None = None
     findings: list[FindingOut]
     images: list[ScanImageOut]
     diagnostics: dict[str, Any] | None = None

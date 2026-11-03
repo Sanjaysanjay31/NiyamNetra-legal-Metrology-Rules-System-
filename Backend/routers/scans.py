@@ -482,6 +482,11 @@ def assess_scan(
     _logger = _log.getLogger("niyamnetra.assess")
 
     _imgs = db.query(ScanImage).filter(ScanImage.scan_id == scan.id).all()
+    if not _imgs:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot assess scan: no evidence images provided.",
+        )
     curr_fingerprint = compute_assessment_fingerprint(scan, _imgs)
 
     # Fast idempotency check before acquiring concurrency semaphore or waiting
@@ -648,6 +653,30 @@ def _assess_inner(scan: Scan, user: User, db: Session, force: bool = False, fing
 
     assess_log = _log.getLogger("niyamnetra.assess")
     _images = db.query(ScanImage).filter(ScanImage.scan_id == scan.id).all()
+    if not _images:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot assess scan: no evidence images provided.",
+        )
+
+    from pathlib import Path
+    import cv2
+    _decodable_imgs = []
+    for _im in _images:
+        if _im.panel not in ALLOWED_PANELS:
+            continue
+        _p = Path(_im.file_path) if _im.file_path else None
+        if _p and _p.exists() and _p.is_file():
+            _mat = cv2.imread(str(_p))
+            if _mat is not None and getattr(_mat, "shape", None) and len(_mat.shape) >= 2 and _mat.shape[0] > 0 and _mat.shape[1] > 0:
+                _decodable_imgs.append((_im, _mat))
+
+    if not _decodable_imgs:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot assess scan: all supplied evidence images are invalid, missing, undecodable, or belong to unsupported panels.",
+        )
+
     _images_count = len(_images)
     initial_img_parts = sorted(f"{getattr(im, 'id', 0)}:{im.panel}:{im.sha256}" for im in _images)
     if fingerprint is None:
@@ -802,10 +831,17 @@ def _scan_out(db: Session, scan: Scan) -> ScanOut:
         failed=sum(1 for r in rows if r.effective_verdict == "fail"),
         not_assessed=sum(1 for r in rows if r.effective_verdict == "not_assessed"),
     )
+    _supported_panels = ["front", "back", "mrp", "batch"]
+    _img_list = db.query(ScanImage).filter(ScanImage.scan_id == scan.id).all()
+    _captured_panels = sorted({im.panel for im in _img_list if im.panel})
+    _missing_panels = sorted([p for p in _supported_panels if p not in _captured_panels])
+
     out = ScanOut.model_validate(scan)
     out.counts = counts
     out.checks_total = counts.total
     out.checks_assessed = counts.passed + counts.failed
+    out.panels_captured = _captured_panels
+    out.panels_missing = _missing_panels
 
     if scan.checks_total != counts.total or scan.checks_assessed != (counts.passed + counts.failed):
         scan.checks_total = counts.total
@@ -892,6 +928,8 @@ def _scan_out(db: Session, scan: Scan) -> ScanOut:
         "evaluated_rule_count": out.checks_assessed,
         "manual_review_rules": 7,
         "rule_coverage_note": "26 catalog rules in 2026.09.v1; 19 executable algorithmic checks; 7 rules require manual review or specialized gazette schedules",
+        "panels_captured": _captured_panels,
+        "panels_missing": _missing_panels,
         "overall_result": scan.overall_result,
     }
     return out
@@ -1293,6 +1331,10 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     from rules_engine import CheckContext
 
     images = db.query(ScanImage).filter(ScanImage.scan_id == scan.id).all()
+    _panels_cap = {i.panel for i in images if i.panel}
+    _supp_panels = {"front", "back", "mrp", "batch"}
+    _panels_mis = {p for p in _supp_panels if p not in _panels_cap}
+
     ctx = CheckContext(
         transaction_type=inspection.transaction_type,
         commodity_generic=scan.commodity_generic,
@@ -1312,111 +1354,115 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         panel_diameter_mm=scan.panel_diameter_mm,
         total_surface_area_cm2=scan.total_surface_area_cm2,
         is_blown_moulded=scan.is_blown_moulded,
-        panels_captured={i.panel for i in images},
+        panels_captured=_panels_cap,
+        panels_missing=_panels_mis,
         rules_as_at=scan.rules_as_at or date.fromisoformat(settings.RULES_AS_AT),
     )
 
-    front = next((i for i in images if i.panel in ("front", "principal")), None)
-    if front is None or not Path(front.file_path).exists():
+    decodable_map = {}
+    for im in images:
+        p = Path(im.file_path) if im.file_path else None
+        if p and p.exists() and p.is_file():
+            mat = cv2.imread(str(p))
+            if mat is not None and getattr(mat, "shape", None) and len(mat.shape) >= 2 and mat.shape[0] > 0 and mat.shape[1] > 0:
+                decodable_map[im.id] = (im, mat)
+
+    if not decodable_map:
         ctx.image_usable = False
         ctx.image_quality_reason = (
-            "No front-panel image is available for this scan, so nothing on the "
-            "principal display panel can be read or measured."
+            "No valid, decodable evidence images are available for this scan."
         )
         return ctx
+
+    front_pair = next((pair for im_id, pair in decodable_map.items() if pair[0].panel in ("front", "principal")), None)
 
     import time
     t_disk_load_start = time.perf_counter()
-    bgr = cv2.imread(front.file_path)
-    t_disk_load_end = time.perf_counter()
-    if bgr is None:
-        # Missing/corrupt/purged file: mark unusable and return early instead
-        # of crashing on assess_quality / bgr.shape (would be a 500).
-        ctx.image_usable = False
-        ctx.image_quality_reason = (
-            "The front-panel image file is missing, corrupt, or was purged, "
-            "so nothing on the principal display panel can be read or measured."
+    t_disk_load_end = t_disk_load_start
+    t_quality_start = t_disk_load_start
+    t_quality_end = t_disk_load_start
+    t_quad_start = t_disk_load_start
+    t_quad_end = t_disk_load_start
+    t_rectify_start = t_disk_load_start
+    t_rectify_end = t_disk_load_start
+
+    scale = None
+    _measure = None
+    bgr = None
+
+    if front_pair is not None:
+        front, bgr = front_pair
+        ctx.pdp_detected = True
+        ctx.established_pdp_panel = front.panel
+
+        t_quality_start = time.perf_counter()
+        quality = assess_quality(bgr)
+        t_quality_end = time.perf_counter()
+        ctx.image_usable, ctx.image_quality_reason = quality.usable, quality.reason
+
+        _measure = bgr
+        _has_existing_rect = (
+            getattr(front, "rectified", False)
+            and getattr(front, "rectified_file_path", None)
+            and Path(front.rectified_file_path).exists()
         )
-        return ctx
-    t_quality_start = time.perf_counter()
-    quality = assess_quality(bgr)
-    t_quality_end = time.perf_counter()
-    ctx.image_usable, ctx.image_quality_reason = quality.usable, quality.reason
+        if _has_existing_rect:
+            _rect_cached = cv2.imread(front.rectified_file_path)
+            if _rect_cached is not None and getattr(_rect_cached, "shape", (0,))[0] > 0:
+                _measure = _rect_cached
+            else:
+                _has_existing_rect = False
 
-    # Rectification (Backend.md §image_processor): the stored file stays
-    # byte-exact — this is a derived MEASUREMENT copy only. When the panel
-    # quad is detected, the frame is warped onto a fronto-parallel plane so
-    # mm-per-pixel and letter heights are not read across a tilted surface
-    # (rectify used to be imported here and never called). Quality still
-    # describes the RAW capture — a warped copy would score its own blur —
-    # and when no quad is found or warping fails the raw frame is used
-    # exactly as before, so behaviour only changes when a usable quad exists.
-    _measure = bgr
-    t_quad_start = time.perf_counter()
-    t_quad_end = t_quad_start
-    t_rectify_start = t_quad_start
-    t_rectify_end = t_quad_start
-    _has_existing_rect = (
-        getattr(front, "rectified", False)
-        and getattr(front, "rectified_file_path", None)
-        and Path(front.rectified_file_path).exists()
-    )
-    if _has_existing_rect:
-        _rect_cached = cv2.imread(front.rectified_file_path)
-        if _rect_cached is not None and getattr(_rect_cached, "shape", (0,))[0] > 0:
-            _measure = _rect_cached
-            t_quad_end = time.perf_counter()
-            t_rectify_end = t_quad_end
-        else:
-            _has_existing_rect = False
-
-    if not _has_existing_rect:
-        try:
-            from image_processor import detect_candidate_quad, safe_rectify
-            _quad, _geom_meta = detect_candidate_quad(bgr)
-            t_quad_end = time.perf_counter()
-            if _quad is not None:
-                t_rectify_start = time.perf_counter()
-                _rect, _tilt, _rect_meta = safe_rectify(bgr, _quad)
-                t_rectify_end = time.perf_counter()
-                if _rect_meta.get("rectification_status") == "applied" and getattr(_rect, "shape", (0,))[0] > 0:
-                    _measure = _rect
-                    front.rectified = True
-                    front.residual_tilt_deg = _tilt
-                    try:
-                        from image_processor import prepare_derived_rectified_artifact
-                        r_path, r_w, r_h = prepare_derived_rectified_artifact(Path(front.file_path), _rect)
-                        front.rectified_file_path = str(r_path)
-                    except Exception:
-                        pass
+        if not _has_existing_rect:
+            try:
+                from image_processor import detect_candidate_quad, safe_rectify
+                t_quad_start = time.perf_counter()
+                _quad, _geom_meta = detect_candidate_quad(bgr)
+                t_quad_end = time.perf_counter()
+                if _quad is not None:
+                    t_rectify_start = time.perf_counter()
+                    _rect, _tilt, _rect_meta = safe_rectify(bgr, _quad)
+                    t_rectify_end = time.perf_counter()
+                    if _rect_meta.get("rectification_status") == "applied" and getattr(_rect, "shape", (0,))[0] > 0:
+                        _measure = _rect
+                        front.rectified = True
+                        front.residual_tilt_deg = _tilt
+                        try:
+                            from image_processor import prepare_derived_rectified_artifact
+                            r_path, r_w, r_h = prepare_derived_rectified_artifact(Path(front.file_path), _rect)
+                            front.rectified_file_path = str(r_path)
+                        except Exception:
+                            pass
+                    else:
+                        front.rectified = False
+                        front.residual_tilt_deg = _tilt if _tilt is not None else None
                 else:
                     front.rectified = False
-                    front.residual_tilt_deg = _tilt if _tilt is not None else None
-            else:
-                front.rectified = False
-                front.residual_tilt_deg = None
-        except Exception:
-            _measure = bgr
+                    front.residual_tilt_deg = None
+            except Exception:
+                _measure = bgr
 
-    shape = getattr(_measure, "shape", None)
-    if shape is None or len(shape) < 1:
-        ctx.image_usable = False
-        ctx.image_quality_reason = (
-            "The front-panel image could not be decoded, so nothing on the "
-            "principal display panel can be read or measured."
-        )
-        return ctx
-    scale = compute_scale(
-        panel_pixel_height=int(shape[0]),
-        declared_panel_height_mm=scan.panel_height_mm,
-        reference_pixel_size=getattr(scan, "reference_pixel_size", None),
-        reference=scan.scale_source or "declared",
-    )
-    ctx.mm_per_pixel = scale.mm_per_pixel
-    ctx.mm_per_pixel_uncertainty = scale.uncertainty
-    ctx.scale_source = scale.source
-    if scale.mm_per_pixel is None and ctx.image_quality_reason is None:
-        ctx.image_quality_reason = scale.reason
+        shape = getattr(_measure, "shape", None)
+        if shape is not None and len(shape) >= 1:
+            scale = compute_scale(
+                panel_pixel_height=int(shape[0]),
+                declared_panel_height_mm=scan.panel_height_mm,
+                reference_pixel_size=getattr(scan, "reference_pixel_size", None),
+                reference=scan.scale_source or "declared",
+            )
+            ctx.mm_per_pixel = scale.mm_per_pixel
+            ctx.mm_per_pixel_uncertainty = scale.uncertainty
+            ctx.scale_source = scale.source
+            if scale.mm_per_pixel is None and ctx.image_quality_reason is None:
+                ctx.image_quality_reason = scale.reason
+    else:
+        # Front/principal panel not captured: other panels are valid and decodable.
+        ctx.pdp_detected = False
+        ctx.established_pdp_panel = None
+        ctx.image_usable = True
+        ctx.image_quality_reason = None
+        ctx.mm_per_pixel = None
+        ctx.scale_source = "none"
 
     # Multi-panel OCR: run every stored panel concurrently, concat lines for field
     # extraction. Front-panel quality above still governs image_usable; OCR
@@ -1878,7 +1924,7 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     _TEXT_ONLY_OCR_ENGINES = {"gemini_vision", "groq_vision"}
     _has_real_geometry = ocr.engine not in _TEXT_ONLY_OCR_ENGINES
 
-    if scale.mm_per_pixel and _has_real_geometry:
+    if scale and scale.mm_per_pixel and _has_real_geometry:
         ctx.measured_heights_mm = {
             _label_for(line): line.height_px * scale.mm_per_pixel
             for line in ocr.lines
@@ -1921,7 +1967,7 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
                     below = [min([p[1] for p in l.box if len(p) >= 2])
                              for l in ocr.lines if l is not ref and l.box and len(l.box[0]) >= 2
                              and min([p[1] for p in l.box if len(p) >= 2]) > max(ry)]
-                    h, w = bgr.shape[:2]
+                    h, w = bgr.shape[:2] if bgr is not None else (0, 0)
                     cs: dict[str, float] = {}
                     if above:
                         cs["above"] = (min(ry) - max(above)) * scale.mm_per_pixel
@@ -1930,10 +1976,11 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
                     cs["left"] = min(rx) * scale.mm_per_pixel
                     cs["right"] = (w - max(rx)) * scale.mm_per_pixel
                     ctx.clear_space_mm = {k: max(0.0, float(v)) for k, v in cs.items()}
-            try:
-                ctx.contrast_ratio = estimate_contrast_ratio(bgr)
-            except Exception:
-                pass
+            if bgr is not None:
+                try:
+                    ctx.contrast_ratio = estimate_contrast_ratio(bgr)
+                except Exception:
+                    pass
         except Exception:
             pass
 

@@ -62,6 +62,7 @@ class EvidenceSummary:
     """Consolidated summary of evidence captured across panels."""
     total_panels_captured: int = 0
     panels_captured: list[str] = field(default_factory=list)
+    panels_missing: list[str] = field(default_factory=list)
     total_images: int = 0
     images_by_panel: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     pdp_established: bool = False
@@ -1193,9 +1194,11 @@ def aggregate_inspection_assessment(
                 "sha256": getattr(im, "sha256", None),
             })
 
+    _supported_panels = {'front', 'back', 'mrp', 'batch'}
     evidence_summary = EvidenceSummary(
         total_panels_captured=len(panels_set),
         panels_captured=sorted(list(panels_set)),
+        panels_missing=sorted(list(_supported_panels - panels_set)),
         total_images=len(images) if images else len(panels_set),
         images_by_panel=images_by_p,
         pdp_established=pdp_est,

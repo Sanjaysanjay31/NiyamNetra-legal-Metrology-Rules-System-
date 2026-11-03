@@ -71,10 +71,10 @@ import {
 /* The four panels the engine understands. `front` is the only one it insists on;
    the rest sharpen a reading without gating it. */
 const PANELS = [
-  { key: 'front', required: true },
+  { key: 'front', required: false },
   { key: 'back', required: false },
-  { key: 'principal', required: false },
-  { key: 'other', required: false },
+  { key: 'mrp', required: false },
+  { key: 'batch', required: false },
 ]
 
 /* PanelGeometry.scale_source, in the order the schema lists it. This is how the
@@ -306,7 +306,7 @@ export default function Capture() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const frontDone = panels.front?.status === 'done'
+  const hasCapturedPanel = PANELS.some((p) => panels[p.key]?.status === 'done')
   const anyUploading = PANELS.some((p) => panels[p.key]?.status === 'uploading')
   const phase = scanId ? 'capture' : 'describe'
   const fieldErrors = createScan.fieldErrors
@@ -325,7 +325,7 @@ export default function Capture() {
       <PageHeader
         eyebrow={storeName ? `${t('inspection.title')} #${id} · ${storeName}` : `${t('inspection.title')} #${id}`}
         title={t('capture.title')}
-        subtitle="Describe the package, then photograph its panels. The engine runs on the front panel; the rest make the reading surer."
+        subtitle="Describe the package, then photograph its panels. Any panel combination is supported (front, back, MRP, batch); each panel makes the assessment more complete."
         actions={
           <div className="flex items-center gap-2">
             {insp.demo && <DemoChip />}
@@ -543,8 +543,8 @@ export default function Capture() {
             <>
               <Callout family="pass" icon={Gauge} title="Package saved">
                 {savedSummary?.checks_total != null
-                  ? `The engine will run ${savedSummary.checks_total} checks once the front panel is captured.`
-                  : 'Photograph the panels below. The front panel is the one the engine needs.'}
+                  ? `The engine will run up to ${savedSummary.checks_total} checks once evidence panels are captured.`
+                  : 'Photograph at least one panel below (front, back, MRP, batch). All four are optional.'}
               </Callout>
 
               {camPanel && (
@@ -580,16 +580,16 @@ export default function Capture() {
                   />
                 ))}
               </div>
-              {!frontDone && (
+              {!hasCapturedPanel && (
                 <p className="text-caption text-ink-2">
-                  The front panel is required before the engine can assess. Back, principal-display and
-                  other panels are optional, but each one makes the reading surer.
+                  At least one panel is required before the engine can assess. Front, back, MRP, and
+                  batch panels are individually optional, but each captured panel enables additional checks.
                 </p>
               )}
 
               {assess.error && (
                 <Callout family="violation" title="The assessment could not run">
-                  {assess.error.message || 'Something went wrong. Try again once the front panel is captured.'}
+                  {assess.error.message || 'Something went wrong. Ensure at least one valid panel is captured and try again.'}
                 </Callout>
               )}
 
@@ -602,10 +602,10 @@ export default function Capture() {
                   iconRight={ArrowRight}
                   onClick={onAssess}
                   loading={assess.pending}
-                  disabled={!frontDone || anyUploading}
+                  disabled={!hasCapturedPanel || anyUploading}
                   disabledReason={
-                    !frontDone
-                      ? 'Capture the front panel first.'
+                    !hasCapturedPanel
+                      ? 'Capture at least one panel first.'
                       : anyUploading
                         ? 'Wait for the upload to finish.'
                         : undefined

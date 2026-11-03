@@ -76,8 +76,8 @@ def _generate_capture_tasks(
     tasks = []
     captured_panels = {img.panel for img in images}
 
-    # Mandatory panels that should be captured
-    expected_panels = {"front", "back"}
+    # Supported evidence panels for complete assessment
+    expected_panels = {"front", "back", "mrp", "batch"}
     missing_panels = expected_panels - captured_panels
 
     # 1. Missing mandatory panels
@@ -456,7 +456,7 @@ def get_panel_coverage(
             })
 
         # Evidence gaps
-        expected = {"front", "back"}
+        expected = {"front", "back", "mrp", "batch"}
         missing = expected - captured
         extra = captured - expected
 

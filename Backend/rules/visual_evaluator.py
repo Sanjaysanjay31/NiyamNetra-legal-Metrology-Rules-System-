@@ -618,6 +618,12 @@ def evaluate_character_height(ctx: CheckContext) -> FindingResult:
         t.reason = f"Principal display panel OCR failed ({front_failed}); character height cannot be evaluated."
         return t
 
+    _pc = getattr(ctx, "panels_captured", None)
+    if _pc and not ("front" in _pc or "principal" in _pc):
+        t.verdict = "not_assessed"
+        t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
+        return t
+
     if getattr(ctx, "phase3_halted", False) or getattr(ctx, "is_medical_device", False):
         t.verdict = "not_assessed"
         t.reason = (
@@ -765,6 +771,12 @@ def evaluate_net_quantity_height(ctx: CheckContext) -> FindingResult:
     if front_failed:
         t.verdict = "not_assessed"
         t.reason = f"Principal display panel OCR failed ({front_failed}); net quantity height cannot be evaluated."
+        return t
+
+    _pc = getattr(ctx, "panels_captured", None)
+    if _pc and not ("front" in _pc or "principal" in _pc):
+        t.verdict = "not_assessed"
+        t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
         return t
 
     if getattr(ctx, "phase3_halted", False) or getattr(ctx, "is_medical_device", False):
@@ -925,6 +937,12 @@ def evaluate_character_width(ctx: CheckContext) -> FindingResult:
     if getattr(ctx, "ocr_failure_reason", None):
         t.verdict = "not_assessed"
         t.reason = ctx.ocr_failure_reason
+        return t
+
+    _pc = getattr(ctx, "panels_captured", None)
+    if _pc and not ("front" in _pc or "principal" in _pc):
+        t.verdict = "not_assessed"
+        t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
         return t
 
     if getattr(ctx, "phase3_halted", False) or getattr(ctx, "is_medical_device", False):
@@ -1145,6 +1163,12 @@ def evaluate_clear_space(ctx: CheckContext) -> FindingResult:
         t.reason = ctx.ocr_failure_reason
         return t
 
+    _pc = getattr(ctx, "panels_captured", None)
+    if _pc and not ("front" in _pc or "principal" in _pc):
+        t.verdict = "not_assessed"
+        t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
+        return t
+
     if getattr(ctx, "phase3_halted", False) or getattr(ctx, "is_medical_device", False):
         t.verdict = "not_assessed"
         t.reason = "Not assessed: medical device, labelled under Medical Devices Rules 2017."
@@ -1291,6 +1315,12 @@ def evaluate_conspicuous_contrast(ctx: CheckContext) -> FindingResult:
     if getattr(ctx, "ocr_failure_reason", None):
         t.verdict = "not_assessed"
         t.reason = ctx.ocr_failure_reason
+        return t
+
+    _pc = getattr(ctx, "panels_captured", None)
+    if _pc and not ("front" in _pc or "principal" in _pc):
+        t.verdict = "not_assessed"
+        t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
         return t
 
     if getattr(ctx, "phase3_halted", False) or getattr(ctx, "is_medical_device", False):

@@ -197,6 +197,8 @@
     "title": "Capture",
     "front": "Front panel",
     "back": "Back panel",
+    "mrp": "MRP panel",
+    "batch": "Batch panel",
     "principal": "Principal display panel",
     "other": "Other panel",
     "retake": "Retake",

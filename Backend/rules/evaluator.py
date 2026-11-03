@@ -63,30 +63,35 @@ def is_coverage_sufficient(ctx: Any, field_key: str) -> bool:
     if panels and panels.issubset(failed_panels | empty_panels):
         return False
 
-    # PDP-specific declarations (net quantity and commodity name are required on PDP under Rule 6(1) & Rule 7)
-    if field_key in ("net_quantity", "commodity_name"):
-        pdp_panels = {"front", "principal"} & panels
-        if not pdp_panels:
-            return False
-        if failed_panels and pdp_panels.issubset(failed_panels):
-            return False
-        if empty_panels and pdp_panels.issubset(empty_panels):
-            return False
-        return True
-
-    # Dedicated panels
-    if field_key == "mrp" and "mrp" in panels:
-        if "mrp" not in failed_panels and "mrp" not in empty_panels:
-            return True
-    if field_key in ("date_of_manufacture", "best_before") and "batch" in panels:
-        if "batch" not in failed_panels and "batch" not in empty_panels:
-            return True
+    usable_panels = panels - failed_panels - empty_panels
+    if not usable_panels:
+        return False
 
     # Listing context always has complete listing metadata
     if getattr(ctx, "listing_available", False):
         return True
 
-    usable_panels = panels - failed_panels - empty_panels
+    # PDP-specific declarations (net quantity and commodity name are required on PDP under Rule 6(1) & Rule 7)
+    if field_key in ("net_quantity", "commodity_name"):
+        pdp_panels = {"front", "principal"} & usable_panels
+        return bool(pdp_panels)
+
+    # Dedicated panels
+    if field_key == "mrp":
+        if "mrp" in usable_panels:
+            return True
+        return len({"front", "principal", "back"} & usable_panels) >= 2
+
+    if field_key in ("date_of_manufacture", "best_before"):
+        if "batch" in usable_panels or "mrp" in usable_panels:
+            return True
+        return len({"front", "principal", "back"} & usable_panels) >= 2
+
+    if field_key in ("manufacturer", "consumer_care", "country_of_origin", "dimensions", "unit_sale_price"):
+        if len(usable_panels) >= 2 and bool({"front", "principal", "back"} & usable_panels):
+            return True
+        return False
+
     if len(usable_panels) >= 2:
         return True
 

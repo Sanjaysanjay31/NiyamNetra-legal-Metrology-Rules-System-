@@ -441,6 +441,17 @@ function EvidencePanel({ images = [], scan }) {
         <Camera size={20} strokeWidth={1.8} aria-hidden="true" className="mt-1 shrink-0 text-ink-3" />
       </div>
 
+      {scan?.panels_missing?.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-caption text-ink-3">Panels not supplied:</span>
+          {scan.panels_missing.map((p) => (
+            <Pill key={p} family="na">
+              {p} (not supplied)
+            </Pill>
+          ))}
+        </div>
+      )}
+
       {images.length > 0 && (
         <ul className="mt-4 flex flex-col gap-3">
           {images.map((img) => (
