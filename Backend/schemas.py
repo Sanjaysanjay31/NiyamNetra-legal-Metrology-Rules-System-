@@ -266,6 +266,8 @@ class ScanOut(ORMModel):
     counts: VerdictCounts | None = None
     panels_captured: list[str] | None = None
     panels_missing: list[str] | None = None
+    panels_decodable: list[str] | None = None
+    panels_unusable: list[str] | None = None
     findings: list[FindingOut]
     images: list[ScanImageOut]
     diagnostics: dict[str, Any] | None = None

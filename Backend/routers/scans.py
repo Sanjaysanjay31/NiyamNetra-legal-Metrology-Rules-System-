@@ -836,12 +836,26 @@ def _scan_out(db: Session, scan: Scan) -> ScanOut:
     _captured_panels = sorted({im.panel for im in _img_list if im.panel})
     _missing_panels = sorted([p for p in _supported_panels if p not in _captured_panels])
 
+    from pathlib import Path as _Path
+    import cv2 as _cv2
+    _decodable_panels_set = set()
+    for im in _img_list:
+        p = _Path(im.file_path) if im.file_path else None
+        if p and p.exists() and p.is_file():
+            mat = _cv2.imread(str(p))
+            if mat is not None and getattr(mat, "shape", None) and len(mat.shape) >= 2 and mat.shape[0] > 0 and mat.shape[1] > 0:
+                _decodable_panels_set.add(im.panel)
+    _decodable_panels = sorted(_decodable_panels_set)
+    _unusable_panels = sorted([p for p in _captured_panels if p not in _decodable_panels_set])
+
     out = ScanOut.model_validate(scan)
     out.counts = counts
     out.checks_total = counts.total
     out.checks_assessed = counts.passed + counts.failed
     out.panels_captured = _captured_panels
     out.panels_missing = _missing_panels
+    out.panels_decodable = _decodable_panels
+    out.panels_unusable = _unusable_panels
 
     if scan.checks_total != counts.total or scan.checks_assessed != (counts.passed + counts.failed):
         scan.checks_total = counts.total
@@ -930,6 +944,8 @@ def _scan_out(db: Session, scan: Scan) -> ScanOut:
         "rule_coverage_note": "26 catalog rules in 2026.09.v1; 19 executable algorithmic checks; 7 rules require manual review or specialized gazette schedules",
         "panels_captured": _captured_panels,
         "panels_missing": _missing_panels,
+        "panels_decodable": _decodable_panels,
+        "panels_unusable": _unusable_panels,
         "overall_result": scan.overall_result,
     }
     return out
@@ -1331,9 +1347,20 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
     from rules_engine import CheckContext
 
     images = db.query(ScanImage).filter(ScanImage.scan_id == scan.id).all()
-    _panels_cap = {i.panel for i in images if i.panel}
     _supp_panels = {"front", "back", "mrp", "batch"}
+    _panels_cap = {i.panel for i in images if i.panel}
     _panels_mis = {p for p in _supp_panels if p not in _panels_cap}
+
+    decodable_map = {}
+    for im in images:
+        p = Path(im.file_path) if im.file_path else None
+        if p and p.exists() and p.is_file():
+            mat = cv2.imread(str(p))
+            if mat is not None and getattr(mat, "shape", None) and len(mat.shape) >= 2 and mat.shape[0] > 0 and mat.shape[1] > 0:
+                decodable_map[im.id] = (im, mat)
+
+    _panels_dec = {pair[0].panel for pair in decodable_map.values() if pair[0].panel}
+    _panels_unu = _panels_cap - _panels_dec
 
     ctx = CheckContext(
         transaction_type=inspection.transaction_type,
@@ -1356,16 +1383,10 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
         is_blown_moulded=scan.is_blown_moulded,
         panels_captured=_panels_cap,
         panels_missing=_panels_mis,
+        panels_decodable=_panels_dec,
+        panels_unusable=_panels_unu,
         rules_as_at=scan.rules_as_at or date.fromisoformat(settings.RULES_AS_AT),
     )
-
-    decodable_map = {}
-    for im in images:
-        p = Path(im.file_path) if im.file_path else None
-        if p and p.exists() and p.is_file():
-            mat = cv2.imread(str(p))
-            if mat is not None and getattr(mat, "shape", None) and len(mat.shape) >= 2 and mat.shape[0] > 0 and mat.shape[1] > 0:
-                decodable_map[im.id] = (im, mat)
 
     if not decodable_map:
         ctx.image_usable = False
@@ -1770,6 +1791,13 @@ def build_context(db: Session, scan: Scan, inspection: Inspection):
             if getattr(r, "status", None) in (STATUS_PROVIDER_ERROR, STATUS_INPUT_UNAVAILABLE, STATUS_TIMEOUT)
             or getattr(r, "failure_reason", None)
         }
+        for _u in _panels_unu:
+            if _u not in ctx.panels_failed_ocr:
+                ctx.panels_failed_ocr[_u] = "Image file could not be decoded or is unusable"
+        for _im in images:
+            if _im.id not in _job_im_ids and _im.panel and _im.panel not in ctx.panels_with_ocr:
+                if _im.panel not in ctx.panels_failed_ocr:
+                    ctx.panels_failed_ocr[_im.panel] = "Derived artifact missing or undecodable"
         ctx.panels_empty_ocr = {
             getattr(r, "panel", "front")
             for r in _ocr_results

@@ -44,10 +44,19 @@ COUNT_UNITS = {"u", "n", "piece", "pieces", "number", "numbers", "count"}
 def is_coverage_sufficient(ctx: Any, field_key: str) -> bool:
     """Determine whether the captured inspection evidence is sufficient to establish absence (Section 5).
 
-    If only a single front panel was captured, declarations that legitimately appear
-    on back/side/mrp panels (such as manufacturer address, consumer care, or mrp)
-    cannot be legally certified as absent; result is NOT_ASSESSED.
-    If >= 2 panels or specific relevant panels were captured, absence can be confirmed (FAIL).
+    Distinguish between evidence that proves a declaration is present and evidence
+    sufficient to prove that it is absent. Failure to extract a declaration from an
+    unrelated, partial or insufficiently captured panel is not proof of absence.
+
+    - A declaration positively observed on ANY panel evaluates against its applicable rule.
+    - PDP declarations (net quantity, commodity name) are statutorily required on the PDP
+      (Rule 6(1)(b), Rule 7(1), Rule 8). Presence of a decodable, usable PDP panel (front/principal)
+      is necessary and sufficient to establish their absence on the PDP.
+    - Non-PDP declarations (MRP, date of manufacture, best before, manufacturer, consumer care,
+      country of origin, dimensions, unit sale price) can legitimately appear across other surfaces
+      (back, side, top flap, bottom, etc.). Incomplete panel evidence cannot establish absence;
+      all supported evidence panels (front, back, mrp, batch) must be decodable and searched.
+    - Where coverage is incomplete or unreadable, return False (not_assessed).
     """
     explicit = getattr(ctx, "coverage_sufficient", None)
     if explicit is not None:
@@ -58,12 +67,21 @@ def is_coverage_sufficient(ctx: Any, field_key: str) -> bool:
 
     failed_panels = set(getattr(ctx, "panels_failed_ocr", {}).keys())
     empty_panels = set(getattr(ctx, "panels_empty_ocr", set()))
-    panels = getattr(ctx, "panels_captured", set()) or set()
 
-    if panels and panels.issubset(failed_panels | empty_panels):
+    dec = getattr(ctx, "panels_decodable", None)
+    captured = getattr(ctx, "panels_captured", set()) or set()
+    unusable = getattr(ctx, "panels_unusable", set()) or set()
+
+    if dec:
+        decodable_panels = set(dec) - unusable
+    else:
+        decodable_panels = captured - unusable
+
+    if not decodable_panels:
         return False
 
-    usable_panels = panels - failed_panels - empty_panels
+    # Panels that were successfully decoded AND did not fail OCR
+    usable_panels = decodable_panels - failed_panels - empty_panels
     if not usable_panels:
         return False
 
@@ -71,28 +89,21 @@ def is_coverage_sufficient(ctx: Any, field_key: str) -> bool:
     if getattr(ctx, "listing_available", False):
         return True
 
-    # PDP-specific declarations (net quantity and commodity name are required on PDP under Rule 6(1) & Rule 7)
+    # 1. PDP-specific declarations (Rule 6(1)(b), Rule 7(1), Rule 8)
+    # Statutorily mandated on the Principal Display Panel.
     if field_key in ("net_quantity", "commodity_name"):
         pdp_panels = {"front", "principal"} & usable_panels
         return bool(pdp_panels)
 
-    # Dedicated panels
-    if field_key == "mrp":
-        if "mrp" in usable_panels:
-            return True
-        return len({"front", "principal", "back"} & usable_panels) >= 2
-
-    if field_key in ("date_of_manufacture", "best_before"):
-        if "batch" in usable_panels or "mrp" in usable_panels:
-            return True
-        return len({"front", "principal", "back"} & usable_panels) >= 2
-
-    if field_key in ("manufacturer", "consumer_care", "country_of_origin", "dimensions", "unit_sale_price"):
-        if len(usable_panels) >= 2 and bool({"front", "principal", "back"} & usable_panels):
-            return True
-        return False
-
-    if len(usable_panels) >= 2:
+    # 2. General package declarations (Rule 6(1)(a)-(g), 6(1)(aa), 6(1)(da))
+    # Can legitimately appear across back, side, or dedicated panels.
+    # To prove absence on the package, both the principal display panel (front/principal)
+    # AND the general information panel (back) must be captured, decodable, and readable.
+    # Partial panel combinations (front + mrp, front + batch, batch-only, mrp-only) cannot
+    # establish absence of manufacturer, consumer care, date, MRP, or origin.
+    has_pdp = bool({"front", "principal"} & usable_panels)
+    has_back = "back" in usable_panels
+    if has_pdp and has_back:
         return True
 
     return False

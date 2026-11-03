@@ -963,15 +963,30 @@ export default function FindingsScreen({ scan, onBack, onSaveFindings }) {
           {(() => {
             const capturedSet = new Set(evidenceImages.map((i) => i.panel));
             const missingPanels = (currentScan?.panels_missing || ['front', 'back', 'mrp', 'batch'].filter((p) => !capturedSet.has(p)));
-            if (!missingPanels || missingPanels.length === 0) return null;
+            const unusablePanels = currentScan?.panels_unusable || [];
+            if ((!missingPanels || missingPanels.length === 0) && unusablePanels.length === 0) return null;
             return (
-              <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-                <Text style={{ fontSize: 11, color: colors.textMuted }}>Panels not supplied:</Text>
-                {missingPanels.map((p) => (
-                  <View key={p} style={{ backgroundColor: colors.surface2 || '#e2e8f0', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                    <Text style={{ fontSize: 11, color: colors.textMuted }}>{p} (optional)</Text>
+              <View style={{ marginTop: 10, gap: 6 }}>
+                {unusablePanels.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 11, color: colors.error || '#ef4444' }}>Unusable panels (unreadable):</Text>
+                    {unusablePanels.map((p) => (
+                      <View key={p} style={{ backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                        <Text style={{ fontSize: 11, color: colors.error || '#ef4444' }}>{p} (unusable)</Text>
+                      </View>
+                    ))}
                   </View>
-                ))}
+                )}
+                {missingPanels && missingPanels.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 11, color: colors.textMuted }}>Panels not supplied:</Text>
+                    {missingPanels.map((p) => (
+                      <View key={p} style={{ backgroundColor: colors.surface2 || '#e2e8f0', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                        <Text style={{ fontSize: 11, color: colors.textMuted }}>{p} (optional)</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </View>
             );
           })()}

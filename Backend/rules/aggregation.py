@@ -63,6 +63,8 @@ class EvidenceSummary:
     total_panels_captured: int = 0
     panels_captured: list[str] = field(default_factory=list)
     panels_missing: list[str] = field(default_factory=list)
+    panels_decodable: list[str] = field(default_factory=list)
+    panels_unusable: list[str] = field(default_factory=list)
     total_images: int = 0
     images_by_panel: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     pdp_established: bool = False
@@ -1195,10 +1197,19 @@ def aggregate_inspection_assessment(
             })
 
     _supported_panels = {'front', 'back', 'mrp', 'batch'}
+    _dec_set = getattr(ctx, "panels_decodable", None) if ctx else None
+    if _dec_set is None:
+        _dec_set = panels_set
+    _unu_set = getattr(ctx, "panels_unusable", None) if ctx else None
+    if _unu_set is None:
+        _unu_set = set()
+
     evidence_summary = EvidenceSummary(
         total_panels_captured=len(panels_set),
         panels_captured=sorted(list(panels_set)),
         panels_missing=sorted(list(_supported_panels - panels_set)),
+        panels_decodable=sorted(list(_dec_set)),
+        panels_unusable=sorted(list(_unu_set)),
         total_images=len(images) if images else len(panels_set),
         images_by_panel=images_by_p,
         pdp_established=pdp_est,

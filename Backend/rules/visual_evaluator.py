@@ -618,8 +618,16 @@ def evaluate_character_height(ctx: CheckContext) -> FindingResult:
         t.reason = f"Principal display panel OCR failed ({front_failed}); character height cannot be evaluated."
         return t
 
-    _pc = getattr(ctx, "panels_captured", None)
-    if _pc and not ("front" in _pc or "principal" in _pc):
+    if "front" in getattr(ctx, "panels_unusable", set()) or "principal" in getattr(ctx, "panels_unusable", set()):
+        t.verdict = "not_assessed"
+        t.reason = "Front-panel image could not be decoded or is unusable, so declarations on the principal display panel cannot be evaluated."
+        return t
+    _dec = getattr(ctx, "panels_decodable", None)
+    if _dec is None:
+        captured = getattr(ctx, "panels_captured", set()) or set()
+        unusable = getattr(ctx, "panels_unusable", set()) or set()
+        _dec = captured - unusable if captured else set()
+    if _dec and not ("front" in _dec or "principal" in _dec):
         t.verdict = "not_assessed"
         t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
         return t
@@ -773,8 +781,16 @@ def evaluate_net_quantity_height(ctx: CheckContext) -> FindingResult:
         t.reason = f"Principal display panel OCR failed ({front_failed}); net quantity height cannot be evaluated."
         return t
 
-    _pc = getattr(ctx, "panels_captured", None)
-    if _pc and not ("front" in _pc or "principal" in _pc):
+    if "front" in getattr(ctx, "panels_unusable", set()) or "principal" in getattr(ctx, "panels_unusable", set()):
+        t.verdict = "not_assessed"
+        t.reason = "Front-panel image could not be decoded or is unusable, so declarations on the principal display panel cannot be evaluated."
+        return t
+    _dec = getattr(ctx, "panels_decodable", None)
+    if _dec is None:
+        captured = getattr(ctx, "panels_captured", set()) or set()
+        unusable = getattr(ctx, "panels_unusable", set()) or set()
+        _dec = captured - unusable if captured else set()
+    if _dec and not ("front" in _dec or "principal" in _dec):
         t.verdict = "not_assessed"
         t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
         return t
@@ -939,8 +955,16 @@ def evaluate_character_width(ctx: CheckContext) -> FindingResult:
         t.reason = ctx.ocr_failure_reason
         return t
 
-    _pc = getattr(ctx, "panels_captured", None)
-    if _pc and not ("front" in _pc or "principal" in _pc):
+    if "front" in getattr(ctx, "panels_unusable", set()) or "principal" in getattr(ctx, "panels_unusable", set()):
+        t.verdict = "not_assessed"
+        t.reason = "Front-panel image could not be decoded or is unusable, so declarations on the principal display panel cannot be evaluated."
+        return t
+    _dec = getattr(ctx, "panels_decodable", None)
+    if _dec is None:
+        captured = getattr(ctx, "panels_captured", set()) or set()
+        unusable = getattr(ctx, "panels_unusable", set()) or set()
+        _dec = captured - unusable if captured else set()
+    if _dec and not ("front" in _dec or "principal" in _dec):
         t.verdict = "not_assessed"
         t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
         return t
@@ -1163,8 +1187,16 @@ def evaluate_clear_space(ctx: CheckContext) -> FindingResult:
         t.reason = ctx.ocr_failure_reason
         return t
 
-    _pc = getattr(ctx, "panels_captured", None)
-    if _pc and not ("front" in _pc or "principal" in _pc):
+    if "front" in getattr(ctx, "panels_unusable", set()) or "principal" in getattr(ctx, "panels_unusable", set()):
+        t.verdict = "not_assessed"
+        t.reason = "Front-panel image could not be decoded or is unusable, so declarations on the principal display panel cannot be evaluated."
+        return t
+    _dec = getattr(ctx, "panels_decodable", None)
+    if _dec is None:
+        captured = getattr(ctx, "panels_captured", set()) or set()
+        unusable = getattr(ctx, "panels_unusable", set()) or set()
+        _dec = captured - unusable if captured else set()
+    if _dec and not ("front" in _dec or "principal" in _dec):
         t.verdict = "not_assessed"
         t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
         return t
@@ -1317,8 +1349,16 @@ def evaluate_conspicuous_contrast(ctx: CheckContext) -> FindingResult:
         t.reason = ctx.ocr_failure_reason
         return t
 
-    _pc = getattr(ctx, "panels_captured", None)
-    if _pc and not ("front" in _pc or "principal" in _pc):
+    if "front" in getattr(ctx, "panels_unusable", set()) or "principal" in getattr(ctx, "panels_unusable", set()):
+        t.verdict = "not_assessed"
+        t.reason = "Front-panel image could not be decoded or is unusable, so declarations on the principal display panel cannot be evaluated."
+        return t
+    _dec = getattr(ctx, "panels_decodable", None)
+    if _dec is None:
+        captured = getattr(ctx, "panels_captured", set()) or set()
+        unusable = getattr(ctx, "panels_unusable", set()) or set()
+        _dec = captured - unusable if captured else set()
+    if _dec and not ("front" in _dec or "principal" in _dec):
         t.verdict = "not_assessed"
         t.reason = "No front-panel image is available for this scan, so declarations on the principal display panel cannot be evaluated."
         return t

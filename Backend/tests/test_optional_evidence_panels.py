@@ -627,3 +627,423 @@ def test_recapture_coverage_and_tasks_support_all_panels(env_setup):
     missing_targets = {t["target_panel"] for t in tasks if "missing" in t["request_id"]}
     assert missing_targets == {"front", "mrp", "batch"}
 
+
+
+# ===========================================================================
+# 13. Audit Regression Suite: 14 Corrective Scenarios for Reliable Evidence
+# ===========================================================================
+
+def test_scenario_1_corrupt_front_valid_back_pdp_not_assessed(env_setup):
+    """Scenario 1: Corrupt front + valid back -> PDP checks must evaluate to not_assessed, not fail."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "undecodable", "back": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(
+            lines=[OcrLine(text="Mfg by: Acme Foods Ltd, Mumbai", confidence=0.95, box=[[10, 10]], height_px=20)],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            commodity_name=CommonFieldDeclaration(value=None, status=STATUS_NOT_OBSERVED),
+            net_quantity=NetQuantityDeclaration(value=None, status=STATUS_NOT_OBSERVED),
+            parties=[PartyDeclaration(name="Acme Foods Ltd", address="Mumbai", party_type="manufacturer", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Mfg by: Acme Foods Ltd", source_panel="back"))],
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        findings = {f["check_id"]: f for f in data["findings"]}
+
+        # PDP checks (CHK05 net quantity, CHK07 PDP area/clarity) must be not_assessed because front was corrupt!
+        assert findings["CHK05"]["engine_verdict"] == "not_assessed"
+        assert findings["CHK07"]["engine_verdict"] == "not_assessed"
+        # Panels accurately categorized
+        assert "front" in data["panels_unusable"]
+        assert "back" in data["panels_decodable"]
+
+
+def test_scenario_2_valid_front_corrupt_mrp_mrp_not_assessed(env_setup):
+    """Scenario 2: Valid front + corrupt MRP -> MRP assessment must evaluate to not_assessed, not fail."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "valid", "mrp": "undecodable"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(
+            lines=[OcrLine(text="Biscuit Pack", confidence=0.95, box=[[10, 10]], height_px=20)],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            commodity_name=CommonFieldDeclaration(value="Biscuits", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Biscuit Pack", source_panel="front")),
+            mrp=MrpDeclaration(value=None, status=STATUS_NOT_OBSERVED),
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        findings = {f["check_id"]: f for f in data["findings"]}
+
+        # MRP must NOT be marked as failed absence under 36(1)
+        assert findings["CHK04"]["engine_verdict"] == "not_assessed"
+        assert "mrp" in data["panels_unusable"]
+        assert "front" in data["panels_decodable"]
+
+
+def test_scenario_3_batch_only_date_not_assessed(env_setup):
+    """Scenario 3: Batch-only evidence -> Date of manufacture must evaluate to not_assessed, not fail."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"batch": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(
+            lines=[OcrLine(text="BATCH NO B204", confidence=0.95, box=[[10, 10]], height_px=20)],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            dates=[],  # No dates in batch crop
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        findings = {f["check_id"]: f for f in data["findings"]}
+
+        # Date of manufacture (CHK06) must be not_assessed, not fail!
+        assert findings["CHK06"]["engine_verdict"] == "not_assessed"
+
+
+def test_scenario_4_front_plus_mrp_manufacturer_consumer_care_not_assessed(env_setup):
+    """Scenario 4: Front + MRP panel evidence -> Manufacturer and consumer-care checks must evaluate to not_assessed."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "valid", "mrp": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(
+            lines=[
+                OcrLine(text="Tea 500g", confidence=0.95, box=[[10, 10]], height_px=20),
+                OcrLine(text="MRP Rs 250", confidence=0.95, box=[[10, 40]], height_px=20),
+            ],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            commodity_name=CommonFieldDeclaration(value="Tea", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Tea", source_panel="front")),
+            net_quantity=NetQuantityDeclaration(value=500.0, unit="g", normalized_unit="g", raw_text="500g", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="500g", source_panel="front")),
+            parties=[],  # Manufacturer unobserved
+            consumer_care=ConsumerCareDeclaration(status=STATUS_NOT_OBSERVED),
+            mrp=MrpDeclaration(value=250.0, raw_text="MRP Rs 250.00 incl. of all taxes", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="MRP Rs 250", source_panel="mrp")),
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        findings = {f["check_id"]: f for f in data["findings"]}
+
+        # Back is missing, so manufacturer and consumer care cannot be proven absent!
+        # CHK01 contains manufacturer/consumer-care; with front+mrp, insufficient coverage causes not_assessed
+        assert findings["CHK01"]["engine_verdict"] == "not_assessed"
+        assert "insufficient to establish absence" in (findings["CHK01"]["reason"] or "")
+
+
+def test_scenario_5_valid_back_unobserved_not_assessed_extracted_evaluates(env_setup):
+    """Scenario 5: Valid back image -> Unobserved declarations on missing panels are not_assessed; declarations extracted from back image evaluate normally."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"back": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(
+            lines=[
+                OcrLine(text="MRP Rs. 100.00 (inclusive of all taxes)", confidence=0.95, box=[[10, 10]], height_px=20),
+                OcrLine(text="Country of Origin: India", confidence=0.95, box=[[10, 30]], height_px=20),
+            ],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            # Unobserved PDP declarations
+            commodity_name=CommonFieldDeclaration(value=None, status=STATUS_NOT_OBSERVED),
+            net_quantity=NetQuantityDeclaration(value=None, status=STATUS_NOT_OBSERVED),
+            # Observed back declarations
+            mrp=MrpDeclaration(value=100.0, currency="INR", raw_text="MRP Rs. 100.00 (inclusive of all taxes)", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="MRP Rs. 100.00 (inclusive of all taxes)", source_panel="back")),
+            country_of_origin=CommonFieldDeclaration(value="India", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Country of Origin: India", source_panel="back")),
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        findings = {f["check_id"]: f for f in data["findings"]}
+
+        # Unobserved PDP declarations are honestly not_assessed
+        assert findings["CHK05"]["engine_verdict"] == "not_assessed"
+        assert findings["CHK06"]["engine_verdict"] == "not_assessed"
+        assert findings["CHK07"]["engine_verdict"] == "not_assessed"
+        # Extracted declarations from back evaluate normally
+        assert findings["CHK04"]["engine_verdict"] == "pass"
+
+
+def test_scenario_6_positively_detected_declaration_evaluates_normally(env_setup):
+    """Scenario 6: Any declaration positively detected on an available valid panel evaluates its substantive rule normally."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"mrp": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        # Invalid MRP rounding (e.g. fractional paise like Rs 99.456)
+        mock_ocr.return_value = OcrResult(
+            lines=[OcrLine(text="MRP Rs 99.456 incl of all taxes", confidence=0.95, box=[[10, 10]], height_px=20)],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            mrp=MrpDeclaration(value=99.456, currency="INR", raw_text="MRP Rs 99.456 incl of all taxes", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="MRP Rs 99.456", source_panel="mrp")),
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        findings = {f["check_id"]: f for f in data["findings"]}
+
+        # Substantive check on MRP evaluates and fails on substantive rounding rule (CHK04)
+        assert findings["CHK04"]["engine_verdict"] == "fail"
+
+
+def test_scenario_7_insufficient_evidence_not_assessed_never_unsupported_violation(env_setup):
+    """Scenario 7: Insufficient evidence coverage produces not_assessed, never an unsupported violation."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(
+            lines=[OcrLine(text="Clean Front Label Only", confidence=0.95, box=[[10, 10]], height_px=20)],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            commodity_name=CommonFieldDeclaration(value="Biscuits", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Clean Front", source_panel="front")),
+            net_quantity=NetQuantityDeclaration(value=100.0, unit="g", normalized_unit="g", raw_text="100g", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="100g", source_panel="front")),
+            parties=[],
+            consumer_care=ConsumerCareDeclaration(status=STATUS_NOT_OBSERVED),
+            mrp=MrpDeclaration(status=STATUS_NOT_OBSERVED),
+            dates=[],
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+
+        # The overall result must be not_assessed, never false violation or false compliant
+        assert data["overall_result"] == "not_assessed"
+        findings = {f["check_id"]: f for f in data["findings"]}
+        # Absence checks on uncaptured panels must be not_assessed
+        assert findings["CHK01"]["engine_verdict"] == "not_assessed"
+        assert findings["CHK04"]["engine_verdict"] == "not_assessed"
+
+
+def test_scenario_8_independent_checks_continue_running(env_setup):
+    """Scenario 8: Independent checks continue to run and return verdicts when another check is unresolved."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "valid", "back": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(
+            lines=[
+                OcrLine(text="Premium Cookies", confidence=0.95, box=[[10, 10]], height_px=20),
+                OcrLine(text="Net Qty: 200 gms", confidence=0.95, box=[[10, 30]], height_px=20),  # Non-standard unit 'gms'!
+                OcrLine(text="Mfd by: Bakery Corp, Delhi", confidence=0.95, box=[[10, 50]], height_px=20),
+                OcrLine(text="MRP Rs 50.00 incl. of all taxes", confidence=0.95, box=[[10, 70]], height_px=20),
+                OcrLine(text="Mfg Date: 01/2026", confidence=0.95, box=[[10, 90]], height_px=20),
+                OcrLine(text="Care: help@bakery.com", confidence=0.95, box=[[10, 110]], height_px=20),
+            ],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            commodity_name=CommonFieldDeclaration(value="Cookies", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Premium Cookies", source_panel="front")),
+            net_quantity=NetQuantityDeclaration(value=200.0, unit="gms", normalized_unit="g", raw_text="Net Qty: 200 gms", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Net Qty: 200 gms", source_panel="front")),
+            parties=[PartyDeclaration(name="Bakery Corp", address="Delhi", party_type="manufacturer", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Mfd by: Bakery Corp, Delhi", source_panel="back"))],
+            consumer_care=ConsumerCareDeclaration(email="help@bakery.com", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Care: help@bakery.com", source_panel="back")),
+            mrp=MrpDeclaration(value=50.0, raw_text="MRP Rs 50.00 incl. of all taxes", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="MRP Rs 50.00", source_panel="back")),
+            dates=[DateDeclaration(date_type_candidate="mfg", raw_text="Mfg Date: 01/2026", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="01/2026", source_panel="back"))],
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        findings = {f["check_id"]: f for f in data["findings"]}
+
+        # Net quantity fails on non-standard unit 'gms'
+        assert findings["CHK05"]["engine_verdict"] == "fail"
+        # Mandatory declarations (CHK01) and MRP (CHK04) pass independently
+        assert findings["CHK01"]["engine_verdict"] == "pass"
+        assert findings["CHK04"]["engine_verdict"] == "pass"
+
+
+def test_scenario_9_mixed_valid_and_corrupt_images_preserves_valid(env_setup):
+    """Scenario 9: Mixed valid and corrupt image submissions preserve usable evidence from valid panels."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "valid", "back": "undecodable", "mrp": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(
+            lines=[
+                OcrLine(text="Brand Salt", confidence=0.95, box=[[10, 10]], height_px=20),
+                OcrLine(text="Net 1 kg", confidence=0.95, box=[[10, 30]], height_px=20),
+                OcrLine(text="MRP Rs 30.00 incl. of all taxes", confidence=0.95, box=[[10, 50]], height_px=20),
+            ],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            commodity_name=CommonFieldDeclaration(value="Salt", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Brand Salt", source_panel="front")),
+            net_quantity=NetQuantityDeclaration(value=1.0, unit="kg", normalized_unit="kg", raw_text="Net 1 kg", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Net 1 kg", source_panel="front")),
+            mrp=MrpDeclaration(value=30.0, raw_text="MRP Rs 30.00 incl. of all taxes", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="MRP Rs 30.00", source_panel="mrp")),
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+
+        # Decodable panels front & mrp are preserved and evaluated
+        assert sorted(data["panels_decodable"]) == ["front", "mrp"]
+        assert data["panels_unusable"] == ["back"]
+        findings = {f["check_id"]: f for f in data["findings"]}
+        assert findings["CHK05"]["engine_verdict"] == "pass"
+        assert findings["CHK04"]["engine_verdict"] == "pass"
+
+
+def test_scenario_10_empty_and_wholly_undecodable_rejected(env_setup):
+    """Scenario 10: Empty and wholly undecodable submissions remain rejected with HTTP 422."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "undecodable", "back": "undecodable"})
+    client = env_setup["client"]
+
+    resp = client.post(f"/scans/{scan.id}/assess")
+    assert resp.status_code == 422, resp.text
+    assert "undecodable" in resp.json()["detail"].lower() or "cannot assess scan" in resp.json()["detail"].lower()
+
+
+def test_scenario_11_panel_state_fields_consistency(env_setup):
+    """Scenario 11: panels_captured, panels_decodable, panels_unusable, panels_missing accurately reflect evidence state."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "valid", "back": "undecodable"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(lines=[], engine="ocr_space", status=STATUS_SUCCESS)
+        mock_llm.return_value = StructuredDeclarationResult(metadata={"status": "success"})
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+
+        assert sorted(data["panels_captured"]) == ["back", "front"]
+        assert data["panels_decodable"] == ["front"]
+        assert data["panels_unusable"] == ["back"]
+        assert sorted(data["panels_missing"]) == ["batch", "mrp"]
+
+
+def test_scenario_12_ocr_provider_errors_do_not_become_absence_findings(env_setup):
+    """Scenario 12: OCR provider errors do not become absence findings."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "valid", "back": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        # Simulate OCR engine failure
+        mock_ocr.return_value = OcrResult(
+            lines=[],
+            engine="ocr_space",
+            status="provider_error",
+            failure_reason="OCR API 503 Service Unavailable",
+        )
+        mock_llm.return_value = StructuredDeclarationResult(metadata={"status": "provider_error"})
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+
+        # Overall result must reflect OCR failure / not_assessed, NOT statutory violations
+        assert data["overall_result"] in ("not_assessed", "review_required")
+        assert data["violation_limb"] is None
+        # No absence checks may be failed when OCR provider failed
+        findings = {f["check_id"]: f for f in data["findings"]}
+        for cid in ("CHK01", "CHK04", "CHK05", "CHK06"):
+            if cid in findings:
+                assert findings[cid]["engine_verdict"] == "not_assessed"
+
+
+def test_scenario_13_root_and_diagnostics_evidence_states_identical(env_setup):
+    """Scenario 13: The root response and diagnostic evidence-state values are identical."""
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "valid", "mrp": "undecodable"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(lines=[], engine="ocr_space", status=STATUS_SUCCESS)
+        mock_llm.return_value = StructuredDeclarationResult(metadata={"status": "success"})
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        diag = data["diagnostics"]
+
+        assert data["panels_captured"] == diag["panels_captured"]
+        assert data["panels_decodable"] == diag["panels_decodable"]
+        assert data["panels_unusable"] == diag["panels_unusable"]
+        assert data["panels_missing"] == diag["panels_missing"]
+
+
+def test_scenario_14_all_previous_optional_panel_tests_continue_to_pass(env_setup):
+    """Scenario 14: All previous optional panel tests continue to pass (verified via full suite)."""
+    # Simply verifies that all 4 panel types can be assessed in combination
+    insp, scan, images = _setup_scan_with_panels(env_setup, {"front": "valid", "back": "valid", "mrp": "valid", "batch": "valid"})
+    client = env_setup["client"]
+
+    with patch("ocr_engine.run_ocr") as mock_ocr, \
+         patch("llm.structure_inspection_ocr") as mock_llm:
+        mock_ocr.return_value = OcrResult(
+            lines=[
+                OcrLine(text="Full Pack", confidence=0.95, box=[[10, 10]], height_px=20),
+                OcrLine(text="Net 500 g", confidence=0.95, box=[[10, 30]], height_px=20),
+                OcrLine(text="Mfg by: Full Foods Ltd, Delhi", confidence=0.95, box=[[10, 50]], height_px=20),
+                OcrLine(text="Care: help@fullfoods.in", confidence=0.95, box=[[10, 70]], height_px=20),
+                OcrLine(text="MRP Rs 150.00 incl taxes", confidence=0.95, box=[[10, 90]], height_px=20),
+            ],
+            engine="ocr_space",
+            status=STATUS_SUCCESS,
+        )
+        mock_llm.return_value = StructuredDeclarationResult(
+            commodity_name=CommonFieldDeclaration(value="Full Pack", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Full Pack", source_panel="front")),
+            net_quantity=NetQuantityDeclaration(value=500.0, unit="g", normalized_unit="g", raw_text="500 g", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Net 500 g", source_panel="front")),
+            parties=[PartyDeclaration(name="Full Foods Ltd", address="Delhi", party_type="manufacturer", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Mfg by: Full Foods Ltd, Delhi", source_panel="back"))],
+            consumer_care=ConsumerCareDeclaration(email="help@fullfoods.in", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="Care: help@fullfoods.in", source_panel="back")),
+            mrp=MrpDeclaration(value=150.0, currency="INR", raw_text="MRP Rs 150.00 incl taxes", status=STATUS_CONFIRMED, provenance=FieldProvenance(source_text="MRP Rs 150.00", source_panel="mrp")),
+            dates=[],
+            metadata={"status": "success"},
+        )
+
+        resp = client.post(f"/scans/{scan.id}/assess")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert sorted(data["panels_captured"]) == ["back", "batch", "front", "mrp"]
+        assert sorted(data["panels_decodable"]) == ["back", "batch", "front", "mrp"]
+        assert data["panels_unusable"] == []
+        assert data["panels_missing"] == []

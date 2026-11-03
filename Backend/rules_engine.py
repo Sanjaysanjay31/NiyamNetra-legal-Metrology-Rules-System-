@@ -105,6 +105,8 @@ class CheckContext:
     image_quality_reason: str | None = None
     panels_captured: set[str] = field(default_factory=set)
     panels_missing: set[str] = field(default_factory=set)
+    panels_decodable: set[str] = field(default_factory=set)
+    panels_unusable: set[str] = field(default_factory=set)
 
     # --- listing, only when the scan came from a web listing ---
     listing_available: bool = False
@@ -219,7 +221,14 @@ def measurement_blocked(ctx: CheckContext) -> str | None:
     front_err = getattr(ctx, "panels_failed_ocr", {}).get("front") or getattr(ctx, "panels_failed_ocr", {}).get("principal")
     if front_err:
         return f"Principal display panel OCR failed: {front_err}"
-    if ctx.panels_captured and not ("front" in ctx.panels_captured or "principal" in ctx.panels_captured):
+    if "front" in getattr(ctx, "panels_unusable", set()) or "principal" in getattr(ctx, "panels_unusable", set()):
+        return "Principal display panel image could not be decoded or is unusable."
+    _dec = getattr(ctx, "panels_decodable", None)
+    if _dec is None:
+        captured = getattr(ctx, "panels_captured", set()) or set()
+        unusable = getattr(ctx, "panels_unusable", set()) or set()
+        _dec = captured - unusable if captured else set()
+    if _dec and not ("front" in _dec or "principal" in _dec):
         return (
             "No front-panel image is available for this scan, so declarations on the "
             "principal display panel cannot be read or measured."

@@ -452,6 +452,28 @@ function EvidencePanel({ images = [], scan }) {
         </div>
       )}
 
+      {scan?.panels_unusable?.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-caption text-fail">Unusable panels (unreadable):</span>
+          {scan.panels_unusable.map((p) => (
+            <Pill key={p} family="fail">
+              {p} (unusable)
+            </Pill>
+          ))}
+        </div>
+      )}
+
+      {scan?.panels_decodable?.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-caption text-ink-3">Decodable panels assessed:</span>
+          {scan.panels_decodable.map((p) => (
+            <Pill key={p} family="pass">
+              {p} (usable)
+            </Pill>
+          ))}
+        </div>
+      )}
+
       {images.length > 0 && (
         <ul className="mt-4 flex flex-col gap-3">
           {images.map((img) => (
