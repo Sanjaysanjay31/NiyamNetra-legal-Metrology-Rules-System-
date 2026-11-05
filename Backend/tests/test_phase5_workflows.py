@@ -252,13 +252,15 @@ class TestSmartRecapture:
                     for t in tasks)
 
     def test_both_panels_no_missing_task(self):
-        """No missing panel task when both front and back are captured."""
+        """No missing panel task when all supported panels are captured."""
         from routers.recapture import _generate_capture_tasks
         scan = self._make_scan()
         findings = []
         images = [
             self._make_image("front", id=1),
             self._make_image("back", id=2),
+            self._make_image("mrp", id=3),
+            self._make_image("batch", id=4),
         ]
         tasks = _generate_capture_tasks(1, scan, findings, images)
         assert not any("missing" in t["request_id"] for t in tasks)

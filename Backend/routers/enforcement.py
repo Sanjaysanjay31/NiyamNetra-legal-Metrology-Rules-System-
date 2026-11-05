@@ -238,13 +238,13 @@ def get_compliance_summary(
     if any(r == "violation" for r in results):
         overall_verdict = "VIOLATION"
     elif any(r == "not_assessed" for r in results):
-        overall_verdict = "REVIEW_REQUIRED"
-    elif all(r == "compliant" for r in results):
+        overall_verdict = "NOT_ASSESSED"
+    elif all(r == "compliant" for r in results) and results:
         overall_verdict = "COMPLIANT"
-    elif all(r in ("out_of_scope", "compliant") for r in results):
+    elif all(r in ("out_of_scope", "compliant") for r in results) and results:
         overall_verdict = "OUT_OF_SCOPE"
     else:
-        overall_verdict = "REVIEW_REQUIRED"
+        overall_verdict = "NOT_ASSESSED"
 
     # Per-package summaries
     package_summaries = []

@@ -383,7 +383,7 @@ def test_false_compliance_defense_conflicting_mrp_blocks_compliant():
 
 
 def test_false_compliance_defense_partial_coverage_never_compliant():
-    """Even if all evaluated rules on front panel PASS, verdict must be REVIEW_REQUIRED."""
+    """Even if all evaluated rules on front panel PASS, verdict must be NOT_ASSESSED (never COMPLIANT)."""
     findings = [
         _dummy_finding("CHK01", "pass"),
         _dummy_finding("CHK04", "pass"),
@@ -395,7 +395,7 @@ def test_false_compliance_defense_partial_coverage_never_compliant():
         captured_panels={"front"},  # Missing back/side
     )
     assert assessment.overall_verdict != "COMPLIANT"
-    assert assessment.overall_verdict == "REVIEW_REQUIRED"
+    assert assessment.overall_verdict == "NOT_ASSESSED"
     assert assessment.assessment_completeness.status == "PARTIAL"
 
 
@@ -524,13 +524,13 @@ def test_verdict_precedence_matrix():
     res1 = aggregate_inspection_assessment("1", [_dummy_finding("CHK01", "pass")], captured_panels={"front", "back"})
     assert res1.overall_verdict == "COMPLIANT"
 
-    # 2. PASS + NOT_ASSESSED -> REVIEW_REQUIRED
+    # 2. PASS + NOT_ASSESSED -> NOT_ASSESSED (incomplete coverage communicated as assessment limitation)
     res2 = aggregate_inspection_assessment(
         "2",
         [_dummy_finding("CHK01", "pass"), _dummy_finding("CHK02", "not_assessed")],
         captured_panels={"front", "back"},
     )
-    assert res2.overall_verdict == "REVIEW_REQUIRED"
+    assert res2.overall_verdict == "NOT_ASSESSED"
 
     # 3. PASS + FAIL -> VIOLATION
     res3 = aggregate_inspection_assessment(
@@ -824,10 +824,10 @@ def test_scenario_b_confirmed_declaration_violation():
 
 
 def test_scenario_c_incomplete_inspection():
-    """Scenario C: Only front panel captured -> REVIEW_REQUIRED with capture request for back panel."""
+    """Scenario C: Only front panel captured -> NOT_ASSESSED with capture request for back panel."""
     findings = [_dummy_finding("CHK01", "pass"), _dummy_finding("CHK04", "pass")]
     assessment = aggregate_inspection_assessment("SCENARIO_C", findings, captured_panels={"front"})
-    assert assessment.overall_verdict == "REVIEW_REQUIRED"
+    assert assessment.overall_verdict == "NOT_ASSESSED"
     assert assessment.assessment_completeness.status == "PARTIAL"
     assert any(req.target_panel == "back" for req in assessment.actionable_capture_requests)
 
@@ -848,25 +848,25 @@ def test_scenario_d_conflicting_mrp():
 
 
 def test_scenario_e_physical_measurement_unavailable():
-    """Scenario E: No calibration standard -> NOT_ASSESSED font size -> REVIEW_REQUIRED, not false FAIL."""
+    """Scenario E: No calibration standard -> NOT_ASSESSED font size -> NOT_ASSESSED, not false FAIL."""
     findings = [
         _dummy_finding("CHK01", "pass"),
         _dummy_finding("CHK06", "not_assessed", title="Font Height", reason="Scale calibration unavailable"),
     ]
     assessment = aggregate_inspection_assessment("SCENARIO_E", findings, captured_panels={"front", "back"})
-    assert assessment.overall_verdict == "REVIEW_REQUIRED"
+    assert assessment.overall_verdict == "NOT_ASSESSED"
     assert assessment.failed_rules == 0
     assert any("SCALE" in req.request_id for req in assessment.actionable_capture_requests)
 
 
 def test_scenario_f_visual_rule_uncertainty():
-    """Scenario F: Glare prevents clear space measurement -> NOT_ASSESSED -> REVIEW_REQUIRED."""
+    """Scenario F: Glare prevents clear space measurement -> NOT_ASSESSED -> NOT_ASSESSED."""
     findings = [
         _dummy_finding("CHK01", "pass"),
         _dummy_finding("CHK09", "not_assessed", title="Clear Space", reason="Interfering glare"),
     ]
     assessment = aggregate_inspection_assessment("SCENARIO_F", findings, captured_panels={"front", "back"})
-    assert assessment.overall_verdict == "REVIEW_REQUIRED"
+    assert assessment.overall_verdict == "NOT_ASSESSED"
     assert assessment.failed_rules == 0
     assert any("CLEAR_SPACE" in req.request_id for req in assessment.actionable_capture_requests)
 

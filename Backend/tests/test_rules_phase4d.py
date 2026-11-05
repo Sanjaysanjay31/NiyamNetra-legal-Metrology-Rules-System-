@@ -552,7 +552,7 @@ def test_aggregate_assessment_review_required_due_to_conflict():
 
 
 def test_aggregate_assessment_partial_coverage_never_compliant():
-    """If only front panel is captured, verdict must be REVIEW_REQUIRED, never COMPLIANT."""
+    """If only front panel is captured, verdict must be NOT_ASSESSED, never COMPLIANT."""
     findings = [
         _make_dummy_finding("CHK01", "pass"),
         _make_dummy_finding("CHK04", "pass"),
@@ -565,7 +565,7 @@ def test_aggregate_assessment_partial_coverage_never_compliant():
         captured_panels={"front"},  # Missing back/side panel
     )
 
-    assert assessment.overall_verdict == "REVIEW_REQUIRED"
+    assert assessment.overall_verdict == "NOT_ASSESSED"
     assert assessment.assessment_completeness.status == "PARTIAL"
     assert assessment.assessment_completeness.coverage_sufficient is False
     assert len(assessment.actionable_capture_requests) > 0

@@ -9,7 +9,7 @@ from datetime import date
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
-from models import Finding, Inspection, Scan, ScanImage, Store, User
+from models import AuditLog, Finding, Inspection, Scan, ScanImage, Store, User
 
 LIVE = Scan.duplicate_of.is_(None)
 
@@ -188,12 +188,121 @@ def get_unconfirmed_violation_scan_subquery():
     )
 
 
+def get_escalated_scan_subquery():
+    """Scan IDs under inspections or scans with explicit human escalation or review actions."""
+    escalated_actions = ["review_escalated", "review_started", "appeal_submitted", "escalated"]
+    return or_(
+        Scan.inspection_id.in_(
+            select(AuditLog.inspection_id).filter(
+                AuditLog.scan_id.is_(None),
+                AuditLog.action.in_(escalated_actions),
+            )
+        ),
+        Scan.id.in_(
+            select(AuditLog.scan_id).filter(
+                AuditLog.scan_id.is_not(None),
+                AuditLog.action.in_(escalated_actions),
+            )
+        ),
+    )
+
+
+def get_statutory_conflict_condition():
+    """Condition for scans with statutory cross-panel conflicts or dual-pricing disputes."""
+    conflict_actions = ["conflict_detected", "conflict_escalated"]
+    return or_(
+        Scan.inspection_id.in_(
+            select(AuditLog.inspection_id).filter(
+                AuditLog.scan_id.is_(None),
+                AuditLog.action.in_(conflict_actions),
+            )
+        ),
+        Scan.id.in_(
+            select(AuditLog.scan_id).filter(
+                AuditLog.scan_id.is_not(None),
+                AuditLog.action.in_(conflict_actions),
+            )
+        ),
+        Scan.id.in_(
+            select(Finding.scan_id).filter(
+                or_(
+                    Finding.reason.ilike("%statutory conflict%"),
+                    Finding.reason.ilike("%cross-panel conflict%"),
+                    Finding.reason.ilike("%dual%mrp%"),
+                    Finding.reason.ilike("%conflicting mrp%"),
+                    Finding.observed.ilike("%statutory conflict%"),
+                    Finding.observed.ilike("%dual%mrp%"),
+                )
+            )
+        ),
+    )
+
+
+def get_contested_override_condition():
+    """Condition for scans with human overrides, contested findings, or officer remarks."""
+    override_actions = ["finding_overridden", "finding_remark_added", "inspector_remark", "appeal_filed"]
+    return or_(
+        Scan.id.in_(
+            select(Finding.scan_id).filter(
+                or_(
+                    Finding.human_verdict.is_not(None),
+                    Finding.override_reason.is_not(None),
+                )
+            )
+        ),
+        Scan.id.in_(
+            select(AuditLog.scan_id).filter(
+                AuditLog.scan_id.is_not(None),
+                AuditLog.action.in_(override_actions),
+            )
+        ),
+        Scan.inspection_id.in_(
+            select(AuditLog.inspection_id).filter(
+                AuditLog.scan_id.is_(None),
+                AuditLog.action.in_(override_actions),
+            )
+        ),
+    )
+
+
+def get_integrity_concern_condition():
+    """Condition for inspections edited offline with genuine integrity concerns."""
+    return and_(
+        Inspection.edited_offline.is_(True),
+        or_(
+            func.abs(Inspection.clock_skew_seconds) > 120,
+            Inspection.mock_location.is_(True),
+            Inspection.geofence_status == "outside",
+        ),
+    )
+
+
+def get_canonical_review_trigger_condition():
+    """Authoritative condition for scans that genuinely require officer adjudication."""
+    low_conf_scan_ids = get_low_confidence_scan_subquery()
+    return or_(
+        get_escalated_scan_subquery(),
+        get_statutory_conflict_condition(),
+        get_contested_override_condition(),
+        get_integrity_concern_condition(),
+        Scan.id.in_(low_conf_scan_ids),
+    )
+
+
 def get_canonical_subtype_filter(subtype: str):
     """Return SQLAlchemy expression for filtering scans by canonical review subtype."""
     if not subtype:
         return None
     st = subtype.strip().lower()
-    if st == "technical_recovery":
+    if st in ("statutory_conflict", "conflict", "conflicts"):
+        return get_statutory_conflict_condition()
+    elif st in ("escalated", "review_escalated", "escalated_adjudication"):
+        return get_escalated_scan_subquery()
+    elif st in ("contested", "override", "overrides", "overrides_and_appeals", "human_override"):
+        return get_contested_override_condition()
+    elif st in ("integrity_concern", "integrity_concerns"):
+        return get_integrity_concern_condition()
+    elif st == "technical_recovery":
         return and_(
             Scan.overall_result == "not_assessed",
             Scan.id.in_(get_technical_recovery_scan_subquery()),
@@ -220,7 +329,7 @@ def get_canonical_subtype_filter(subtype: str):
     elif st == "low_confidence":
         return Scan.id.in_(get_low_confidence_scan_subquery())
     elif st in ("offline_edit", "offline_edits"):
-        return Inspection.edited_offline.is_(True)
+        return get_integrity_concern_condition()
     return None
 
 
@@ -264,7 +373,10 @@ def get_canonical_queue_metrics(
     # Resolution status via audit log:
     resolved_insp_subq = (
         select(AuditLog.inspection_id)
-        .filter(AuditLog.action.in_(["review_resolved", "review_dismissed"]))
+        .filter(
+            AuditLog.scan_id.is_(None),
+            AuditLog.action.in_(["review_resolved", "review_dismissed"]),
+        )
     )
     resolved_scan_subq = (
         select(AuditLog.scan_id)
@@ -275,14 +387,17 @@ def get_canonical_queue_metrics(
         Scan.id.in_(resolved_scan_subq),
     )
 
-    # In-review status via audit log:
+    # In-review status via audit log (review actively in progress by an officer):
     in_review_insp_subq = (
         select(AuditLog.inspection_id)
-        .filter(AuditLog.action.in_(["review_started", "review_escalated"]))
+        .filter(
+            AuditLog.scan_id.is_(None),
+            AuditLog.action.in_(["review_started"]),
+        )
     )
     in_review_scan_subq = (
         select(AuditLog.scan_id)
-        .filter(AuditLog.action.in_(["review_started", "review_escalated", "finding_overridden"]))
+        .filter(AuditLog.action.in_(["review_started", "finding_overridden"]))
     )
     is_in_review_cond = and_(
         ~is_resolved_cond,
@@ -295,12 +410,8 @@ def get_canonical_queue_metrics(
     # Low-confidence subquery: finding has confidence < 0.60 (and NOT null), unresolved
     low_conf_scan_ids = get_low_confidence_scan_subquery()
 
-    # Review triggers:
-    review_trigger_cond = or_(
-        Scan.overall_result.in_(["violation", "not_assessed"]),
-        Inspection.edited_offline.is_(True),
-        Scan.id.in_(low_conf_scan_ids),
-    )
+    # Review triggers: genuine exceptional cases only (decoupled from routine violations/assessments)
+    review_trigger_cond = get_canonical_review_trigger_condition()
 
     review_scans = base_scans.filter(review_trigger_cond)
 
@@ -317,40 +428,58 @@ def get_canonical_queue_metrics(
     # 1. Total distinct actionable scans in queue
     total_count = filtered_scans.with_entities(func.count(func.distinct(Scan.id))).scalar() or 0
 
-    # 2. Violations pending: distinct scans in queue with violation result
+    # 2. Violations pending: distinct scans in review queue with violation result
     violations_count = (
         filtered_scans.filter(Scan.overall_result == "violation")
         .with_entities(func.count(func.distinct(Scan.id)))
         .scalar() or 0
     )
 
-    # 3. Incomplete / Not assessed: distinct scans in queue with not_assessed result
+    # 3. Incomplete / Not assessed: distinct scans in review queue with not_assessed result
     not_assessed_scans = filtered_scans.filter(Scan.overall_result == "not_assessed")
     not_assessed_count = not_assessed_scans.with_entities(func.count(func.distinct(Scan.id))).scalar() or 0
 
-    # 4. Low confidence: distinct scans in queue having genuine low-confidence unresolved findings
+    # 4. Low confidence: distinct scans in review queue having genuine low-confidence unresolved findings
     low_conf_count = (
         filtered_scans.filter(Scan.id.in_(low_conf_scan_ids))
         .with_entities(func.count(func.distinct(Scan.id)))
         .scalar() or 0
     )
 
-    # 5. Offline edits: distinct scans in queue from offline-edited inspections
+    # 5. Offline edits: distinct scans in review queue with genuine integrity concerns
     offline_edits_count = (
-        filtered_scans.filter(Inspection.edited_offline.is_(True))
+        filtered_scans.filter(get_integrity_concern_condition())
         .with_entities(func.count(func.distinct(Scan.id)))
         .scalar() or 0
     )
 
+    # Genuine officer adjudication category counts:
+    statutory_conflicts_count = (
+        filtered_scans.filter(get_statutory_conflict_condition())
+        .with_entities(func.count(func.distinct(Scan.id)))
+        .scalar() or 0
+    )
+    escalated_adjudication_count = (
+        filtered_scans.filter(get_escalated_scan_subquery())
+        .with_entities(func.count(func.distinct(Scan.id)))
+        .scalar() or 0
+    )
+    overrides_and_appeals_count = (
+        filtered_scans.filter(get_contested_override_condition())
+        .with_entities(func.count(func.distinct(Scan.id)))
+        .scalar() or 0
+    )
+    integrity_concerns_count = offline_edits_count
+
     # Subcategory breakdowns:
-    # Technical OCR/provider recovery
+    # Technical OCR/provider recovery (in queue)
     technical_recovery_count = (
         not_assessed_scans.filter(get_canonical_subtype_filter("technical_recovery"))
         .with_entities(func.count(func.distinct(Scan.id)))
         .scalar() or 0
     )
 
-    # Recapture required: not_assessed scans with 0 images or missing evidence/blur/coverage guidance
+    # Recapture required (in queue)
     recapture_required_count = (
         not_assessed_scans.filter(get_canonical_subtype_filter("recapture_required"))
         .with_entities(func.count(func.distinct(Scan.id)))
@@ -391,6 +520,10 @@ def get_canonical_queue_metrics(
         "low_confidence": low_conf_count,
         "offline_edits": offline_edits_count,
         "breakdown": {
+            "statutory_conflicts": statutory_conflicts_count,
+            "escalated_adjudication": escalated_adjudication_count,
+            "overrides_and_appeals": overrides_and_appeals_count,
+            "integrity_concerns": integrity_concerns_count,
             "technical_recovery": technical_recovery_count,
             "recapture_required": recapture_required_count,
             "unconfirmed_violations": unconfirmed_violations_count,

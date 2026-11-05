@@ -1163,17 +1163,20 @@ def aggregate_inspection_assessment(
 
     if is_halted_out_of_scope:
         overall_verdict = "OUT_OF_SCOPE"
-    elif failing:
-        # Confirmed FAIL outranks everything
-        overall_verdict = "VIOLATION"
-    elif conflicts or not_assessed or completeness.status == "PARTIAL":
-        # Unresolved conflict or incomplete coverage requires review
+    elif conflicts:
+        # Genuine statutory cross-panel conflict requires officer adjudication
         overall_verdict = "REVIEW_REQUIRED"
+    elif failing:
+        # Confirmed deterministic FAIL is an automated violation
+        overall_verdict = "VIOLATION"
+    elif not_assessed or completeness.status == "PARTIAL":
+        # Incomplete coverage or unassessed rules communicate assessment limitation
+        overall_verdict = "NOT_ASSESSED"
     elif completeness.status == "COMPLETE" and passed and len(passed) == len(deduped_findings):
         # Complete clean pass
         overall_verdict = "COMPLIANT"
     else:
-        overall_verdict = "REVIEW_REQUIRED"
+        overall_verdict = "NOT_ASSESSED"
 
     # 5. Build Evidence Summary (Section 13)
     pdp_est = False

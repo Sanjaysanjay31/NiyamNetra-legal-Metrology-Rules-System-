@@ -100,7 +100,36 @@ def _review_reason(scan: Scan, findings: list[Finding], insp: Inspection) -> lis
     """Determine why this inspection/scan needs review."""
     reasons = []
 
-    # 1. Not assessed scans
+    # 1. Statutory conflicts requiring human adjudication
+    conflict_findings = [
+        f for f in findings
+        if any(k in (f.reason or "").lower() for k in ("conflict", "dual", "contradict"))
+        or any(k in (f.observed or "").lower() for k in ("conflict", "dual"))
+    ]
+    if conflict_findings:
+        reasons.append({
+            "type": "conflict",
+            "subtype": "statutory_conflict",
+            "severity": "critical",
+            "detail": f"Statutory conflict requiring human adjudication: {conflict_findings[0].reason[:120]}",
+            "affected_checks": [f.check_id for f in conflict_findings],
+        })
+
+    # 2. Contested findings / human overrides
+    overridden = [
+        f for f in findings
+        if f.human_verdict is not None or f.override_reason is not None
+    ]
+    if overridden:
+        reasons.append({
+            "type": "contested",
+            "subtype": "human_override",
+            "severity": "major",
+            "detail": f"{len(overridden)} finding(s) overridden or contested",
+            "affected_checks": [f.check_id for f in overridden],
+        })
+
+    # 3. Not assessed scans
     if scan.overall_result == "not_assessed":
         na_checks = [f for f in findings if f.engine_verdict == "not_assessed"]
         # Check for technical error
@@ -128,7 +157,7 @@ def _review_reason(scan: Scan, findings: list[Finding], insp: Inspection) -> lis
                 "affected_checks": [f.check_id for f in na_checks],
             })
 
-    # 2. Low confidence findings (genuine low confidence on unresolved checks only)
+    # 4. Low confidence findings (genuine low confidence on unresolved checks only)
     low_conf = [
         f for f in findings
         if f.confidence is not None and f.confidence < 0.60
@@ -143,16 +172,20 @@ def _review_reason(scan: Scan, findings: list[Finding], insp: Inspection) -> lis
             "affected_checks": [f.check_id for f in low_conf],
         })
 
-    # 3. Offline edits
+    # 5. Offline edits
     if getattr(insp, "edited_offline", False):
+        skew = getattr(insp, "clock_skew_seconds", 0) or 0
+        mock = getattr(insp, "mock_location", False)
+        geofence = getattr(insp, "geofence_status", None)
+        has_integrity = abs(skew) > 120 or mock or geofence == "outside"
         reasons.append({
             "type": "offline_edit",
-            "subtype": "offline_edit",
-            "severity": "minor",
-            "detail": f"Inspection edited offline; clock skew {insp.clock_skew_seconds or 0}s",
+            "subtype": "integrity_concern" if has_integrity else "offline_edit",
+            "severity": "major" if has_integrity else "minor",
+            "detail": f"Inspection edited offline; clock skew {skew}s" + ("; integrity flag" if has_integrity else ""),
         })
 
-    # 4. Violations requiring officer confirmation / enforcement action
+    # 6. Violations requiring officer confirmation / enforcement action
     unconfirmed_violations = [
         f for f in findings
         if (f.human_verdict or f.engine_verdict) == "fail"
@@ -297,25 +330,37 @@ def get_review_queue(
     - An inspection was edited offline
     - A scan has genuine low-confidence findings (< 0.60 on unresolved checks)
     """
-    from queries import LIVE, get_canonical_subtype_filter, get_low_confidence_scan_subquery
+    from queries import (
+        LIVE,
+        get_canonical_subtype_filter,
+        get_low_confidence_scan_subquery,
+        get_canonical_review_trigger_condition,
+        get_escalated_scan_subquery,
+        get_statutory_conflict_condition,
+        get_contested_override_condition,
+        get_integrity_concern_condition,
+    )
     from sqlalchemy import select
 
     VALID_REASONS = {
         "not_assessed", "violation", "low_confidence",
-        "offline_edit", "conflict", "all"
+        "offline_edit", "conflict", "escalated", "contested", "all"
     }
     VALID_SUBTYPES = {
         "technical_recovery", "recapture_required", "incomplete_coverage",
         "unconfirmed_violation", "unconfirmed_violations",
         "confirmed_violation", "confirmed_violations",
-        "low_confidence", "offline_edit", "offline_edits", "all"
+        "low_confidence", "offline_edit", "offline_edits",
+        "statutory_conflict", "escalated", "human_override", "all"
     }
     REASON_SUBTYPE_COMPATIBILITY = {
         "not_assessed": {"technical_recovery", "recapture_required", "incomplete_coverage", "all"},
         "violation": {"unconfirmed_violation", "unconfirmed_violations", "confirmed_violation", "confirmed_violations", "all"},
         "low_confidence": {"low_confidence", "all"},
         "offline_edit": {"offline_edit", "offline_edits", "all"},
-        "conflict": {"all"},
+        "conflict": {"statutory_conflict", "all"},
+        "escalated": {"escalated", "all"},
+        "contested": {"human_override", "all"},
         "all": VALID_SUBTYPES,
     }
 
@@ -323,7 +368,7 @@ def get_review_queue(
     if norm_reason and norm_reason not in VALID_REASONS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid reason '{reason}'. Allowed values: not_assessed, violation, low_confidence, offline_edit, conflict, all",
+            detail=f"Invalid reason '{reason}'. Allowed values: not_assessed, violation, low_confidence, offline_edit, conflict, escalated, contested, all",
         )
 
     raw_subtype = subtype if subtype is not None else subtype_filter
@@ -335,7 +380,7 @@ def get_review_queue(
                 f"Invalid subtype '{raw_subtype}'. Allowed values: "
                 "technical_recovery, recapture_required, incomplete_coverage, "
                 "unconfirmed_violation, confirmed_violation, low_confidence, "
-                "offline_edit, all"
+                "offline_edit, statutory_conflict, escalated, human_override, all"
             ),
         )
 
@@ -384,6 +429,7 @@ def get_review_queue(
 
     # Low-confidence subquery
     low_conf_scan_subq = get_low_confidence_scan_subquery()
+    review_trigger_cond = get_canonical_review_trigger_condition()
 
     # Apply subtype or reason filtering at database query level
     if norm_subtype and norm_subtype != "all":
@@ -392,29 +438,30 @@ def get_review_queue(
             q = q.filter(subtype_cond)
     elif norm_reason and norm_reason != "all":
         if norm_reason == "not_assessed":
-            q = q.filter(Scan.overall_result == "not_assessed")
+            q = q.filter(review_trigger_cond, Scan.overall_result == "not_assessed")
         elif norm_reason == "violation":
-            q = q.filter(Scan.overall_result == "violation")
+            q = q.filter(review_trigger_cond, Scan.overall_result == "violation")
         elif norm_reason == "offline_edit":
-            q = q.filter(Inspection.edited_offline.is_(True))
+            q = q.filter(get_integrity_concern_condition())
         elif norm_reason == "low_confidence":
             q = q.filter(Scan.id.in_(low_conf_scan_subq))
         elif norm_reason == "conflict":
-            q = q.filter(Scan.id.in_([]))
+            q = q.filter(get_statutory_conflict_condition())
+        elif norm_reason in ("escalated", "escalated_adjudication"):
+            q = q.filter(get_escalated_scan_subquery())
+        elif norm_reason in ("contested", "override"):
+            q = q.filter(get_contested_override_condition())
     else:
-        # Default: all review-worthy items
-        q = q.filter(
-            or_(
-                Scan.overall_result.in_(["violation", "not_assessed"]),
-                Inspection.edited_offline.is_(True),
-                Scan.id.in_(low_conf_scan_subq),
-            )
-        )
+        # Default: only genuine exceptional items enter the review queue
+        q = q.filter(review_trigger_cond)
 
     # Audit log resolution & in-review status
     resolved_insp_subq = (
         select(AuditLog.inspection_id)
-        .filter(AuditLog.action.in_(["review_resolved", "review_dismissed"]))
+        .filter(
+            AuditLog.scan_id.is_(None),
+            AuditLog.action.in_(["review_resolved", "review_dismissed"]),
+        )
     )
     resolved_scan_subq = (
         select(AuditLog.scan_id)
@@ -427,11 +474,14 @@ def get_review_queue(
 
     in_review_insp_subq = (
         select(AuditLog.inspection_id)
-        .filter(AuditLog.action.in_(["review_started", "review_escalated"]))
+        .filter(
+            AuditLog.scan_id.is_(None),
+            AuditLog.action.in_(["review_started"]),
+        )
     )
     in_review_scan_subq = (
         select(AuditLog.scan_id)
-        .filter(AuditLog.action.in_(["review_started", "review_escalated", "finding_overridden"]))
+        .filter(AuditLog.action.in_(["review_started", "finding_overridden"]))
     )
     is_in_review_cond = and_(
         ~is_resolved_cond,
@@ -487,7 +537,7 @@ def get_review_queue(
                 if a.action in ("review_resolved", "review_dismissed"):
                     resolved_scan_set.add(sid)
                     in_review_scan_set.discard(sid)
-                elif a.action in ("review_started", "review_escalated", "finding_overridden"):
+                elif a.action in ("review_started", "finding_overridden"):
                     if sid not in resolved_scan_set:
                         in_review_scan_set.add(sid)
 
